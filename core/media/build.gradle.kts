@@ -26,5 +26,10 @@ kotlin {
                 implementation(libs.kotlinx.browser)
             }
         }
+        val desktopTest by getting {
+            dependencies {
+                implementation(libs.junit)
+            }
+        }
     }
 }

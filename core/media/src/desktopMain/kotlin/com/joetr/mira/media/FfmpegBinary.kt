@@ -72,8 +72,38 @@ internal fun audioInputArgs(): List<String> = when (desktopOs) {
     DesktopOs.LINUX -> listOf("-f", "pulse", "-i", "default")
 }
 
-internal fun videoInputArgs(): List<String> = when (desktopOs) {
-    DesktopOs.MAC -> listOf("-f", "avfoundation", "-framerate", "30", "-i", "0:0")
+/**
+ * Pixel formats to try for the macOS camera, best first.
+ *
+ * avfoundation requests **yuv420p** when nothing is specified, and most Mac cameras do not offer
+ * it — they report `uyvy422`, `yuyv422`, `nv12`, `0rgb`, `bgr0`. Leaving it unset therefore fails
+ * on the built-in camera of a MacBook Pro, so one has to be named. `nv12` is the native format for
+ * Apple camera hardware; the rest are fallbacks for whatever a given device actually reports.
+ */
+internal val MAC_PIXEL_FORMATS: List<String> =
+    listOf("nv12", "uyvy422", "yuyv422", "0rgb", "bgr0")
+
+/** The device list FFmpeg prints when it rejects a pixel format, so a retry can pick a real one. */
+internal fun parseSupportedPixelFormats(stderr: String): List<String> {
+    if (!stderr.contains(PIXEL_FORMAT_ERROR)) return emptyList()
+    return stderr.lineSequence()
+        .dropWhile { !it.contains("Supported pixel formats:") }
+        .drop(1)
+        .map { line -> line.substringAfterLast(']').trim() }
+        .takeWhile { it.isNotEmpty() && !it.contains(' ') }
+        .toList()
+}
+
+internal const val PIXEL_FORMAT_ERROR: String = "not supported by the input device"
+
+internal fun videoInputArgs(pixelFormat: String? = null): List<String> = when (desktopOs) {
+    DesktopOs.MAC -> listOf(
+        "-f", "avfoundation",
+        // Required: the default of 29.97 is rejected by the built-in camera.
+        "-framerate", "30",
+        "-pixel_format", pixelFormat ?: MAC_PIXEL_FORMATS.first(),
+        "-i", "0:0",
+    )
     DesktopOs.WINDOWS -> listOf(
         "-f", "dshow",
         "-i", "video=${defaultWindowsVideoDevice()}:audio=${defaultWindowsAudioDevice()}",

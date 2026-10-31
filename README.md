@@ -88,6 +88,15 @@ Desktop capture needs the FFmpeg binary. CI builds it per platform; locally:
 ./scripts/build-ffmpeg.sh macos
 ```
 
+On macOS the packaged app declares camera and microphone usage in its `Info.plist`, so the system
+prompts the first time you record. Running from Gradle does not get that prompt — macOS attributes
+the request to the JVM, and a denial is silent, so capture simply produces nothing. Mira detects
+that and says so rather than appearing to record. Use a packaged build to test capture for real:
+
+```bash
+./gradlew :composeApp:createDistributable
+```
+
 Without it the desktop app still runs — `supportsCapture` reports capture as unavailable and the
 compose sheet hides the record affordances.
 

@@ -161,6 +161,18 @@ compose.desktop {
             val iconsDir = project.layout.projectDirectory.dir("src/desktopMain/resources/icons")
             macOS {
                 bundleID = "com.joetr.mira"
+                // Desktop capture opens the camera and microphone through the bundled FFmpeg.
+                // macOS refuses both unless the packaged app declares why it wants them, and the
+                // refusal is silent — no prompt, no error, just a capture that never yields a
+                // frame.
+                infoPlist {
+                    extraKeysRawXml = """
+                        <key>NSCameraUsageDescription</key>
+                        <string>Mira uses the camera to record video entries in your journal.</string>
+                        <key>NSMicrophoneUsageDescription</key>
+                        <string>Mira uses the microphone to record voice entries in your journal.</string>
+                    """.trimIndent()
+                }
                 iconFile.set(iconsDir.file("icon.icns").asFile)
                 signing {
                     identity.set(
