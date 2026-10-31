@@ -50,6 +50,7 @@ import com.joetr.mira.navigation.TimelineKey
 import com.joetr.mira.navigation.TopLevelDestination
 import com.joetr.mira.navigation.YearKey
 import com.joetr.mira.navigation.parseWebRoute
+import com.joetr.mira.ui.components.MiraConfirmDialog
 import com.joetr.mira.ui.layout.MiraContentWidth
 import com.joetr.mira.ui.motion.LocalNavAnimatedVisibilityScope
 import com.joetr.mira.ui.motion.LocalSharedTransitionScope
@@ -235,6 +236,30 @@ private fun Screen(
             var attachments by remember(key) {
                 mutableStateOf<List<com.joetr.mira.domain.Attachment>>(emptyList())
             }
+            var confirmDelete by remember(key) { mutableStateOf(false) }
+
+            val deletableId = key.entryId
+            if (confirmDelete && deletableId != null) {
+                MiraConfirmDialog(
+                    onDismissRequest = { confirmDelete = false },
+                    title = "Delete this entry?",
+                    message = "It will be removed from every device, and any audio or video with " +
+                        "it is deleted from storage. The GitHub archive keeps earlier versions.",
+                    confirmText = "Delete",
+                    destructive = true,
+                    onConfirm = {
+                        confirmDelete = false
+                        scope.launch {
+                            val existing = graph.entries.entry(deletableId)
+                            graph.entries.delete(deletableId)
+                            existing?.let { graph.media.deleteMediaFor(it.id, it.attachments) }
+                            graph.onLocalWrite()
+                            onRefresh()
+                            onBack()
+                        }
+                    },
+                )
+            }
 
             LaunchedEffect(key.entryId) {
                 key.entryId?.let { id ->
@@ -287,6 +312,7 @@ private fun Screen(
                     recorder.cancel()
                     onBack()
                 },
+                onDelete = key.entryId?.let { { confirmDelete = true } },
             )
         }
 

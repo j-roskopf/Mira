@@ -114,3 +114,10 @@ public actual fun isDebugBuild(): Boolean {
 }
 
 public actual fun platformName(): String = "android"
+
+public actual fun isUnmeteredNetwork(): Boolean {
+    val manager = AndroidContextHolder.application
+        .getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    val capabilities = manager.getNetworkCapabilities(manager.activeNetwork) ?: return false
+    return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
+}

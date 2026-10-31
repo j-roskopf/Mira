@@ -127,3 +127,11 @@ public actual suspend fun readClipboardText(): String? {
 public actual fun isDebugBuild(): Boolean = false
 
 public actual fun platformName(): String = "ios"
+
+/**
+ * This platform cannot report metering, so uploads are not held back.
+ *
+ * Desktop and web are effectively always on a connection the user chose; on iOS, reading the
+ * cellular state needs a reachability dependency Mira does not otherwise carry.
+ */
+public actual fun isUnmeteredNetwork(): Boolean = true

@@ -72,6 +72,7 @@ public fun ComposeEntryScreen(
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
     initialCapture: CaptureKind? = null,
+    onDelete: (() -> Unit)? = null,
 ) {
     val colors = MiraTheme.colors
     val scope = rememberCoroutineScope()
@@ -114,6 +115,10 @@ public fun ComposeEntryScreen(
                     .clickable(onClick = onDateClick)
                     .padding(MiraSpacing.sm),
             )
+            // Only an entry that already exists can be deleted.
+            onDelete?.let { delete ->
+                CircleIconButton(MiraIcons.Trash, "Delete entry", onClick = delete)
+            }
             Spacer(Modifier.weight(1f))
             PillButton(
                 text = "Save",

@@ -4,6 +4,7 @@ import app.cash.sqldelight.async.coroutines.awaitAsList
 import app.cash.sqldelight.async.coroutines.awaitAsOneOrNull
 import com.joetr.mira.db.MiraDatabase
 import com.joetr.mira.domain.SessionState
+import com.joetr.mira.domain.ownerId
 import com.joetr.mira.domain.EntryStore
 import com.joetr.mira.domain.SessionRepository
 import com.joetr.mira.domain.SyncCoordinator
@@ -40,6 +41,9 @@ public class DefaultSessionRepository(
     private var pendingMergeLocalOwnerId: String? = null
 
     override fun observeSession(): Flow<SessionState> = session.asStateFlow()
+
+    /** The owner id everything is stored under right now, whether anonymous, local or signed in. */
+    public fun currentOwnerId(): String? = session.value.ownerId.takeIf { it.isNotBlank() }
 
     override suspend fun ensureSession() {
         if (!firebase.isConfigured) {

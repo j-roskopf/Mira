@@ -23,11 +23,13 @@ import com.joetr.mira.network.MiraFirebase
 import com.joetr.mira.network.createMiraHttpClient
 import com.joetr.mira.platform.AppLifecycleObserver
 import com.joetr.mira.platform.MiraConfig
+import com.joetr.mira.platform.isUnmeteredNetwork
 import com.joetr.mira.platform.currentTimeMillis
 import com.joetr.mira.updates.createAppUpdateService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -97,12 +99,30 @@ public class AppGraph(
         } else {
             syncService.syncNow()
         }
+        drainMediaUploads()
         updates.checkForUpdates()
+    }
+
+    /**
+     * Uploads anything still staged locally.
+     *
+     * Audio goes immediately — a two-minute note is about a megabyte. Video waits for an unmetered
+     * connection unless the user turned that off, so an entry can reach another device before its
+     * video does; that is a state the UI renders rather than an error.
+     */
+    public suspend fun drainMediaUploads() {
+        val owner = sessionRepository.currentOwnerId() ?: return
+        val unmeteredOnly = settings.observeVideoUploadOnUnmeteredOnly().first()
+        media.uploadPending(owner, includeVideo = !unmeteredOnly || isUnmeteredNetwork())
     }
 
     init {
         AppLifecycleObserver.onForeground = {
-            scope.launch { syncService.syncIfStale() }
+            scope.launch {
+                syncService.syncIfStale()
+                // Catches video that was deferred while on a metered connection.
+                drainMediaUploads()
+            }
         }
     }
 
@@ -160,6 +180,7 @@ public class AppGraph(
     public fun onLocalWrite() {
         syncService.onLocalWrite()
         archive.onLocalWrite()
+        scope.launch { drainMediaUploads() }
     }
 }
 

@@ -38,6 +38,15 @@ public expect fun currentTimeMillis(): Long
 
 public expect fun isNetworkAvailable(): Boolean
 
+/**
+ * Whether the current connection is unmetered.
+ *
+ * Video uploads wait for this by default — a minute of 1080p is 60-100 MB, and a journal
+ * accumulates forever. Platforms that cannot tell report true rather than stalling uploads
+ * indefinitely.
+ */
+public expect fun isUnmeteredNetwork(): Boolean
+
 public expect fun openUrl(url: String)
 
 /** Shares text with other apps, or copies it where the platform has no share sheet. */
