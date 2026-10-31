@@ -11,7 +11,7 @@ kotlin {
         }
         named("commonMain") {
             dependencies {
-                implementation(project(":domain"))
+                api(project(":domain"))
                 implementation(libs.findLibrary("coroutines-core").get())
                 implementation(libs.findLibrary("coil-compose").get())
                 implementation(libs.findLibrary("coil-network-ktor3").get())

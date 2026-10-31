@@ -10,6 +10,7 @@ kotlin {
         named("commonMain") {
             dependencies {
                 implementation(libs.findLibrary("serialization-json").get())
+                api(libs.findLibrary("kotlinx-datetime").get())
                 implementation(project(":core:platform"))
             }
         }

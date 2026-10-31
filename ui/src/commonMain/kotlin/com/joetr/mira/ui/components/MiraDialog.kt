@@ -106,7 +106,7 @@ public fun DialogActionButton(
     Text(
         text = text,
         modifier = modifier
-            .clip(RoundedCornerShape(MiraRadii.chip))
+            .clip(RoundedCornerShape(MiraRadii.pill))
             .clickable(onClick = onClick)
             .padding(horizontal = MiraSpacing.md, vertical = MiraSpacing.sm),
         style = MaterialTheme.typography.labelMedium,
@@ -125,7 +125,7 @@ public fun DialogActionItem(
         text = text,
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(MiraRadii.field))
+            .clip(RoundedCornerShape(MiraRadii.control))
             .clickable(onClick = onClick)
             .padding(vertical = MiraSpacing.md, horizontal = MiraSpacing.sm),
         style = MaterialTheme.typography.bodyLarge,

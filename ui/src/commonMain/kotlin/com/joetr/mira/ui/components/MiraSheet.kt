@@ -149,7 +149,7 @@ public fun SheetTextField(
         onValueChange = onValueChange,
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(MiraRadii.field))
+            .clip(RoundedCornerShape(MiraRadii.control))
             .background(colors.onSheet.copy(alpha = 0.14f))
             .padding(horizontal = MiraSpacing.md, vertical = MiraSpacing.md),
         singleLine = singleLine,
@@ -183,7 +183,7 @@ public fun SheetChip(
     val fg = if (selected) colors.sheet else colors.onSheet
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(MiraRadii.chip))
+            .clip(RoundedCornerShape(MiraRadii.pill))
             .background(bg)
             .clickable(onClick = onClick)
             .padding(horizontal = MiraSpacing.md, vertical = 6.dp),
@@ -207,7 +207,7 @@ public fun SheetPillButton(
     val fgAlpha = if (enabled) fg.alpha else fg.alpha * 0.6f
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(MiraRadii.chip))
+            .clip(RoundedCornerShape(MiraRadii.pill))
             .background(bg.copy(alpha = bgAlpha))
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = MiraSpacing.lg, vertical = MiraSpacing.sm),
