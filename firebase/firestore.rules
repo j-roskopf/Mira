@@ -1,0 +1,21 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{uid}/recipes/{recipeId} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+    match /users/{uid}/importEvents/{eventId} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if false;
+    }
+    match /otpCodes/{email} {
+      allow read, write: if false;
+    }
+    match /sharedRecipes/{token} {
+      allow read, write: if false;
+    }
+    match /mail/{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

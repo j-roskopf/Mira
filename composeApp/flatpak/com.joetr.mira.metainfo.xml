@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.joetr.mira</id>
+  <name>Mira</name>
+  <summary>Recipe library and cookbook</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LicenseRef-proprietary</project_license>
+  <description>
+    <p>Mira is a recipe library for browsing, editing, and cooking from your personal cookbook.</p>
+  </description>
+  <launchable type="desktop-id">com.joetr.mira.desktop</launchable>
+  <icon type="stock">com.joetr.mira</icon>
+  <categories>
+    <category>Office</category>
+    <category>Utility</category>
+  </categories>
+  <developer_name>Mira</developer_name>
+</component>

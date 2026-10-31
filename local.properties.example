@@ -1,0 +1,12 @@
+sdk.dir=/Users/joer/Library/Android/sdk
+# mira.firebase.apiKey=
+# mira.firebase.projectId=
+# mira.firebase.authDomain=
+# mira.firebase.storageBucket=
+# mira.firebase.functionsRegion=us-central1
+# mira.google.webClientId=
+# mira.google.webClientSecret=
+# mira.google.iosClientId=
+# iOS Google sign-in: CLIENT_ID from iosApp/iosApp/GoogleService-Info.plist (or set iosClientId above).
+# Required for desktop/web Google sign-in (authorization-code flow). Get both from the same
+# Google Cloud "Web application" OAuth client. Also add redirect URIs — see README.

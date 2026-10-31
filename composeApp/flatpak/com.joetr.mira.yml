@@ -1,0 +1,51 @@
+app-id: com.joetr.mira
+runtime: org.freedesktop.Platform
+runtime-version: '25.08'
+sdk: org.freedesktop.Sdk
+command: Mira
+
+finish-args:
+  - --share=ipc
+  - --share=network
+  # Compose Desktop still uses AWT on Linux; fallback-x11 hides the XWayland socket on
+  # Wayland sessions, which makes the JVM start headless and exit immediately.
+  - --socket=x11
+  - --socket=wayland
+  - --socket=pulseaudio
+  - --env=ALSA_PCM_NAME=pulse
+  - --talk-name=org.freedesktop.Flatpak
+  - --talk-name=org.freedesktop.secrets
+  - --device=dri
+  - --device=all
+  - --filesystem=home
+  - --filesystem=xdg-download
+
+modules:
+  - name: mira
+    buildsystem: simple
+    build-commands:
+      - install -d /app/bin /app/lib/mira
+      - cp -a mira/. /app/lib/mira/
+      - ln -s /app/lib/mira/bin/Mira /app/bin/Mira
+      - install -Dm644 com.joetr.mira.desktop /app/share/applications/com.joetr.mira.desktop
+      - install -Dm644 com.joetr.mira.metainfo.xml /app/share/metainfo/com.joetr.mira.metainfo.xml
+      - install -Dm644 com.joetr.mira-128.png /app/share/icons/hicolor/128x128/apps/com.joetr.mira.png
+      - install -Dm644 com.joetr.mira-256.png /app/share/icons/hicolor/256x256/apps/com.joetr.mira.png
+      - install -Dm644 com.joetr.mira-512.png /app/share/icons/hicolor/512x512/apps/com.joetr.mira.png
+    sources:
+      - type: dir
+        path: ../build/compose/binaries/main-release/app/Mira
+        dest: mira
+      - type: file
+        path: com.joetr.mira.desktop
+      - type: file
+        path: com.joetr.mira.metainfo.xml
+      - type: file
+        path: icons/128/com.joetr.mira.png
+        dest-filename: com.joetr.mira-128.png
+      - type: file
+        path: icons/256/com.joetr.mira.png
+        dest-filename: com.joetr.mira-256.png
+      - type: file
+        path: icons/512/com.joetr.mira.png
+        dest-filename: com.joetr.mira-512.png

@@ -1,0 +1,178 @@
+import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
+/**
+ * jpackage MSI versions must be MAJOR.MINOR.BUILD where major <= 255, minor <= 255, build <= 65535.
+ * Display versions like YYYY.MMDD.HHMM exceed those limits, so fall back to mira.versionCode.
+ */
+fun jpackagePackageVersion(versionName: String, versionCode: Int): String {
+    val parts = versionName.split('.')
+    if (parts.size == 3) {
+        val major = parts[0].toIntOrNull()
+        val minor = parts[1].toIntOrNull()
+        val build = parts[2].toIntOrNull()
+        if (major != null && minor != null && build != null &&
+            major in 0..255 && minor in 0..255 && build in 0..65535
+        ) {
+            return "$major.$minor.$build"
+        }
+    }
+    val minor = (versionCode / 65535).coerceAtMost(255)
+    val build = (versionCode % 65535).let { if (it == 0) 1 else it }
+    return "1.$minor.$build"
+}
+
+fun String.asJpackageMacSigningUserName(): String =
+    removePrefix("Developer ID Application: ")
+        .removePrefix("Developer ID Installer: ")
+        .removePrefix("3rd Party Mac Developer Application: ")
+        .removePrefix("3rd Party Mac Developer Installer: ")
+        .trim()
+
+plugins {
+    alias(libs.plugins.kotlinMultiplatform)
+    alias(libs.plugins.androidKotlinMultiplatformLibrary)
+    alias(libs.plugins.composeMultiplatform)
+    alias(libs.plugins.composeCompiler)
+    alias(libs.plugins.kotlinSerialization)
+    alias(libs.plugins.roborazzi)
+}
+
+kotlin {
+    jvmToolchain(21)
+    compilerOptions {
+        freeCompilerArgs.add("-Xexpect-actual-classes")
+    }
+
+    android {
+        namespace = "com.joetr.mira.library"
+        compileSdk = 36
+        minSdk = 26
+        androidResources.enable = true
+        compilerOptions { jvmTarget.set(JvmTarget.JVM_17) }
+    }
+
+    jvm("desktop") {
+        compilerOptions { jvmTarget.set(JvmTarget.JVM_17) }
+    }
+
+    @OptIn(org.jetbrains.kotlin.gradle.ExperimentalWasmDsl::class)
+    wasmJs {
+        browser {
+            commonWebpackConfig { outputFileName = "mira.js" }
+        }
+        binaries.executable()
+    }
+
+    listOf(
+        iosArm64(),
+        iosSimulatorArm64(),
+    ).forEach { iosTarget ->
+        iosTarget.binaries.framework {
+            baseName = "ComposeApp"
+            isStatic = true
+            linkerOpts("-lsqlite3")
+        }
+    }
+
+    sourceSets {
+        all {
+            languageSettings.optIn("kotlinx.coroutines.ExperimentalCoroutinesApi")
+            languageSettings.optIn("kotlinx.coroutines.FlowPreview")
+            languageSettings.optIn("coil3.annotation.ExperimentalCoilApi")
+        }
+        matching { it.name.contains("wasmJs", ignoreCase = true) }.configureEach {
+            languageSettings.optIn("kotlin.js.ExperimentalWasmJsInterop")
+        }
+        commonMain.dependencies {
+            implementation(project(":domain"))
+            implementation(project(":navigation"))
+            implementation(project(":ui"))
+            implementation(project(":core:database"))
+            implementation(project(":core:network"))
+            implementation(project(":core:platform"))
+            implementation(project(":core:updates"))
+            implementation(project(":data:recipe"))
+            implementation(project(":data:auth"))
+            implementation(project(":data:image"))
+            implementation(project(":feature:recipes"))
+            implementation(project(":feature:cook"))
+            implementation(project(":feature:editor"))
+            implementation(project(":feature:import"))
+            implementation(project(":feature:scan"))
+            implementation(project(":feature:auth"))
+            implementation(project(":feature:settings"))
+            implementation(libs.compose.runtime)
+            implementation(libs.compose.foundation)
+            implementation(libs.compose.animation)
+            implementation(libs.compose.navigationevent)
+            implementation(libs.compose.material3)
+            implementation(libs.compose.components.resources)
+            implementation(libs.lifecycle.runtime.compose)
+            implementation(libs.serialization.json)
+            implementation(libs.ktor.client.core)
+            implementation(libs.coil.compose)
+            implementation(libs.coil.network.ktor3)
+        }
+        androidMain.dependencies {
+            implementation(libs.androidx.activity.compose)
+            implementation(libs.androidx.core.ktx)
+        }
+        val desktopMain by getting {
+            dependencies {
+                implementation(libs.coroutines.swing)
+                implementation(compose.desktop.currentOs)
+            }
+        }
+        wasmJsMain.dependencies {
+            implementation(libs.ktor.client.js)
+            implementation(libs.sqldelight.web.worker.driver)
+            implementation(npm("@cashapp/sqldelight-sqljs-worker", libs.versions.sqldelight.get()))
+            implementation(npm("sql.js", "1.8.0"))
+            implementation(npm("heic2any", "0.0.4"))
+            implementation(devNpm("copy-webpack-plugin", "9.1.0"))
+        }
+        val desktopTest by getting {
+            dependencies {
+                implementation(project(":ui"))
+                implementation(libs.roborazzi.compose.desktop)
+                implementation(libs.roborazzi.core)
+                implementation(libs.compose.ui.test.junit4)
+            }
+        }
+    }
+}
+
+compose.desktop {
+    application {
+        mainClass = "com.joetr.mira.app.MainKt"
+        nativeDistributions {
+            targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
+            packageName = "Mira"
+            val versionName = providers.gradleProperty("mira.versionName").orElse("0.1.0").get()
+            val versionCode = providers.gradleProperty("mira.versionCode").orElse("1").get().toIntOrNull() ?: 1
+            packageVersion = jpackagePackageVersion(versionName, versionCode)
+            val iconsDir = project.layout.projectDirectory.dir("src/desktopMain/resources/icons")
+            macOS {
+                bundleID = "com.joetr.mira"
+                iconFile.set(iconsDir.file("icon.icns").asFile)
+                signing {
+                    identity.set(
+                        providers.gradleProperty("compose.desktop.mac.signing.identity")
+                            .map(String::asJpackageMacSigningUserName),
+                    )
+                }
+            }
+            windows {
+                iconFile.set(iconsDir.file("icon.ico").asFile)
+            }
+            linux {
+                iconFile.set(iconsDir.file("icon.png").asFile)
+            }
+        }
+    }
+}
+
+roborazzi {
+    outputDir.set(file("src/desktopTest/resources/roborazzi"))
+}

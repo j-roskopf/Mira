@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Mira
+Comment=Recipe library and cookbook
+Exec=Mira
+Icon=com.joetr.mira
+Terminal=false
+Categories=Office;Utility;
+StartupWMClass=Mira

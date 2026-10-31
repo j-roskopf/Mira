@@ -1,0 +1,45 @@
+name: Record Roborazzi (Linux)
+
+on:
+  workflow_dispatch:
+
+env:
+  JAVA_VERSION: 21
+  JAVA_DISTRIBUTION: temurin
+
+jobs:
+  record:
+    name: Record desktop Roborazzi goldens
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+          java-version: ${{ env.JAVA_VERSION }}
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Install Linux desktop dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgtk-3-0 libxtst6 libxrender1 libxi6 libxrandr2
+      - name: Placeholder google-services.json
+        run: |
+          if [ ! -f androidApp/google-services.json ]; then
+            printf '%s\n' '{
+              "project_info": {"project_number":"0","project_id":"mira-test","storage_bucket":"mira-test.appspot.com"},
+              "client":[{"client_info":{"mobilesdk_app_id":"1:0:android:0","android_client_info":{"package_name":"com.joetr.mira"}},"oauth_client":[],"api_key":[{"current_key":"test"}],"services":{"appinvite_service":{"other_platform_oauth_client":[]}}}],
+              "configuration_version":"1"
+            }' > androidApp/google-services.json
+          fi
+      - name: Record Roborazzi desktop screenshots
+        env:
+          FIREBASE_WEB_API_KEY: test-api-key
+          FIREBASE_PROJECT_ID: mira-test
+          MIRA_GOOGLE_WEB_CLIENT_ID: test-client-id.apps.googleusercontent.com
+        run: xvfb-run -a ./gradlew :composeApp:recordRoborazziDesktop --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: roborazzi-linux-goldens
+          path: composeApp/src/desktopTest/resources/roborazzi/
+          if-no-files-found: error

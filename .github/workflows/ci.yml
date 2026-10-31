@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  JAVA_VERSION: 21
+  JAVA_DISTRIBUTION: temurin
+
+jobs:
+  gradle:
+    name: Gradle build and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+          java-version: ${{ env.JAVA_VERSION }}
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Install Linux desktop dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgtk-3-0 libxtst6 libxrender1 libxi6 libxrandr2
+      - name: Placeholder google-services.json
+        run: |
+          if [ ! -f androidApp/google-services.json ]; then
+            printf '%s\n' '{
+              "project_info": {"project_number":"0","project_id":"mira-test","storage_bucket":"mira-test.appspot.com"},
+              "client":[{"client_info":{"mobilesdk_app_id":"1:0:android:0","android_client_info":{"package_name":"com.joetr.mira"}},"oauth_client":[],"api_key":[{"current_key":"test"}],"services":{"appinvite_service":{"other_platform_oauth_client":[]}}}],
+              "configuration_version":"1"
+            }' > androidApp/google-services.json
+          fi
+      - name: Build and test
+        env:
+          FIREBASE_WEB_API_KEY: test-api-key
+          FIREBASE_PROJECT_ID: mira-test
+          MIRA_GOOGLE_WEB_CLIENT_ID: test-client-id.apps.googleusercontent.com
+        run: xvfb-run -a ./gradlew build --no-daemon -Proborazzi.test.verify=true
+
+  wasm:
+    name: Web (wasm) build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+          java-version: ${{ env.JAVA_VERSION }}
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Build wasm distribution
+        env:
+          FIREBASE_WEB_API_KEY: test-api-key
+          FIREBASE_PROJECT_ID: mira-test
+          MIRA_GOOGLE_WEB_CLIENT_ID: test-client-id.apps.googleusercontent.com
+        run: ./gradlew :composeApp:wasmJsBrowserDistribution --no-daemon
+
+  firebase-functions:
+    name: Cloud Function tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: firebase/functions/package-lock.json
+      - name: Run Cloud Function tests
+        working-directory: firebase/functions
+        run: npm ci && npm test
+
+  ios:
+    name: iOS build
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+          java-version: ${{ env.JAVA_VERSION }}
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Compile iOS framework
+        env:
+          FIREBASE_WEB_API_KEY: test-api-key
+          FIREBASE_PROJECT_ID: mira-test
+        run: ./gradlew :composeApp:compileKotlinIosSimulatorArm64 --no-daemon
+      - name: Build iOS app (simulator)
+        run: |
+          xcodebuild -project iosApp/iosApp.xcodeproj \
+            -scheme iosApp \
+            -destination 'platform=iOS Simulator,name=iPhone 17' \
+            -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO \
+            build

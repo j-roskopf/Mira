@@ -1,0 +1,171 @@
+CREATE TABLE entries (
+    id            TEXT NOT NULL PRIMARY KEY,
+    owner_id      TEXT NOT NULL,
+    local_date    TEXT NOT NULL,
+    created_at    INTEGER NOT NULL,
+    created_tz    TEXT NOT NULL,
+    updated_at    INTEGER NOT NULL,
+    body          TEXT NOT NULL DEFAULT '',
+    attachments   TEXT NOT NULL DEFAULT '[]',
+    tags          TEXT NOT NULL DEFAULT '[]',
+    deleted       INTEGER NOT NULL DEFAULT 0,
+    pending_sync  INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX entries_owner_date_idx ON entries(owner_id, local_date);
+CREATE INDEX entries_owner_updated_idx ON entries(owner_id, updated_at, id);
+
+CREATE TABLE entry_outbox (
+    entry_id    TEXT NOT NULL PRIMARY KEY,
+    kind        TEXT NOT NULL,
+    enqueued_at INTEGER NOT NULL
+);
+
+CREATE TABLE media_blobs (
+    id          TEXT NOT NULL PRIMARY KEY,
+    entry_id    TEXT NOT NULL,
+    path        TEXT,
+    data        BLOB,
+    bytes       INTEGER NOT NULL,
+    uploaded    INTEGER NOT NULL DEFAULT 0,
+    pinned      INTEGER NOT NULL DEFAULT 0,
+    last_access INTEGER NOT NULL,
+    created_at  INTEGER NOT NULL
+);
+
+CREATE INDEX media_blobs_entry_idx ON media_blobs(entry_id);
+CREATE INDEX media_blobs_lru_idx ON media_blobs(uploaded, pinned, last_access);
+
+CREATE TABLE app_settings (
+    key   TEXT NOT NULL PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+-- Entries -------------------------------------------------------------------
+
+selectEntry:
+SELECT * FROM entries WHERE id = ? AND deleted = 0;
+
+selectEntryAny:
+SELECT * FROM entries WHERE id = ?;
+
+selectEntriesForDate:
+SELECT * FROM entries
+WHERE owner_id = ? AND local_date = ? AND deleted = 0
+ORDER BY created_at ASC;
+
+selectEntriesInRange:
+SELECT * FROM entries
+WHERE owner_id = ? AND local_date >= ? AND local_date <= ? AND deleted = 0
+ORDER BY local_date DESC, created_at DESC;
+
+selectTimeline:
+SELECT * FROM entries
+WHERE owner_id = ? AND deleted = 0
+ORDER BY local_date DESC, created_at DESC
+LIMIT ? OFFSET ?;
+
+-- Entry counts per day, for the calendar heatmap.
+countsByDate:
+SELECT local_date, COUNT(*) AS entry_count
+FROM entries
+WHERE owner_id = ? AND local_date >= ? AND local_date <= ? AND deleted = 0
+GROUP BY local_date;
+
+-- Local search. Structured filters are applied by the caller; this is the text pass.
+searchEntries:
+SELECT * FROM entries
+WHERE owner_id = ?
+  AND deleted = 0
+  AND (body LIKE '%' || :query || '%' OR tags LIKE '%' || :query || '%')
+ORDER BY local_date DESC, created_at DESC
+LIMIT ?;
+
+upsertEntry:
+INSERT OR REPLACE INTO entries(
+    id, owner_id, local_date, created_at, created_tz, updated_at,
+    body, attachments, tags, deleted, pending_sync
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+markEntryDeleted:
+UPDATE entries SET deleted = 1, updated_at = ?, pending_sync = 1 WHERE id = ?;
+
+moveEntryToDate:
+UPDATE entries SET local_date = ?, updated_at = ?, pending_sync = 1 WHERE id = ?;
+
+clearPendingSync:
+UPDATE entries SET pending_sync = 0 WHERE id = ?;
+
+selectPendingEntries:
+SELECT * FROM entries WHERE pending_sync = 1;
+
+selectEarliestEntryDate:
+SELECT MIN(local_date) FROM entries WHERE owner_id = ? AND deleted = 0;
+
+purgeDeletedBefore:
+DELETE FROM entries WHERE deleted = 1 AND updated_at < ?;
+
+-- Outbox --------------------------------------------------------------------
+
+enqueue:
+INSERT OR REPLACE INTO entry_outbox(entry_id, kind, enqueued_at) VALUES (?, ?, ?);
+
+dequeue:
+DELETE FROM entry_outbox WHERE entry_id = ?;
+
+selectOutbox:
+SELECT * FROM entry_outbox ORDER BY enqueued_at ASC;
+
+selectOutboxKind:
+SELECT kind FROM entry_outbox WHERE entry_id = ?;
+
+-- Media blobs ---------------------------------------------------------------
+
+insertBlob:
+INSERT OR REPLACE INTO media_blobs(
+    id, entry_id, path, data, bytes, uploaded, pinned, last_access, created_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+selectBlob:
+SELECT * FROM media_blobs WHERE id = ?;
+
+selectBlobsForEntry:
+SELECT * FROM media_blobs WHERE entry_id = ?;
+
+markBlobUploaded:
+UPDATE media_blobs SET uploaded = 1 WHERE id = ?;
+
+touchBlob:
+UPDATE media_blobs SET last_access = ? WHERE id = ?;
+
+setBlobPinned:
+UPDATE media_blobs SET pinned = ? WHERE id = ?;
+
+deleteBlob:
+DELETE FROM media_blobs WHERE id = ?;
+
+deleteBlobsForEntry:
+DELETE FROM media_blobs WHERE entry_id = ?;
+
+totalBlobBytes:
+SELECT COALESCE(SUM(bytes), 0) FROM media_blobs;
+
+-- LRU eviction candidates: uploaded, unpinned, least recently used first.
+selectEvictionCandidates:
+SELECT * FROM media_blobs
+WHERE uploaded = 1 AND pinned = 0
+ORDER BY last_access ASC;
+
+selectUnuploadedBlobs:
+SELECT * FROM media_blobs WHERE uploaded = 0 ORDER BY created_at ASC;
+
+-- Settings ------------------------------------------------------------------
+
+getSetting:
+SELECT value FROM app_settings WHERE key = ?;
+
+putSetting:
+INSERT OR REPLACE INTO app_settings(key, value) VALUES (?, ?);
+
+selectAllSettings:
+SELECT * FROM app_settings;

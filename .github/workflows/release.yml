@@ -1,0 +1,920 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Optional custom version (e.g. 1.2.3). If omitted, uses auto-increment and timestamp.
+        required: false
+        type: string
+
+concurrency:
+  group: release-${{ github.ref_name || inputs.version }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  id-token: write
+  pages: write
+
+env:
+  JAVA_VERSION: 21
+  JAVA_DISTRIBUTION: temurin
+
+jobs:
+  version:
+    name: Validate and bump version
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      version_code: ${{ steps.version.outputs.version_code }}
+      tag_name: ${{ steps.version.outputs.tag_name }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Validate and bump version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          current_version="$(grep '^mira.versionName=' gradle.properties | cut -d'=' -f2- | tr -d '[:space:]')"
+          configured_version_code="$(grep '^mira.versionCode=' gradle.properties | cut -d'=' -f2- | tr -d '[:space:]' || true)"
+
+          if [[ -z "${current_version}" ]]; then
+            echo "::error::gradle.properties must define mira.versionName"
+            exit 1
+          fi
+          if [[ -z "${configured_version_code}" ]]; then
+            echo "::error::gradle.properties must define mira.versionCode"
+            exit 1
+          fi
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && -n "${{ inputs.version }}" ]]; then
+            new_version_name="${{ inputs.version }}"
+            new_version_code=$((configured_version_code + 1))
+          else
+            new_version_code=$((configured_version_code + 1))
+            new_version_name=$(date -u +"%Y.%m%d.%H%M")
+          fi
+
+          if [[ ! "${new_version_name}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release version name must be plain semver (like 1.2.3 or YYYY.MMDD.HHMM)"
+            exit 1
+          fi
+
+          echo "Bumping version code from ${configured_version_code} to ${new_version_code}"
+          echo "Bumping version name from ${current_version} to ${new_version_name}"
+
+          perl -pi -e "s/^mira.versionCode=.*/mira.versionCode=${new_version_code}/" gradle.properties
+          perl -pi -e "s/^mira.versionName=.*/mira.versionName=${new_version_name}/" gradle.properties
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add gradle.properties
+          git commit -m "Bump version to ${new_version_name} (code: ${new_version_code}) [skip ci]"
+
+          if ! git push origin HEAD:main; then
+            echo "::error::Failed to push version bump to main. If main is protected, allow GitHub Actions to bypass protection or switch this workflow to use a release PAT."
+            exit 1
+          fi
+
+          tag_name="release/${new_version_name}"
+          git tag "${tag_name}"
+          git push origin "${tag_name}"
+
+          {
+            echo "version=${new_version_name}"
+            echo "version_code=${new_version_code}"
+            echo "tag_name=${tag_name}"
+          } >> "${GITHUB_OUTPUT}"
+
+  android:
+    name: Android release
+    needs:
+      - version
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag_name }}
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Write google-services.json
+        env:
+          GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_B64 }}
+          FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_STORAGE_BUCKET: ${{ secrets.FIREBASE_STORAGE_BUCKET }}
+        run: |
+          if [ -n "${GOOGLE_SERVICES_JSON_BASE64}" ]; then
+            echo "${GOOGLE_SERVICES_JSON_BASE64}" | base64 --decode > androidApp/google-services.json
+          else
+            cat > androidApp/google-services.json <<EOF
+          {
+            "project_info": {
+              "project_number": "0",
+              "project_id": "${FIREBASE_PROJECT_ID}",
+              "storage_bucket": "${FIREBASE_STORAGE_BUCKET}"
+            },
+            "client": [{
+              "client_info": {
+                "mobilesdk_app_id": "1:0:android:0",
+                "android_client_info": {"package_name": "com.joetr.mira"}
+              },
+              "oauth_client": [],
+              "api_key": [{"current_key": "${FIREBASE_WEB_API_KEY}"}],
+              "services": {"appinvite_service": {"other_platform_oauth_client": []}}
+            }],
+            "configuration_version": "1"
+          }
+          EOF
+          fi
+
+      - name: Configure Android signing
+        if: env.ANDROID_KEYSTORE_BASE64 != ''
+        shell: bash
+        run: |
+          echo "${ANDROID_KEYSTORE_BASE64}" | base64 --decode > release.keystore
+          {
+            echo "RELEASE_STORE_FILE=release.keystore"
+            echo "RELEASE_STORE_PASSWORD=${ANDROID_KEYSTORE_PASSWORD}"
+            echo "RELEASE_KEY_ALIAS=${ANDROID_KEY_ALIAS}"
+            echo "RELEASE_KEY_PASSWORD=${ANDROID_KEY_PASSWORD}"
+          } >> "${GITHUB_ENV}"
+
+      - name: Print release signing SHA-1
+        if: env.ANDROID_KEYSTORE_BASE64 != ''
+        shell: bash
+        run: |
+          echo "Add this release SHA-1 in Firebase → Project settings → Your apps → Android (com.joetr.mira):"
+          keytool -list -v \
+            -keystore release.keystore \
+            -alias "${ANDROID_KEY_ALIAS}" \
+            -storepass "${ANDROID_KEYSTORE_PASSWORD}" \
+            | awk '/SHA1:|SHA-1:/{print}'
+
+      - name: Build Android APK and bundle
+        env:
+          FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_AUTH_DOMAIN: ${{ secrets.FIREBASE_AUTH_DOMAIN }}
+          FIREBASE_STORAGE_BUCKET: ${{ secrets.FIREBASE_STORAGE_BUCKET }}
+          FIREBASE_FUNCTIONS_REGION: ${{ secrets.FIREBASE_FUNCTIONS_REGION }}
+          MIRA_GOOGLE_WEB_CLIENT_ID: ${{ secrets.MIRA_GOOGLE_WEB_CLIENT_ID }}
+          MIRA_GOOGLE_WEB_CLIENT_SECRET: ${{ secrets.MIRA_GOOGLE_WEB_CLIENT_SECRET }}
+        run: >
+          ./gradlew :androidApp:assembleRelease :androidApp:bundleRelease
+          -Pmira.versionName=${{ needs.version.outputs.version }}
+          -Pmira.versionCode=${{ needs.version.outputs.version_code }}
+          --no-daemon
+
+      - name: Collect Android release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-artifacts
+          apk="$(find androidApp/build/outputs/apk/release -name '*.apk' -print -quit)"
+          aab="$(find androidApp/build/outputs/bundle/release -name '*.aab' -print -quit)"
+          if [[ -z "${apk}" || -z "${aab}" ]]; then
+            echo "::error::Could not find Android APK and AAB release artifacts"
+            exit 1
+          fi
+          cp "${apk}" "release-artifacts/Mira-${VERSION}.apk"
+          cp "${aab}" "release-artifacts/Mira-${VERSION}.aab"
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+
+      - name: Upload Android artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-release
+          if-no-files-found: error
+          path: release-artifacts/*
+
+  linux:
+    name: Linux release
+    needs:
+      - version
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag_name }}
+
+      - name: Install packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fakeroot flatpak flatpak-builder imagemagick
+          sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          sudo flatpak install --noninteractive flathub org.freedesktop.Platform//25.08 org.freedesktop.Sdk//25.08
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build Linux packages
+        env:
+          FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_AUTH_DOMAIN: ${{ secrets.FIREBASE_AUTH_DOMAIN }}
+          FIREBASE_STORAGE_BUCKET: ${{ secrets.FIREBASE_STORAGE_BUCKET }}
+          FIREBASE_FUNCTIONS_REGION: ${{ secrets.FIREBASE_FUNCTIONS_REGION }}
+          MIRA_GOOGLE_WEB_CLIENT_ID: ${{ secrets.MIRA_GOOGLE_WEB_CLIENT_ID }}
+          MIRA_GOOGLE_WEB_CLIENT_SECRET: ${{ secrets.MIRA_GOOGLE_WEB_CLIENT_SECRET }}
+        run: >
+          ./gradlew :composeApp:packageReleaseDeb :composeApp:createReleaseDistributable
+          -Pmira.versionName=${{ needs.version.outputs.version }}
+          --no-daemon
+
+      - name: Prepare Flatpak icons
+        shell: bash
+        run: |
+          if [[ ! -f branding/mira.png ]]; then
+            python3 branding/generate_icons.py
+          fi
+          ./composeApp/flatpak/prepare-icons.sh
+
+      - name: Build Linux Flatpak bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-artifacts
+          (
+            cd composeApp/flatpak
+            flatpak-builder \
+              --force-clean \
+              --repo="${GITHUB_WORKSPACE}/flatpak-repo" \
+              "${GITHUB_WORKSPACE}/flatpak-build" \
+              com.joetr.mira.yml
+          )
+          flatpak build-bundle \
+            flatpak-repo \
+            "release-artifacts/Mira-${VERSION}.flatpak" \
+            com.joetr.mira \
+            --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+
+      - name: Collect Linux release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-artifacts
+          deb="$(find composeApp/build/compose/binaries -path '*/deb/*.deb' -print -quit)"
+          if [[ -z "${deb}" ]]; then
+            echo "::error::Could not find Linux DEB release artifact"
+            exit 1
+          fi
+          flatpak_bundle="release-artifacts/Mira-${VERSION}.flatpak"
+          if [[ ! -f "${flatpak_bundle}" ]]; then
+            echo "::error::Could not find Linux Flatpak release artifact"
+            exit 1
+          fi
+          cp "${deb}" "release-artifacts/Mira-${VERSION}.deb"
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+
+      - name: Upload Linux artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-release
+          if-no-files-found: error
+          path: release-artifacts/*
+
+  windows:
+    name: Windows release
+    needs:
+      - version
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag_name }}
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build Windows MSI
+        shell: pwsh
+        env:
+          FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_AUTH_DOMAIN: ${{ secrets.FIREBASE_AUTH_DOMAIN }}
+          FIREBASE_STORAGE_BUCKET: ${{ secrets.FIREBASE_STORAGE_BUCKET }}
+          FIREBASE_FUNCTIONS_REGION: ${{ secrets.FIREBASE_FUNCTIONS_REGION }}
+          MIRA_GOOGLE_WEB_CLIENT_ID: ${{ secrets.MIRA_GOOGLE_WEB_CLIENT_ID }}
+          MIRA_GOOGLE_WEB_CLIENT_SECRET: ${{ secrets.MIRA_GOOGLE_WEB_CLIENT_SECRET }}
+        run: >
+          ./gradlew :composeApp:packageMsi
+          "-Pmira.versionName=${{ needs.version.outputs.version }}"
+          --no-daemon
+
+      - name: Collect Windows release artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "release-artifacts" | Out-Null
+          $msi = Get-ChildItem -Path "composeApp/build/compose/binaries/main/msi" -Filter "*.msi" | Select-Object -First 1
+          if (-not $msi) {
+            throw "Could not find Windows MSI release artifact"
+          }
+          Copy-Item $msi.FullName "release-artifacts/Mira-${env:VERSION}.msi"
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          if-no-files-found: error
+          path: release-artifacts/*
+
+  macos:
+    name: macOS release
+    needs:
+      - version
+    runs-on: macos-latest
+    timeout-minutes: 90
+    env:
+      MACOS_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      MACOS_DEVELOPER_IDENTITY: ${{ secrets.MACOS_DEVELOPER_IDENTITY }}
+      MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag_name }}
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Import macOS signing certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=()
+          [[ -n "${MACOS_CERTIFICATE_BASE64}" ]] || missing+=("MACOS_CERTIFICATE_BASE64")
+          [[ -n "${MACOS_CERTIFICATE_PASSWORD}" ]] || missing+=("MACOS_CERTIFICATE_PASSWORD")
+          [[ -n "${MACOS_DEVELOPER_IDENTITY}" ]] || missing+=("MACOS_DEVELOPER_IDENTITY")
+          [[ -n "${MACOS_KEYCHAIN_PASSWORD}" ]] || missing+=("MACOS_KEYCHAIN_PASSWORD")
+          if (( ${#missing[@]} > 0 )); then
+            echo "::error::Missing required macOS release secrets: ${missing[*]}"
+            exit 1
+          fi
+
+          cert_path="${RUNNER_TEMP}/developer-id.p12"
+          keychain_path="${RUNNER_TEMP}/app-signing.keychain-db"
+          echo "${MACOS_CERTIFICATE_BASE64}" | base64 --decode > "${cert_path}"
+
+          security create-keychain -p "${MACOS_KEYCHAIN_PASSWORD}" "${keychain_path}"
+          security set-keychain-settings -lut 21600 "${keychain_path}"
+          security unlock-keychain -p "${MACOS_KEYCHAIN_PASSWORD}" "${keychain_path}"
+          security import "${cert_path}" -P "${MACOS_CERTIFICATE_PASSWORD}" -A -t cert -f pkcs12 -k "${keychain_path}"
+          security list-keychains -d user -s "${keychain_path}" login.keychain
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "${MACOS_KEYCHAIN_PASSWORD}" "${keychain_path}"
+
+          jpackage_signing_identity="${MACOS_DEVELOPER_IDENTITY#Developer ID Application: }"
+          jpackage_signing_identity="${jpackage_signing_identity#Developer ID Installer: }"
+          identity_list="$(security find-identity -v "${keychain_path}")"
+          if ! grep -Fq "Developer ID Application: ${jpackage_signing_identity}" <<< "${identity_list}"; then
+            echo "::error::MACOS_CERTIFICATE_BASE64 must include the Developer ID Application identity named by MACOS_DEVELOPER_IDENTITY"
+            exit 1
+          fi
+
+          {
+            echo "compose.desktop.mac.sign=true"
+            echo "compose.desktop.mac.signing.identity=${jpackage_signing_identity}"
+            echo "compose.desktop.mac.signing.keychain=${keychain_path}"
+          } >> "${HOME}/.gradle/gradle.properties"
+
+      - name: Build macOS DMG
+        env:
+          FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_AUTH_DOMAIN: ${{ secrets.FIREBASE_AUTH_DOMAIN }}
+          FIREBASE_STORAGE_BUCKET: ${{ secrets.FIREBASE_STORAGE_BUCKET }}
+          FIREBASE_FUNCTIONS_REGION: ${{ secrets.FIREBASE_FUNCTIONS_REGION }}
+          MIRA_GOOGLE_WEB_CLIENT_ID: ${{ secrets.MIRA_GOOGLE_WEB_CLIENT_ID }}
+          MIRA_GOOGLE_WEB_CLIENT_SECRET: ${{ secrets.MIRA_GOOGLE_WEB_CLIENT_SECRET }}
+        run: >
+          ./gradlew :composeApp:packageReleaseDmg
+          -Pmira.versionName=${{ needs.version.outputs.version }}
+          --no-daemon
+
+      - name: Print macOS packaging logs
+        if: failure()
+        shell: bash
+        run: |
+          log_dir="composeApp/build/compose/logs"
+          if [[ -d "${log_dir}" ]]; then
+            find "${log_dir}" -type f -name 'jpackage-*.txt' -print -exec sed -n '1,240p' {} \;
+          fi
+
+      - name: Collect macOS release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-artifacts
+          dmg="$(find composeApp/build/compose/binaries -path '*/dmg/*.dmg' -print -quit)"
+          if [[ -z "${dmg}" ]]; then
+            echo "::error::Could not find macOS DMG release artifact"
+            exit 1
+          fi
+          cp "${dmg}" "release-artifacts/Mira-${VERSION}.dmg"
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-release
+          if-no-files-found: error
+          path: release-artifacts/*
+
+  ios:
+    name: iOS release
+    needs:
+      - version
+    runs-on: macos-26
+    timeout-minutes: 90
+    env:
+      MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag_name }}
+
+      - name: Select Xcode 26
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '26'
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Write GoogleService-Info.plist
+        env:
+          GOOGLE_SERVICE_INFO_PLIST_BASE64: ${{ secrets.GOOGLE_SERVICE_INFO_PLIST_BASE64 || secrets.GOOGLE_SERVICE_INFO_PLIST_B64 }}
+          FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_STORAGE_BUCKET: ${{ secrets.FIREBASE_STORAGE_BUCKET }}
+          MIRA_GOOGLE_IOS_CLIENT_ID: ${{ secrets.MIRA_GOOGLE_IOS_CLIENT_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          plist_path="iosApp/iosApp/GoogleService-Info.plist"
+          if [[ -n "${GOOGLE_SERVICE_INFO_PLIST_BASE64}" ]]; then
+            echo "${GOOGLE_SERVICE_INFO_PLIST_BASE64}" | base64 --decode > "${plist_path}"
+            exit 0
+          fi
+          if [[ -z "${FIREBASE_WEB_API_KEY}" || -z "${FIREBASE_PROJECT_ID}" ]]; then
+            echo "::error::Set GOOGLE_SERVICE_INFO_PLIST_BASE64 or FIREBASE_WEB_API_KEY and FIREBASE_PROJECT_ID for iOS release builds"
+            exit 1
+          fi
+          client_id_block=""
+          reversed_client_id_block=""
+          if [[ -n "${MIRA_GOOGLE_IOS_CLIENT_ID}" ]]; then
+            reversed_client_id="com.googleusercontent.apps.${MIRA_GOOGLE_IOS_CLIENT_ID%%.apps.googleusercontent.com}"
+            client_id_block=$'  <key>CLIENT_ID</key>\n  <string>'"${MIRA_GOOGLE_IOS_CLIENT_ID}"$'</string>\n'
+            reversed_client_id_block=$'  <key>REVERSED_CLIENT_ID</key>\n  <string>'"${reversed_client_id}"$'</string>\n'
+          fi
+          printf '%s\n' \
+            '<?xml version="1.0" encoding="UTF-8"?>' \
+            '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+            '<plist version="1.0">' \
+            '<dict>' \
+            "${client_id_block}" \
+            "${reversed_client_id_block}" \
+            '  <key>API_KEY</key>' \
+            "  <string>${FIREBASE_WEB_API_KEY}</string>" \
+            '  <key>GCM_SENDER_ID</key>' \
+            '  <string>0</string>' \
+            '  <key>PLIST_VERSION</key>' \
+            '  <string>1</string>' \
+            '  <key>BUNDLE_ID</key>' \
+            '  <string>com.joetr.mira</string>' \
+            '  <key>PROJECT_ID</key>' \
+            "  <string>${FIREBASE_PROJECT_ID}</string>" \
+            '  <key>STORAGE_BUCKET</key>' \
+            "  <string>${FIREBASE_STORAGE_BUCKET}</string>" \
+            '  <key>IS_ADS_ENABLED</key>' \
+            '  <false/>' \
+            '  <key>IS_ANALYTICS_ENABLED</key>' \
+            '  <false/>' \
+            '  <key>IS_APPINVITE_ENABLED</key>' \
+            '  <true/>' \
+            '  <key>IS_GCM_ENABLED</key>' \
+            '  <true/>' \
+            '  <key>IS_SIGNIN_ENABLED</key>' \
+            '  <true/>' \
+            '  <key>GOOGLE_APP_ID</key>' \
+            '  <string>1:0:ios:0</string>' \
+            '</dict>' \
+            '</plist>' > "${plist_path}"
+
+      - name: Update iOS version info
+        shell: bash
+        run: |
+          plutil -replace CFBundleShortVersionString -string "${VERSION}" iosApp/iosApp/Info.plist
+          plutil -replace CFBundleVersion -string "${VERSION_CODE}" iosApp/iosApp/Info.plist
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          VERSION_CODE: ${{ needs.version.outputs.version_code }}
+
+      - name: Set up iOS code signing and profiles
+        shell: bash
+        run: |
+          if [[ -n "${IOS_PROVISIONING_PROFILE_BASE64}" && -n "${IOS_CERTIFICATE_BASE64}" ]]; then
+            echo "Setting up iOS code signing..."
+
+            ios_cert_path="${RUNNER_TEMP}/ios-developer.p12"
+            echo "${IOS_CERTIFICATE_BASE64}" | base64 --decode > "${ios_cert_path}"
+
+            keychain_path="${RUNNER_TEMP}/ios-signing.keychain-db"
+            security create-keychain -p "${MACOS_KEYCHAIN_PASSWORD}" "${keychain_path}"
+            security set-keychain-settings -lut 21600 "${keychain_path}"
+            security unlock-keychain -p "${MACOS_KEYCHAIN_PASSWORD}" "${keychain_path}"
+            security import "${ios_cert_path}" -P "${IOS_CERTIFICATE_PASSWORD}" -A -t cert -f pkcs12 -k "${keychain_path}"
+            security list-keychains -d user -s "${keychain_path}" login.keychain
+            security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "${MACOS_KEYCHAIN_PASSWORD}" "${keychain_path}"
+
+            mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+            profile_path="${HOME}/Library/MobileDevice/Provisioning Profiles/profile.mobileprovision"
+            echo "${IOS_PROVISIONING_PROFILE_BASE64}" | base64 --decode > "${profile_path}"
+
+            security cms -D -i "${profile_path}" > "${RUNNER_TEMP}/profile.plist"
+            UUID=$(plutil -extract UUID raw "${RUNNER_TEMP}/profile.plist")
+            TEAM_ID=$(plutil -extract TeamIdentifier.0 raw "${RUNNER_TEMP}/profile.plist")
+            APPLICATION_ID=$(plutil -extract Entitlements.application-identifier raw "${RUNNER_TEMP}/profile.plist")
+            BUNDLE_ID="${APPLICATION_ID#*.}"
+
+            mv "${profile_path}" "${HOME}/Library/MobileDevice/Provisioning Profiles/${UUID}.mobileprovision"
+
+            echo "Profile details:"
+            echo "  UUID: ${UUID}"
+            echo "  Team ID: ${TEAM_ID}"
+            echo "  Bundle ID: ${BUNDLE_ID}"
+
+            printf '%s\n' \
+              '<?xml version="1.0" encoding="UTF-8"?>' \
+              '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
+              '<plist version="1.0">' \
+              '<dict>' \
+              '  <key>method</key>' \
+              '  <string>development</string>' \
+              '  <key>signingStyle</key>' \
+              '  <string>manual</string>' \
+              "  <key>teamID</key>" \
+              "  <string>${TEAM_ID}</string>" \
+              '  <key>provisioningProfiles</key>' \
+              '  <dict>' \
+              "    <key>${BUNDLE_ID}</key>" \
+              "    <string>${UUID}</string>" \
+              '  </dict>' \
+              '</dict>' \
+              '</plist>' > "${RUNNER_TEMP}/ExportOptions.plist"
+
+            {
+              echo "SIGN_IOS=true"
+              echo "IOS_TEAM_ID=${TEAM_ID}"
+              echo "IOS_PROVISIONING_PROFILE_UUID=${UUID}"
+            } >> "${GITHUB_ENV}"
+          else
+            echo "iOS signing secrets not fully provided. Building unsigned IPA."
+            echo "SIGN_IOS=false" >> "${GITHUB_ENV}"
+          fi
+        env:
+          IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
+          IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+
+      - name: Build and package iOS app
+        shell: bash
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          package_unsigned_ipa() {
+            echo "Building unsigned iOS app..."
+            xcodebuild \
+              -project iosApp/iosApp.xcodeproj \
+              -scheme iosApp \
+              -configuration Release \
+              -sdk iphoneos \
+              -derivedDataPath "${RUNNER_TEMP}/ios-release-derived" \
+              CODE_SIGNING_ALLOWED=NO \
+              CODE_SIGNING_REQUIRED=NO \
+              clean build
+
+            app_path="$(find "${RUNNER_TEMP}/ios-release-derived/Build/Products/Release-iphoneos" -maxdepth 1 -name '*.app' -print -quit)"
+            if [[ -z "${app_path}" ]]; then
+              echo "::error::Could not find built iOS app"
+              exit 1
+            fi
+            mkdir -p Payload release-artifacts
+            cp -R "${app_path}" Payload/
+            zip -r "release-artifacts/Mira-${VERSION}.ipa" Payload
+            rm -rf Payload
+          }
+
+          if [[ "${SIGN_IOS}" == "true" ]]; then
+            echo "Building signed iOS app..."
+            set +e
+            xcodebuild \
+              -project iosApp/iosApp.xcodeproj \
+              -scheme iosApp \
+              -configuration Release \
+              -sdk iphoneos \
+              -derivedDataPath "${RUNNER_TEMP}/ios-release-derived" \
+              -archivePath "${RUNNER_TEMP}/iosApp.xcarchive" \
+              DEVELOPMENT_TEAM="${IOS_TEAM_ID}" \
+              PROVISIONING_PROFILE_SPECIFIER="${IOS_PROVISIONING_PROFILE_UUID}" \
+              CODE_SIGN_STYLE="Manual" \
+              archive
+            archive_status=$?
+
+            if [[ "${archive_status}" -eq 0 ]]; then
+              xcodebuild -exportArchive \
+                -archivePath "${RUNNER_TEMP}/iosApp.xcarchive" \
+                -exportPath "${RUNNER_TEMP}/exported" \
+                -exportOptionsPlist "${RUNNER_TEMP}/ExportOptions.plist"
+              export_status=$?
+            else
+              export_status=1
+            fi
+            set -e
+
+            if [[ "${archive_status}" -eq 0 && "${export_status}" -eq 0 ]]; then
+              ipa_path="$(find "${RUNNER_TEMP}/exported" -name '*.ipa' -print -quit)"
+              if [[ -z "${ipa_path}" ]]; then
+                echo "::error::Could not find exported IPA file"
+                exit 1
+              fi
+              mkdir -p release-artifacts
+              cp "${ipa_path}" "release-artifacts/Mira-${VERSION}.ipa"
+            else
+              echo "::warning::Signed iOS archive/export failed (check IOS_CERTIFICATE_BASE64 matches IOS_PROVISIONING_PROFILE_BASE64). Building unsigned IPA."
+              package_unsigned_ipa
+            fi
+          else
+            package_unsigned_ipa
+          fi
+
+      - name: Upload iOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-release
+          if-no-files-found: error
+          path: release-artifacts/*
+
+  firebase:
+    name: Deploy Firebase backend
+    needs:
+      - version
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag_name }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: firebase/functions/package-lock.json
+
+      - name: Install Firebase CLI
+        run: npm install -g firebase-tools
+
+      - name: Validate Firebase deploy secrets
+        shell: bash
+        run: |
+          missing=()
+          [[ -n "${{ secrets.FIREBASE_TOKEN }}" ]] || missing+=("FIREBASE_TOKEN")
+          [[ -n "${{ secrets.FIREBASE_PROJECT_ID }}" ]] || missing+=("FIREBASE_PROJECT_ID")
+          if (( ${#missing[@]} > 0 )); then
+            echo "::error::Missing required Firebase deploy secrets: ${missing[*]}"
+            exit 1
+          fi
+
+      - name: Deploy Cloud Functions, Firestore, and Storage
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_FUNCTIONS_REGION: ${{ secrets.FIREBASE_FUNCTIONS_REGION }}
+        run: ./scripts/deploy-firebase-backend.sh --smoke-test
+
+  web:
+    name: Web release
+    needs:
+      - version
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag_name }}
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: ${{ env.JAVA_DISTRIBUTION }}
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Cache Kotlin Wasm Binaryen
+        uses: actions/cache@v4
+        with:
+          path: ~/.gradle/binaryen
+          key: ${{ runner.os }}-kotlin-wasm-binaryen-${{ hashFiles('gradle/libs.versions.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-kotlin-wasm-binaryen-
+
+      - name: Build wasm
+        env:
+          FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_AUTH_DOMAIN: ${{ secrets.FIREBASE_AUTH_DOMAIN }}
+          FIREBASE_STORAGE_BUCKET: ${{ secrets.FIREBASE_STORAGE_BUCKET }}
+          FIREBASE_FUNCTIONS_REGION: ${{ secrets.FIREBASE_FUNCTIONS_REGION }}
+          MIRA_GOOGLE_WEB_CLIENT_ID: ${{ secrets.MIRA_GOOGLE_WEB_CLIENT_ID }}
+          MIRA_GOOGLE_WEB_CLIENT_SECRET: ${{ secrets.MIRA_GOOGLE_WEB_CLIENT_SECRET }}
+        run: ./gradlew :composeApp:wasmJsBrowserDistribution --no-daemon
+
+      - name: Prepare GitHub Pages artifact
+        shell: bash
+        run: |
+          dist="composeApp/build/dist/wasmJs/productionExecutable"
+          touch "${dist}/.nojekyll"
+          cp "${dist}/index.html" "${dist}/404.html"
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: composeApp/build/dist/wasmJs/productionExecutable
+          include-hidden-files: true
+
+  github-release:
+    name: Create GitHub release
+    needs:
+      - version
+      - android
+      - linux
+      - windows
+      - macos
+    if: always() && needs.version.result == 'success' && needs.android.result == 'success' && needs.linux.result == 'success' && needs.windows.result == 'success' && needs.macos.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.tag_name }}
+          name: Mira ${{ needs.version.outputs.version }}
+          generate_release_notes: true
+          files: |
+            release-artifacts/**/*.apk
+            release-artifacts/**/*.aab
+            release-artifacts/**/*.deb
+            release-artifacts/**/*.flatpak
+            release-artifacts/**/*.msi
+            release-artifacts/**/*.dmg
+
+  attach-ios-release:
+    name: Attach iOS to release
+    needs:
+      - version
+      - ios
+      - github-release
+    if: always() && needs.ios.result == 'success' && needs.github-release.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Download iOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ios-release
+          path: release-artifacts
+
+      - name: Upload iOS IPA to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.tag_name }}
+          files: release-artifacts/**/*.ipa
+
+  web-pages-deploy:
+    name: Deploy web to GitHub Pages
+    needs:
+      - firebase
+      - web
+    if: always() && needs.firebase.result == 'success' && needs.web.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.pages_url.outputs.page_url }}
+    permissions:
+      contents: read
+      id-token: write
+      pages: write
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
+        continue-on-error: true
+        with:
+          timeout: 900000
+          error_count: 20
+
+      - name: Wait before retrying GitHub Pages deployment
+        if: steps.deployment.outcome == 'failure'
+        shell: bash
+        run: sleep 30
+
+      - name: Retry GitHub Pages deployment
+        if: steps.deployment.outcome == 'failure'
+        id: deployment_retry
+        uses: actions/deploy-pages@v5
+        with:
+          timeout: 900000
+          error_count: 20
+
+      - name: Set GitHub Pages deployment URL
+        if: always()
+        id: pages_url
+        shell: bash
+        env:
+          PRIMARY_PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+          RETRY_PAGE_URL: ${{ steps.deployment_retry.outputs.page_url }}
+        run: |
+          page_url="${RETRY_PAGE_URL:-${PRIMARY_PAGE_URL}}"
+          if [[ -z "${page_url}" ]]; then
+            echo "::error::GitHub Pages deployment did not produce a page URL"
+            exit 1
+          fi
+          echo "page_url=${page_url}" >> "${GITHUB_OUTPUT}"
