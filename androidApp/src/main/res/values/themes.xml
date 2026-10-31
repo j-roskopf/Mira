@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Compose draws the real theme, but the window background is what shows during launch.
+      Matching the Mira canvas tokens avoids a white flash on cold start.
+    -->
+    <style name="Theme.Mira" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/mira_canvas</item>
+    </style>
+</resources>

@@ -38,7 +38,9 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>Mira uses the camera to scan cookbook pages.</string>
+	<string>Mira uses the camera to record video entries in your journal.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Mira uses the microphone to record voice entries in your journal.</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 </dict>

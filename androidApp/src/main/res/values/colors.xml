@@ -1,5 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="ic_launcher_background">#F2F5EE</color>
-    <color name="mira_leaf">#2E7160</color>
+    <color name="mira_canvas">#FBFAF8</color>
 </resources>

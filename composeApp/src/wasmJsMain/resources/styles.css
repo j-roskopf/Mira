@@ -5,6 +5,16 @@ body {
     margin: 0;
     padding: 0;
     overflow: hidden;
+    /* The wasm bundle takes a moment to paint; starting on the canvas colour avoids a white
+       flash, and matching it in both schemes keeps the first frame honest. */
+    background: #0A0A0B;
+}
+
+@media (prefers-color-scheme: light) {
+    html,
+    body {
+        background: #FBFAF8;
+    }
 }
 
 #composeApp {
