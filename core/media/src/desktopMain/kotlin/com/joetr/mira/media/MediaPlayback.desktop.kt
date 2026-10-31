@@ -152,14 +152,9 @@ internal class DesktopMediaPlayerController : MediaPlayerController {
         }.getOrNull() ?: return@withContext
 
         val process = runCatching {
-            ProcessBuilder(
-                binary, "-hide_banner", "-loglevel", "error",
-                "-ss", (fromMs / 1000.0).toString(),
-                "-i", path,
-                "-vn",
-                "-f", "s16le", "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
-                "pipe:1",
-            ).redirectErrorStream(false).start()
+            ProcessBuilder(buildAudioPlaybackCommand(binary, path, fromMs))
+                .redirectErrorStream(false)
+                .start()
         }.getOrNull()
 
         if (process == null) {
@@ -195,15 +190,9 @@ internal class DesktopMediaPlayerController : MediaPlayerController {
         val binary = FfmpegBinary.path ?: return@withContext
         val fps = 24
         val process = runCatching {
-            ProcessBuilder(
-                binary, "-hide_banner", "-loglevel", "error",
-                "-ss", (fromMs / 1000.0).toString(),
-                "-i", path,
-                "-an",
-                "-r", fps.toString(),
-                "-f", "mjpeg", "-q:v", "6",
-                "pipe:1",
-            ).redirectErrorStream(false).start()
+            ProcessBuilder(buildVideoPlaybackCommand(binary, path, fromMs, fps))
+                .redirectErrorStream(false)
+                .start()
         }.getOrNull() ?: return@withContext
         videoProcess = process
 
@@ -236,7 +225,7 @@ internal class DesktopMediaPlayerController : MediaPlayerController {
     private suspend fun probeDurationMs(path: String): Long = withContext(Dispatchers.IO) {
         val binary = FfmpegBinary.path ?: return@withContext 0L
         val process = runCatching {
-            ProcessBuilder(binary, "-hide_banner", "-i", path)
+            ProcessBuilder(buildProbeCommand(binary, path))
                 .redirectErrorStream(true)
                 .start()
         }.getOrNull() ?: return@withContext 0L
@@ -331,3 +320,47 @@ public actual fun VideoSurface(
         }
     }
 }
+
+/**
+ * Decodes an attachment to raw PCM for `javax.sound.sampled`.
+ *
+ * Extracted alongside the capture command so the trimmed FFmpeg build is verified to carry what
+ * playback needs — the pcm_s16le encoder and the s16le muxer, neither of which a capture-only
+ * audit would have caught.
+ */
+internal fun buildAudioPlaybackCommand(
+    binary: String,
+    path: String,
+    fromMs: Long,
+): List<String> = listOf(
+    binary, "-hide_banner", "-loglevel", "error",
+    "-ss", (fromMs / 1000.0).toString(),
+    "-i", path,
+    "-vn",
+    "-f", "s16le", "-acodec", "pcm_s16le",
+    "-ar", PLAYBACK_SAMPLE_RATE.toString(), "-ac", PLAYBACK_CHANNELS.toString(),
+    "pipe:1",
+)
+
+/** Decodes video to MJPEG frames for the Compose surface. */
+internal fun buildVideoPlaybackCommand(
+    binary: String,
+    path: String,
+    fromMs: Long,
+    fps: Int,
+): List<String> = listOf(
+    binary, "-hide_banner", "-loglevel", "error",
+    "-ss", (fromMs / 1000.0).toString(),
+    "-i", path,
+    "-an",
+    "-r", fps.toString(),
+    "-f", "mjpeg", "-q:v", "6",
+    "pipe:1",
+)
+
+/** Asks FFmpeg to report the file, so its own duration line can be read back. */
+internal fun buildProbeCommand(binary: String, path: String): List<String> =
+    listOf(binary, "-hide_banner", "-i", path)
+
+internal const val PLAYBACK_SAMPLE_RATE: Int = 44_100
+internal const val PLAYBACK_CHANNELS: Int = 2

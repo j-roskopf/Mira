@@ -89,7 +89,17 @@ CONFIGURE_FLAGS=(
   --enable-decoder=aac
   --enable-decoder=mjpeg
   --enable-decoder=rawvideo
+  # Capture devices hand over raw PCM, and the macOS microphone specifically delivers 32-bit
+  # float — without pcm_f32le, recording fails with "no decoder found for: pcm_f32le".
+  --enable-decoder=pcm_f32le
   --enable-decoder=pcm_s16le
+  --enable-decoder=pcm_s24le
+  --enable-decoder=pcm_s32le
+  --enable-decoder=pcm_u8
+  # Desktop playback decodes to signed 16-bit PCM and feeds it to javax.sound.sampled, which
+  # needs both the encoder and the raw muxer.
+  --enable-encoder=pcm_s16le
+  --enable-muxer=pcm_s16le
 
   # Muxers: mp4 for video, ipod for m4a audio, mjpeg + image2 for the preview and posters,
   # tee so one capture can write the file and the preview stream at once.
@@ -105,8 +115,8 @@ CONFIGURE_FLAGS=(
   --enable-demuxer=wav
   --enable-demuxer=aac
   # Synthetic sources, so the shipped binary is the one the capture tests exercise rather than
-  # whatever ffmpeg happens to be on the build machine.
-  --enable-demuxer=lavfi
+  # whatever ffmpeg happens to be on the build machine. lavfi is an input device, not a demuxer.
+  --enable-indev=lavfi
   --enable-filter=testsrc
   --enable-filter=sine
 
@@ -150,7 +160,17 @@ FLAGS_FINGERPRINT="$(printf '%s\n' "${CONFIGURE_FLAGS[@]}" | shasum | cut -d' ' 
 if [[ ! -f config.h || "$(cat .mira-flags 2>/dev/null)" != "${FLAGS_FINGERPRINT}" ]]; then
   echo "==> Configuring (${TARGET})"
   make distclean >/dev/null 2>&1 || true
-  ./configure "${CONFIGURE_FLAGS[@]}" --prefix="${WORK}/install"
+  ./configure "${CONFIGURE_FLAGS[@]}" --prefix="${WORK}/install" 2>&1 | tee .mira-configure.log
+
+  # configure only warns when an option matches nothing, so a renamed or mistyped component
+  # silently produces a binary missing exactly the codec it was asked for. The muxer is called
+  # pcm_s16le, not s16le, and that typo shipped a build that could record but never play back.
+  if grep -q "did not match anything" .mira-configure.log; then
+    echo "::error::FFmpeg configure ignored an option:" >&2
+    grep "did not match anything" .mira-configure.log >&2
+    exit 1
+  fi
+
   echo "${FLAGS_FINGERPRINT}" > .mira-flags
 fi
 
