@@ -14,6 +14,7 @@ Visual language lives in [DESIGN.md](DESIGN.md). Release mechanics live in
 | | Android | iOS | Desktop | Web (wasm) |
 |---|---|---|---|---|
 | Text entries | ✅ | ✅ | ✅ | ✅ |
+| Playback | MediaPlayer | AVPlayer | FFmpeg → PCM / MJPEG | `<audio>` / `<video>` |
 | Audio capture | MediaRecorder | AVAudioRecorder | FFmpeg subprocess | MediaRecorder + ffmpeg.wasm |
 | Video capture | CameraX Recorder | AVCaptureMovieFileOutput | FFmpeg subprocess | MediaRecorder + ffmpeg.wasm |
 | Local media retention | LRU, capped | LRU, capped | Unlimited | None — stream only |
@@ -203,6 +204,22 @@ decoded into Compose frames. One camera handle, no second process.
 
 **Capture limits:** video 1080p / ~4 Mbps / H.264; audio 64 kbps mono AAC; 10 minutes maximum with
 a soft warning at 5.
+
+### Playback
+
+| Platform | Implementation |
+|---|---|
+| Android | `MediaPlayer` + `SurfaceView` |
+| iOS | `AVPlayer` + `AVPlayerLayer` |
+| Web | a real `<audio>`/`<video>` element positioned over the space Compose reserves |
+| Desktop | the bundled FFmpeg: PCM into `javax.sound.sampled`, MJPEG frames for video |
+
+The source is resolved per device: a local file where one is cached, a Storage stream otherwise,
+and raw bytes only when neither exists — which is the web case and anything not yet uploaded. One
+player is alive per entry, so starting a second attachment stops the first.
+
+Desktop playback costs nothing extra because the FFmpeg binary is already bundled for capture. The
+JDK can play PCM but has no AAC or H.264 decoder, so the same subprocess that records also decodes.
 
 ### Upload
 

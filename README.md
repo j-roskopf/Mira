@@ -42,6 +42,10 @@ Desktop capture runs a **bundled, size-trimmed static FFmpeg** (~10–20 MB; a s
 120–160 MB). One process writes the file and streams MJPEG on stdout for the live preview via the
 `tee` muxer, so the camera is only opened once.
 
+Playback mirrors it: `MediaPlayer` on Android, `AVPlayer` on iOS, a real `<audio>`/`<video>` element
+on web, and on desktop the same bundled FFmpeg decoding to PCM and MJPEG — the JDK plays PCM but has
+no AAC or H.264 decoder, so the binary earns its place twice.
+
 ## Media retention
 
 Once Storage confirms an upload, the local copy is a cache and never the only copy — so evicting it
