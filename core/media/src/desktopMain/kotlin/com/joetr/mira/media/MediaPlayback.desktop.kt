@@ -265,41 +265,71 @@ internal class DesktopMediaPlayerController : MediaPlayerController {
  * found by scanning for `FFD8` … `FFD9`.
  */
 internal suspend fun readJpegFrames(stream: InputStream, onFrame: suspend (ByteArray) -> Boolean) {
-    val buffer = ArrayList<Byte>(256 * 1024)
+    var buffer = ByteArray(256 * 1024)
+    var size = 0
+    var scanned = 0
     val chunk = ByteArray(32 * 1024)
+
     try {
         while (true) {
             val read = stream.read(chunk)
             if (read <= 0) break
-            for (index in 0 until read) buffer.add(chunk[index])
 
-            var start = indexOfJpegMarker(buffer, 0xD8)
-            var end = if (start >= 0) indexOfJpegMarker(buffer, 0xD9, start + 2) else -1
-            while (start >= 0 && end > start) {
-                val frame = ByteArray(end + 2 - start) { buffer[start + it] }
-                if (!onFrame(frame)) return
-                repeat(end + 2) { if (buffer.isNotEmpty()) buffer.removeAt(0) }
-                start = indexOfJpegMarker(buffer, 0xD8)
-                end = if (start >= 0) indexOfJpegMarker(buffer, 0xD9, start + 2) else -1
+            if (size + read > buffer.size) {
+                buffer = buffer.copyOf(maxOf(buffer.size * 2, size + read))
+            }
+            chunk.copyInto(buffer, size, 0, read)
+            size += read
+
+            while (true) {
+                val start = indexOfMarker(buffer, size, 0xD8, scanned)
+                if (start < 0) {
+                    // Keep one byte back: a marker may straddle the next read.
+                    scanned = maxOf(0, size - 1)
+                    break
+                }
+                val end = indexOfMarker(buffer, size, 0xD9, start + 2)
+                if (end < 0) {
+                    // Resume from this frame's own start. Skipping ahead to the end of the buffer
+                    // loses the SOI we just found, and the next pass then latches onto a *later*
+                    // frame — which silently drops every frame that straddles a read.
+                    scanned = start
+                    break
+                }
+
+                if (!onFrame(buffer.copyOfRange(start, end + 2))) return
+
+                // One compaction per frame rather than one shift per byte: the previous version
+                // removed the frame a byte at a time, which cost roughly half of real time on a
+                // 30fps preview and starved the frame counter the stall watchdog reads.
+                val consumed = end + 2
+                buffer.copyInto(buffer, 0, consumed, size)
+                size -= consumed
+                scanned = 0
             }
         }
     } catch (_: Throwable) {
-        // The stream closes when playback stops.
+        // The stream closes when capture or playback stops.
     }
 }
 
-private fun indexOfJpegMarker(buffer: List<Byte>, marker: Int, from: Int = 0): Int {
-    var index = from
-    while (index < buffer.size - 1) {
-        if (buffer[index] == 0xFF.toByte() && buffer[index + 1] == marker.toByte()) return index
+private fun indexOfMarker(buffer: ByteArray, size: Int, marker: Int, from: Int): Int {
+    var index = maxOf(0, from)
+    val limit = size - 1
+    val second = marker.toByte()
+    while (index < limit) {
+        if (buffer[index] == 0xFF.toByte() && buffer[index + 1] == second) return index
         index++
     }
     return -1
 }
 
 internal fun decodeJpegFrame(bytes: ByteArray): ImageBitmap? =
-    runCatching { org.jetbrains.skia.Image.makeFromEncoded(bytes).toComposeImageBitmap() }
-        .getOrNull()
+    runCatching { decodeJpegFrameOrThrow(bytes) }.getOrNull()
+
+/** Same decode without the catch, so failures can be diagnosed instead of silently counted as zero. */
+internal fun decodeJpegFrameOrThrow(bytes: ByteArray): ImageBitmap =
+    org.jetbrains.skia.Image.makeFromEncoded(bytes).toComposeImageBitmap()
 
 @Composable
 public actual fun VideoSurface(

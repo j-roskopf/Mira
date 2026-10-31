@@ -29,6 +29,10 @@ kotlin {
         val desktopTest by getting {
             dependencies {
                 implementation(libs.junit)
+                // Skiko's native library. Without it every JPEG decode throws
+                // UnsatisfiedLinkError and the preview tests silently measure nothing — the app
+                // gets it through compose.desktop.currentOs, the test classpath does not.
+                implementation(compose.desktop.currentOs)
             }
         }
     }

@@ -46,8 +46,13 @@ internal class DesktopMediaRecorderController : MediaRecorderController {
         const val STARTUP_GRACE_MS = 1_200L
         const val MAX_STDERR_LINES = 40
 
-        /** How long a capture may produce nothing before it is treated as blocked. */
-        const val STALL_TIMEOUT_MS = 4_000L
+        /**
+         * How long a capture may produce nothing before it is treated as blocked.
+         *
+         * Generous on purpose: a cold camera takes a second or two to deliver its first frame,
+         * and calling that a permission failure is worse than waiting.
+         */
+        const val STALL_TIMEOUT_MS = 8_000L
     }
 
 
@@ -62,7 +67,10 @@ internal class DesktopMediaRecorderController : MediaRecorderController {
     private var startedAt: Long = 0
     private var currentKind: CaptureKind = CaptureKind.AUDIO
     private val stderrLines = mutableListOf<String>()
-    private var framesSeen = 0
+
+    /** Frames FFmpeg has produced. This is the camera-health signal, not the decoded count. */
+    private var framesReceived = 0
+    private var framesDecoded = 0
 
     override suspend fun start(kind: CaptureKind) {
         if (FfmpegBinary.path == null) {
@@ -112,6 +120,15 @@ internal class DesktopMediaRecorderController : MediaRecorderController {
         process = started
         scope.launch { drain(started.errorStream) }
 
+        // Read stdout before waiting, not after. The preview pipe holds about 64KB — roughly
+        // three frames — and once it fills FFmpeg blocks on the write. With tee that stalls the
+        // mp4 branch as well, so the whole capture would sit still for the length of the grace.
+        framesReceived = 0
+        framesDecoded = 0
+        if (kind == CaptureKind.VIDEO) {
+            scope.launch { readMjpegFrames(started.inputStream) }
+        }
+
         // Startup failures are immediate; a healthy capture is still alive after this.
         val exitedEarly = withContext(Dispatchers.IO) {
             started.waitFor(STARTUP_GRACE_MS, TimeUnit.MILLISECONDS)
@@ -124,10 +141,6 @@ internal class DesktopMediaRecorderController : MediaRecorderController {
         startedAt = System.currentTimeMillis()
         _state.value = RecordingState.Recording(0)
 
-        framesSeen = 0
-        if (kind == CaptureKind.VIDEO) {
-            scope.launch { readMjpegFrames(started.inputStream) }
-        }
         scope.launch { tickElapsed() }
         scope.launch { watchForDeath(started) }
         scope.launch { watchForStall(started, kind, file) }
@@ -230,9 +243,12 @@ internal class DesktopMediaRecorderController : MediaRecorderController {
 
     private suspend fun readMjpegFrames(stream: InputStream) = withContext(Dispatchers.IO) {
         readJpegFrames(stream) { bytes ->
+            // Count what arrived, then what decoded. Gating the watchdog on decoding made a
+            // preview problem indistinguishable from a camera that was never granted access.
+            framesReceived++
             decodeJpegFrame(bytes)?.let {
                 previewFrame.value = it
-                framesSeen++
+                framesDecoded++
             }
             isActive
         }
@@ -250,7 +266,7 @@ internal class DesktopMediaRecorderController : MediaRecorderController {
         if (process !== active || _state.value !is RecordingState.Recording) return
 
         val producedSomething =
-            if (kind == CaptureKind.VIDEO) framesSeen > 0 else file.length() > 0
+            if (kind == CaptureKind.VIDEO) framesReceived > 0 else file.length() > 0
         if (producedSomething) return
 
         active.destroyForcibly()
