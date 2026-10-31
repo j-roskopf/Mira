@@ -149,6 +149,22 @@ compose.desktop {
         mainClass = "com.joetr.mira.app.MainKt"
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
+
+            // jlink strips every JDK module that is not named here, and the failure only shows up
+            // in a packaged build: SQLDelight's JDBC driver needs java.sql, Ktor's CIO engine
+            // needs java.naming for DNS and jdk.unsupported for its buffer pooling.
+            modules(
+                "java.desktop",
+                "java.instrument",
+                "java.logging",
+                "java.management",
+                "java.naming",
+                "java.net.http",
+                "java.sql",
+                "java.xml",
+                "jdk.unsupported",
+            )
+
             packageName = "Mira"
 
             // Desktop capture runs a bundled FFmpeg subprocess; scripts/build-ffmpeg.sh drops the

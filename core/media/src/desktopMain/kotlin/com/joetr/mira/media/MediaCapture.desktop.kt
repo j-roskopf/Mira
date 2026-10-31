@@ -139,51 +139,14 @@ internal class DesktopMediaRecorderController : MediaRecorderController {
         kind: CaptureKind,
         file: File,
         pixelFormat: String?,
-    ): List<String> = buildList {
-        add(binary)
-        add("-hide_banner")
-        add("-loglevel")
-        add("error")
-        addAll(
-            if (kind == CaptureKind.VIDEO) videoInputArgs(pixelFormat) else audioInputArgs(),
-        )
-        add("-t")
-        add((CaptureLimits.MAX_DURATION_MS / 1000).toString())
-
-        add("-c:a")
-        add("aac")
-        add("-b:a")
-        add(CaptureLimits.AUDIO_BITRATE.toString())
-        add("-ac")
-        add(CaptureLimits.AUDIO_CHANNELS.toString())
-        add("-ar")
-        add(CaptureLimits.AUDIO_SAMPLE_RATE.toString())
-
-        if (kind == CaptureKind.VIDEO) {
-            add("-c:v")
-            add("libx264")
-            add("-preset")
-            add("veryfast")
-            add("-b:v")
-            add(CaptureLimits.VIDEO_BITRATE.toString())
-            // format belongs in the filter chain, not -pix_fmt: it converts the camera's native
-            // format to the one H.264 needs, on the output side where it cannot be mistaken for
-            // a request to the capture device.
-            add("-vf")
-            add("scale=${CaptureLimits.VIDEO_WIDTH}:-2,format=yuv420p")
-            // File and preview from one capture: the file gets mp4, stdout gets MJPEG.
-            add("-f")
-            add("tee")
-            add("-map")
-            add("0:v")
-            add("-map")
-            add(if (desktopOs == DesktopOs.LINUX) "1:a" else "0:a")
-            add("[f=mp4]${file.absolutePath}|[f=mjpeg:s=640x360]pipe:1")
-        } else {
-            add("-y")
-            add(file.absolutePath)
-        }
-    }
+    ): List<String> = buildCaptureCommand(
+        binary = binary,
+        kind = kind,
+        outputPath = file.absolutePath,
+        inputArgs = if (kind == CaptureKind.VIDEO) videoInputArgs(pixelFormat) else audioInputArgs(),
+        // Linux opens video and audio as two separate inputs; macOS and Windows as one.
+        audioInputIndex = if (desktopOs == DesktopOs.LINUX) 1 else 0,
+    )
 
     override suspend fun stop() {
         val running = process ?: return
@@ -368,3 +331,80 @@ public actual fun CameraPreview(
         }
     }
 }
+
+/**
+ * Builds the FFmpeg capture command.
+ *
+ * Extracted from the controller so the pipeline can be tested against synthetic `lavfi` inputs,
+ * which need no camera or microphone and therefore run anywhere.
+ *
+ * Video takes **two encoders**, not one. The `tee` muxer shares a single encoded stream across its
+ * slaves, so an H.264 file and an MJPEG preview cannot come from the same encode — tee rejects it
+ * with "mjpeg muxer supports only codec mjpeg for type video". The filter graph splits the camera
+ * feed, each branch gets its own encoder, and `select` routes the right streams to each slave.
+ */
+internal fun buildCaptureCommand(
+    binary: String,
+    kind: CaptureKind,
+    outputPath: String,
+    inputArgs: List<String>,
+    audioInputIndex: Int,
+    durationSeconds: Long = CaptureLimits.MAX_DURATION_MS / 1000,
+): List<String> = buildList {
+    add(binary)
+    add("-hide_banner")
+    add("-loglevel")
+    add("error")
+    addAll(inputArgs)
+    add("-t")
+    add(durationSeconds.toString())
+
+    if (kind == CaptureKind.VIDEO) {
+        add("-filter_complex")
+        add(
+            "[0:v]split=2[rec][prev];" +
+                "[rec]scale=${CaptureLimits.VIDEO_WIDTH}:-2,format=yuv420p[vrec];" +
+                "[prev]scale=$PREVIEW_WIDTH:-2,format=yuvj420p[vprev]",
+        )
+        add("-map")
+        add("[vrec]")
+        add("-map")
+        add("[vprev]")
+        add("-map")
+        add("$audioInputIndex:a")
+
+        add("-c:v:0")
+        add("libx264")
+        add("-preset")
+        add("veryfast")
+        add("-b:v:0")
+        add(CaptureLimits.VIDEO_BITRATE.toString())
+        add("-c:v:1")
+        add("mjpeg")
+        add("-q:v:1")
+        add("6")
+    }
+
+    add("-c:a")
+    add("aac")
+    add("-b:a")
+    add(CaptureLimits.AUDIO_BITRATE.toString())
+    add("-ac")
+    add(CaptureLimits.AUDIO_CHANNELS.toString())
+    add("-ar")
+    add(CaptureLimits.AUDIO_SAMPLE_RATE.toString())
+
+    if (kind == CaptureKind.VIDEO) {
+        add("-f")
+        add("tee")
+        // Streams 0 and 1 are the H.264 and MJPEG branches in -map order, 2 is the audio. The
+        // comma inside a tee slave option must be escaped or tee reads it as the next option.
+        add("[select=0\\,2:f=mp4]$outputPath|[select=1:f=mjpeg]pipe:1")
+    } else {
+        add("-y")
+        add(outputPath)
+    }
+}
+
+/** Width of the MJPEG preview branch; height follows the camera's aspect ratio. */
+internal const val PREVIEW_WIDTH: Int = 640
