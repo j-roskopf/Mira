@@ -12,7 +12,6 @@ public class MiraFirebase(
     public val auth: FirebaseAuthApi = FirebaseAuthApi(httpClient)
     public val firestore: FirestoreApi = FirestoreApi(httpClient)
     public val storage: StorageApi = StorageApi(httpClient)
-    public val functions: FunctionsApi = FunctionsApi(httpClient)
 
     private var cached: FirebaseSession? = null
 

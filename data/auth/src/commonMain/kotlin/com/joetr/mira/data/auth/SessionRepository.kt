@@ -3,10 +3,10 @@ package com.joetr.mira.data.auth
 import app.cash.sqldelight.async.coroutines.awaitAsList
 import app.cash.sqldelight.async.coroutines.awaitAsOneOrNull
 import com.joetr.mira.db.MiraDatabase
-import com.joetr.mira.domain.model.SessionState
-import com.joetr.mira.domain.repository.RecipeRepository
-import com.joetr.mira.domain.repository.SessionRepository
-import com.joetr.mira.domain.repository.SyncRepository
+import com.joetr.mira.domain.SessionState
+import com.joetr.mira.domain.EntryStore
+import com.joetr.mira.domain.SessionRepository
+import com.joetr.mira.domain.SyncCoordinator
 import com.joetr.mira.network.AuthTokenProvider
 import com.joetr.mira.network.MiraFirebase
 import com.joetr.mira.network.FirebaseSession
@@ -32,9 +32,9 @@ import kotlin.uuid.Uuid
 @Inject
 public class DefaultSessionRepository(
     private val database: MiraDatabase,
-    private val recipeRepository: RecipeRepository,
+    private val entryStore: EntryStore,
     private val firebase: MiraFirebase,
-    private val syncRepository: SyncRepository,
+    private val syncCoordinator: SyncCoordinator,
 ) : SessionRepository {
     private val session = MutableStateFlow<SessionState>(SessionState.LocalPending(""))
     private var pendingMergeLocalOwnerId: String? = null
@@ -69,7 +69,7 @@ public class DefaultSessionRepository(
             if (active != null) {
                 firebase.saveSession(active)
                 withContext(Dispatchers.Default) {
-                    database.recipesQueries.updateOwnerId(active.localId, deviceOwnerId)
+                    database.entriesQueries.updateOwnerId(active.localId, deviceOwnerId)
                 }
                 session.value = SessionState.Authenticated(active.localId, active.email)
                 return
@@ -88,7 +88,7 @@ public class DefaultSessionRepository(
         }
 
         withContext(Dispatchers.Default) {
-            database.recipesQueries.updateOwnerId(active.localId, deviceOwnerId)
+            database.entriesQueries.updateOwnerId(active.localId, deviceOwnerId)
         }
         session.value = if (active.isAnonymous) {
             SessionState.Anonymous(active.localId)
@@ -133,8 +133,8 @@ public class DefaultSessionRepository(
 
     override suspend fun signOut() {
         withContext(Dispatchers.Default) {
-            database.recipesQueries.deleteAllRecipes()
-            database.recipesQueries.deleteAllImageBlobs()
+            database.entriesQueries.deleteAllEntries()
+            database.entriesQueries.deleteAllMediaBlobs()
         }
         pendingMergeLocalOwnerId = null
         firebase.saveSession(null)
@@ -143,13 +143,13 @@ public class DefaultSessionRepository(
 
     override suspend fun needsMergePrompt(): Pair<Boolean, Int> {
         val localId = pendingMergeLocalOwnerId ?: return false to 0
-        return true to recipeRepository.countByOwner(localId)
+        return true to entryStore.countByOwner(localId)
     }
 
     override suspend fun acceptMerge(): Int {
         val localId = pendingMergeLocalOwnerId ?: return 0
         val accountId = (session.value as? SessionState.Authenticated)?.userId ?: return 0
-        val count = recipeRepository.mergeLocalIntoAccount(localId, accountId)
+        val count = entryStore.mergeLocalIntoAccount(localId, accountId)
         pendingMergeLocalOwnerId = null
         return count
     }
@@ -157,8 +157,8 @@ public class DefaultSessionRepository(
     override suspend fun declineMerge() {
         val localId = pendingMergeLocalOwnerId ?: return
         withContext(Dispatchers.Default) {
-            database.recipesQueries.selectRecipesByOwner(localId).awaitAsList().forEach {
-                database.recipesQueries.softDeleteRecipe(currentTimeMillis(), it.id)
+            database.entriesQueries.selectEntriesByOwner(localId).awaitAsList().forEach {
+                database.entriesQueries.softDeleteEntry(currentTimeMillis(), it.id)
             }
         }
         pendingMergeLocalOwnerId = null
@@ -218,11 +218,11 @@ public class DefaultSessionRepository(
      * Marks [prior]'s local owner id for a merge prompt if the newly authenticated
      * [userId] doesn't match it (e.g. a Google credential link failed and fell back to
      * a fresh account, or the user signed in to a pre-existing account while local-only
-     * recipes were still tracked under an anonymous/device owner id).
+     * entries were still tracked under an anonymous/device owner id).
      */
     private suspend fun handlePostSignIn(prior: SessionState, userId: String, email: String?) {
         applyAuthenticatedSession(prior, userId, email)
-        syncRepository.syncAfterSignIn()
+        syncCoordinator.syncAfterSignIn()
     }
 
     private fun ownerIdOf(state: SessionState): String? = when (state) {
@@ -235,12 +235,12 @@ public class DefaultSessionRepository(
     private suspend fun readOrCreateDeviceOwnerId(): String {
         val key = "device_owner_id"
         val existing = withContext(Dispatchers.Default) {
-            database.recipesQueries.selectSetting(key).awaitAsOneOrNull()
+            database.entriesQueries.getSetting(key).awaitAsOneOrNull()
         }
         if (!existing.isNullOrBlank()) return existing
         val id = Uuid.random().toString()
         withContext(Dispatchers.Default) {
-            database.recipesQueries.upsertSetting(key, id)
+            database.entriesQueries.putSetting(key, id)
         }
         return id
     }
@@ -270,7 +270,7 @@ public class DatabaseFirebaseSessionStore(
     override suspend fun load(): FirebaseSession? {
         readPlatformFirebaseSession()?.let { return it }
         return withContext(Dispatchers.Default) {
-            val fromDb = database.recipesQueries.selectSetting(SETTING_KEY).awaitAsOneOrNull()
+            val fromDb = database.entriesQueries.getSetting(SETTING_KEY).awaitAsOneOrNull()
                 ?.takeIf { it.isNotBlank() }
                 ?.let { raw ->
                     runCatching { firebaseSessionJson.decodeFromString(FirebaseSession.serializer(), raw) }.getOrNull()
@@ -284,7 +284,7 @@ public class DatabaseFirebaseSessionStore(
         writePlatformFirebaseSession(session)
         withContext(Dispatchers.Default) {
             val raw = if (session == null) "" else firebaseSessionJson.encodeToString(FirebaseSession.serializer(), session)
-            database.recipesQueries.upsertSetting(SETTING_KEY, raw)
+            database.entriesQueries.putSetting(SETTING_KEY, raw)
         }
     }
 

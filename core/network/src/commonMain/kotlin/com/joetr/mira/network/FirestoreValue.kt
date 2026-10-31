@@ -1,6 +1,5 @@
 package com.joetr.mira.network
 
-import com.joetr.mira.domain.model.RecipeStep
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -12,19 +11,17 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-internal fun RemoteRecipeRow.toFirestoreFields(): JsonObject = buildJsonObject {
-    put("title", stringValue(title))
-    put("description", nullableString(description))
-    put("imageUrl", nullableString(imageUrl))
-    put("sourceUrl", nullableString(sourceUrl))
-    put("servings", nullableInteger(servings))
-    put("prepMinutes", nullableInteger(prepMinutes))
-    put("cookMinutes", nullableInteger(cookMinutes))
-    put("ingredients", arrayValue(ingredients.map { stringValue(it) }))
+internal fun RemoteEntryRow.toFirestoreFields(): JsonObject = buildJsonObject {
+    put("localDate", stringValue(localDate))
+    put("createdAt", integerValue(createdAt))
+    put("createdTz", stringValue(createdTz))
+    put("body", stringValue(body))
+    put("tags", arrayValue(tags.map { stringValue(it) }))
+    put("deleted", booleanValue(deleted))
     put(
-        "steps",
+        "attachments",
         arrayValue(
-            steps.map { step ->
+            attachments.map { attachment ->
                 buildJsonObject {
                     put(
                         "mapValue",
@@ -32,8 +29,15 @@ internal fun RemoteRecipeRow.toFirestoreFields(): JsonObject = buildJsonObject {
                             put(
                                 "fields",
                                 buildJsonObject {
-                                    put("text", stringValue(step.text))
-                                    put("minutes", nullableInteger(step.minutes))
+                                    put("id", stringValue(attachment.id))
+                                    put("kind", stringValue(attachment.kind))
+                                    put("storagePath", stringValue(attachment.storagePath))
+                                    put("url", nullableString(attachment.url))
+                                    put("mime", stringValue(attachment.mime))
+                                    put("bytes", integerValue(attachment.bytes))
+                                    put("durationMs", integerValue(attachment.durationMs))
+                                    put("posterPath", nullableString(attachment.posterPath))
+                                    put("caption", stringValue(attachment.caption))
                                 },
                             )
                         },
@@ -42,32 +46,42 @@ internal fun RemoteRecipeRow.toFirestoreFields(): JsonObject = buildJsonObject {
             },
         ),
     )
-    put("tags", arrayValue(tags.map { stringValue(it) }))
-    put("notes", nullableString(notes))
-    put("isFavourite", booleanValue(isFavourite))
-    put("createdAt", integerValue(createdAt))
-    put("deleted", booleanValue(deleted))
 }
 
-internal fun JsonObject.toRemoteRecipe(): RemoteRecipeRow {
+internal fun JsonObject.toRemoteEntry(): RemoteEntryRow {
     val fields = this["fields"]?.jsonObject ?: this
-    return RemoteRecipeRow(
-        title = fields.stringField("title").orEmpty(),
-        description = fields.stringField("description"),
-        imageUrl = fields.stringField("imageUrl"),
-        sourceUrl = fields.stringField("sourceUrl"),
-        servings = fields.intField("servings"),
-        prepMinutes = fields.intField("prepMinutes"),
-        cookMinutes = fields.intField("cookMinutes"),
-        ingredients = fields.stringArrayField("ingredients"),
-        steps = fields.stepsField("steps"),
-        tags = fields.stringArrayField("tags"),
-        notes = fields.stringField("notes"),
-        isFavourite = fields.boolField("isFavourite") ?: false,
+    return RemoteEntryRow(
+        localDate = fields.stringField("localDate").orEmpty(),
         createdAt = fields.longField("createdAt") ?: 0L,
+        createdTz = fields.stringField("createdTz").orEmpty(),
         updatedAt = fields.timestampOrLongField("updatedAt") ?: 0L,
+        body = fields.stringField("body").orEmpty(),
+        attachments = fields.attachmentsField("attachments"),
+        tags = fields.stringArrayField("tags"),
         deleted = fields.boolField("deleted") ?: false,
     )
+}
+
+private fun JsonObject.attachmentsField(name: String): List<RemoteAttachment> {
+    val values = this[name]?.jsonObject?.get("arrayValue")?.jsonObject?.get("values")?.jsonArray
+        ?: return emptyList()
+    return values.mapNotNull { element ->
+        val fields = element.jsonObject["mapValue"]?.jsonObject?.get("fields")?.jsonObject
+            ?: return@mapNotNull null
+        val id = fields.stringField("id") ?: return@mapNotNull null
+        val storagePath = fields.stringField("storagePath") ?: return@mapNotNull null
+        RemoteAttachment(
+            id = id,
+            kind = fields.stringField("kind") ?: "audio",
+            storagePath = storagePath,
+            url = fields.stringField("url"),
+            mime = fields.stringField("mime") ?: "application/octet-stream",
+            bytes = fields.longField("bytes") ?: 0L,
+            durationMs = fields.longField("durationMs") ?: 0L,
+            posterPath = fields.stringField("posterPath"),
+            caption = fields.stringField("caption").orEmpty(),
+        )
+    }
 }
 
 private fun stringValue(value: String): JsonObject =
@@ -121,16 +135,6 @@ private fun JsonObject.stringArrayField(name: String): List<String> {
     return values.mapNotNull { it.jsonObject["stringValue"]?.jsonPrimitive?.contentOrNull }
 }
 
-private fun JsonObject.stepsField(name: String): List<RecipeStep> {
-    val values = this[name]?.jsonObject?.get("arrayValue")?.jsonObject?.get("values")?.jsonArray
-        ?: return emptyList()
-    return values.mapNotNull { element ->
-        val fields = element.jsonObject["mapValue"]?.jsonObject?.get("fields")?.jsonObject
-            ?: return@mapNotNull null
-        val text = fields.stringField("text") ?: return@mapNotNull null
-        RecipeStep(text = text, minutes = fields.intField("minutes"))
-    }
-}
 
 /** Minimal RFC3339 parser (UTC / Z / ±HH:MM) → epoch millis. */
 internal fun parseRfc3339ToEpochMs(value: String): Long? {

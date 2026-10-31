@@ -169,3 +169,30 @@ INSERT OR REPLACE INTO app_settings(key, value) VALUES (?, ?);
 
 selectAllSettings:
 SELECT * FROM app_settings;
+
+deleteAllOutbox:
+DELETE FROM entry_outbox;
+
+markPendingSync:
+UPDATE entries SET updated_at = ?, pending_sync = 1 WHERE id = ?;
+
+selectAllEntries:
+SELECT * FROM entries WHERE owner_id = ? AND deleted = 0;
+
+updateOwnerId:
+UPDATE entries SET owner_id = ? WHERE owner_id = ?;
+
+selectEntriesByOwner:
+SELECT * FROM entries WHERE owner_id = ? AND deleted = 0;
+
+countEntriesByOwner:
+SELECT COUNT(*) FROM entries WHERE owner_id = ? AND deleted = 0;
+
+softDeleteEntry:
+UPDATE entries SET deleted = 1, updated_at = ? WHERE id = ?;
+
+deleteAllEntries:
+DELETE FROM entries;
+
+deleteAllMediaBlobs:
+DELETE FROM media_blobs;

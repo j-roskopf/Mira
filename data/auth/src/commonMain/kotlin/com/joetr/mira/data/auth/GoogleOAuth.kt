@@ -195,7 +195,7 @@ internal suspend fun googleSignInWithAuthorizationCodeFlow(
  * user case — Firebase consumes the one-time Credential Manager token on the failed link
  * and returns `needConfirmation`, which is easy to get stuck on. Direct sign-in works for
  * both new and existing Google accounts; [DefaultSessionRepository] offers a merge prompt
- * when the uid changes and local recipes exist.
+ * when the uid changes and local entries exist.
  */
 internal suspend fun signInToFirebaseWithGoogleIdToken(
     firebase: MiraFirebase,

@@ -18,11 +18,6 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
-public data class FirestoreRecipeDocument(
-    val id: String,
-    val recipe: RemoteRecipeRow,
-)
-
 public class FirestoreApi(
     private val httpClient: HttpClient,
 ) {
@@ -31,10 +26,10 @@ public class FirestoreApi(
     private val base: String
         get() = "https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents"
 
-    public suspend fun upsertRecipes(
+    public suspend fun upsertEntries(
         idToken: String,
         ownerId: String,
-        documents: List<FirestoreRecipeDocument>,
+        documents: List<FirestoreEntryDocument>,
     ) {
         if (documents.isEmpty()) return
         val writes = buildList {
@@ -46,15 +41,15 @@ public class FirestoreApi(
         commit(idToken, writes)
     }
 
-    /** Marks existing cloud recipes as deleted without re-uploading the full document body. */
-    public suspend fun markRecipesDeleted(
+    /** Tombstones cloud entries without re-uploading the whole document body. */
+    public suspend fun markEntriesDeleted(
         idToken: String,
         ownerId: String,
-        recipeIds: List<String>,
+        entryIds: List<String>,
     ) {
-        if (recipeIds.isEmpty()) return
+        if (entryIds.isEmpty()) return
         val writes = buildList {
-            for (id in recipeIds) {
+            for (id in entryIds) {
                 add(
                     buildJsonObject {
                         put(
@@ -101,23 +96,23 @@ public class FirestoreApi(
         }
     }
 
-    private fun upsertSetWrite(ownerId: String, doc: FirestoreRecipeDocument): JsonObject =
+    private fun upsertSetWrite(ownerId: String, doc: FirestoreEntryDocument): JsonObject =
         buildJsonObject {
             put(
                 "update",
                 buildJsonObject {
                     put("name", JsonPrimitive(documentName(ownerId, doc.id)))
-                    put("fields", doc.recipe.toFirestoreFields())
+                    put("fields", doc.entry.toFirestoreFields())
                 },
             )
         }
 
-    private fun updatedAtTransformWrite(ownerId: String, recipeId: String): JsonObject =
+    private fun updatedAtTransformWrite(ownerId: String, entryId: String): JsonObject =
         buildJsonObject {
             put(
                 "transform",
                 buildJsonObject {
-                    put("document", JsonPrimitive(documentName(ownerId, recipeId)))
+                    put("document", JsonPrimitive(documentName(ownerId, entryId)))
                     put(
                         "fieldTransforms",
                         buildJsonArray {
@@ -133,18 +128,18 @@ public class FirestoreApi(
             )
         }
 
-    public suspend fun pullRecipes(
+    public suspend fun pullEntries(
         idToken: String,
         ownerId: String,
         cursorUpdatedAt: Long?,
         cursorId: String?,
         pageSize: Int = 100,
-    ): List<FirestoreRecipeDocument> {
+    ): List<FirestoreEntryDocument> {
         val structuredQuery = buildJsonObject {
             put(
                 "from",
                 buildJsonArray {
-                    add(buildJsonObject { put("collectionId", JsonPrimitive("recipes")) })
+                    add(buildJsonObject { put("collectionId", JsonPrimitive("entries")) })
                 },
             )
             put(
@@ -203,10 +198,10 @@ public class FirestoreApi(
             val document = row.jsonObject["document"]?.jsonObject ?: return@mapNotNull null
             val name = document["name"]?.jsonPrimitive?.content ?: return@mapNotNull null
             val id = name.substringAfterLast('/')
-            FirestoreRecipeDocument(id = id, recipe = document.toRemoteRecipe())
+            FirestoreEntryDocument(id = id, entry = document.toRemoteEntry())
         }
     }
 
-    private fun documentName(ownerId: String, recipeId: String): String =
-        "projects/$projectId/databases/(default)/documents/users/$ownerId/recipes/$recipeId"
+    private fun documentName(ownerId: String, entryId: String): String =
+        "projects/$projectId/databases/(default)/documents/users/$ownerId/entries/$entryId"
 }
