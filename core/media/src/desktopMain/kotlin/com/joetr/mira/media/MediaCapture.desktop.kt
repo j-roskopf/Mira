@@ -373,12 +373,7 @@ internal fun buildCaptureCommand(
         add("-map")
         add("$audioInputIndex:a")
 
-        add("-c:v:0")
-        add("libx264")
-        add("-preset")
-        add("veryfast")
-        add("-b:v:0")
-        add(CaptureLimits.VIDEO_BITRATE.toString())
+        addAll(videoEncoderArgs())
         add("-c:v:1")
         add("mjpeg")
         add("-q:v:1")
@@ -408,3 +403,23 @@ internal fun buildCaptureCommand(
 
 /** Width of the MJPEG preview branch; height follows the camera's aspect ratio. */
 internal const val PREVIEW_WIDTH: Int = 640
+
+/**
+ * The H.264 encoder for the recording branch.
+ *
+ * macOS uses VideoToolbox: it is a system framework, so the bundled FFmpeg needs no external
+ * library and stays self-contained, and encoding runs on dedicated hardware. It takes no `-preset`
+ * — that option is libx264's, and passing it makes FFmpeg exit.
+ */
+internal fun videoEncoderArgs(): List<String> = when (desktopOs) {
+    DesktopOs.MAC -> listOf(
+        "-c:v:0", "h264_videotoolbox",
+        "-b:v:0", CaptureLimits.VIDEO_BITRATE.toString(),
+        "-realtime", "1",
+    )
+    DesktopOs.WINDOWS, DesktopOs.LINUX -> listOf(
+        "-c:v:0", "libx264",
+        "-preset", "veryfast",
+        "-b:v:0", CaptureLimits.VIDEO_BITRATE.toString(),
+    )
+}

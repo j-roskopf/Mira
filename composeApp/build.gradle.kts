@@ -177,6 +177,10 @@ compose.desktop {
             val iconsDir = project.layout.projectDirectory.dir("src/desktopMain/resources/icons")
             macOS {
                 bundleID = "com.joetr.mira"
+                val macEntitlements =
+                    project.layout.projectDirectory.file("desktop/macos/Mira.entitlements")
+                entitlementsFile.set(macEntitlements)
+                runtimeEntitlementsFile.set(macEntitlements)
                 // Desktop capture opens the camera and microphone through the bundled FFmpeg.
                 // macOS refuses both unless the packaged app declares why it wants them, and the
                 // refusal is silent — no prompt, no error, just a capture that never yields a
@@ -205,6 +209,77 @@ compose.desktop {
             }
         }
     }
+}
+
+/**
+ * Signs the bundled FFmpeg helper so it inherits Mira's camera and microphone access.
+ *
+ * A child process of a hardened-runtime app is its own TCC subject. FFmpeg has no Info.plist to
+ * carry usage descriptions, so without `com.apple.security.cs.inherit` macOS denies the camera and
+ * never prompts — the capture simply produces nothing. Signing a nested binary also breaks the
+ * bundle's seal, so the app is re-signed afterwards.
+ */
+val signBundledFfmpeg = tasks.register("signBundledFfmpeg") {
+    description = "Signs the bundled FFmpeg helper to inherit Mira's capture entitlements."
+    val appEntitlements = layout.projectDirectory.file("desktop/macos/Mira.entitlements").asFile
+    val helperEntitlements =
+        layout.projectDirectory.file("desktop/macos/ffmpeg-helper.entitlements").asFile
+    val binariesDir = layout.buildDirectory.dir("compose/binaries").get().asFile
+    val identity = providers.gradleProperty("compose.desktop.mac.signing.identity").orNull ?: "-"
+    val isMac = System.getProperty("os.name").orEmpty().startsWith("Mac")
+
+    onlyIf { isMac }
+
+    doLast {
+        fun codesign(vararg args: String) {
+            val process = ProcessBuilder(listOf("codesign") + args)
+                .redirectErrorStream(true)
+                .start()
+            val output = process.inputStream.bufferedReader().readText()
+            check(process.waitFor() == 0) { "codesign failed: $output" }
+        }
+
+        val apps = binariesDir.walkTopDown()
+            .maxDepth(4)
+            .filter { it.name == "Mira.app" && it.isDirectory }
+            .toList()
+
+        apps.forEach { app ->
+            val helper = File(app, "Contents/app/resources/ffmpeg")
+            if (!helper.exists()) {
+                logger.lifecycle("No bundled FFmpeg in ${app.name}; desktop capture will be unavailable.")
+                return@forEach
+            }
+            // jpackage copies app resources without the executable bit, and FfmpegBinary skips
+            // anything it cannot execute — so without this the app silently falls back to
+            // whatever ffmpeg is on PATH, which is outside the bundle and gets no camera access.
+            check(helper.setExecutable(true, false)) { "could not make $helper executable" }
+
+            codesign(
+                "--force", "--sign", identity, "--timestamp=none",
+                "--options", "runtime",
+                "--entitlements", helperEntitlements.absolutePath,
+                helper.absolutePath,
+            )
+            // Re-seal the bundle: changing a nested binary invalidates the outer signature.
+            codesign(
+                "--force", "--sign", identity, "--timestamp=none",
+                "--options", "runtime",
+                "--entitlements", appEntitlements.absolutePath,
+                app.absolutePath,
+            )
+            logger.lifecycle("Signed bundled FFmpeg and re-sealed ${app.name}")
+        }
+    }
+}
+
+listOf(
+    "createDistributable",
+    "createReleaseDistributable",
+    "packageDmg",
+    "packageReleaseDmg",
+).forEach { name ->
+    tasks.matching { it.name == name }.configureEach { finalizedBy(signBundledFfmpeg) }
 }
 
 roborazzi {

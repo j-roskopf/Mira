@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      Mira opens the camera and microphone through a bundled FFmpeg subprocess. A child of a
+      hardened-runtime app is its own TCC subject unless it inherits, and an FFmpeg binary has no
+      Info.plist of its own to carry usage descriptions — so the request is denied with no prompt.
+      This entitlement makes it inherit Mira's, and Apple requires it to appear alone.
+    -->
+    <key>com.apple.security.cs.inherit</key>
+    <true/>
+</dict>
+</plist>

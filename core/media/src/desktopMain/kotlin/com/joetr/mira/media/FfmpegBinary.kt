@@ -30,7 +30,19 @@ internal object FfmpegBinary {
     private val executableName: String
         get() = if (desktopOs == DesktopOs.WINDOWS) "ffmpeg.exe" else "ffmpeg"
 
-    val path: String? by lazy { locate() }
+    val path: String? by lazy {
+        locate().also { resolved ->
+            // Which binary won matters: only the bundled one inherits Mira's camera entitlement,
+            // so a fallback to PATH explains an otherwise silent capture failure.
+            println(
+                if (resolved == null) {
+                    "Mira: no FFmpeg found; desktop capture and playback are unavailable"
+                } else {
+                    "Mira: using FFmpeg at $resolved"
+                },
+            )
+        }
+    }
 
     val isAvailable: Boolean get() = path != null
 

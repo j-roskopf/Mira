@@ -108,6 +108,24 @@ class CaptureCommandTest {
         assertTrue("tee slaves were $slaves", slaves.contains("[select=1:f=mjpeg]pipe:1"))
     }
 
+    /** VideoToolbox rejects libx264's -preset outright, so the two must never be mixed. */
+    @Test
+    fun videoEncoderMatchesThePlatform() {
+        val command = buildCaptureCommand(
+            binary = "ffmpeg",
+            kind = CaptureKind.VIDEO,
+            outputPath = "/tmp/out.mp4",
+            inputArgs = lavfiInputs,
+            audioInputIndex = 1,
+        )
+        val encoder = command[command.indexOf("-c:v:0") + 1]
+        if (encoder == "h264_videotoolbox") {
+            assertTrue("-preset is a libx264 option", "-preset" !in command)
+        } else {
+            assertEquals("libx264", encoder)
+        }
+    }
+
     /** Audio capture must not drag in video encoders or the tee muxer. */
     @Test
     fun audioCommandHasNoVideoStages() {
@@ -118,7 +136,12 @@ class CaptureCommandTest {
             inputArgs = listOf("-f", "lavfi", "-i", "sine"),
             audioInputIndex = 0,
         )
-        assertTrue(command.none { it == "tee" || it == "libx264" || it == "-filter_complex" })
+        assertTrue(
+            command.none {
+                it == "tee" || it == "libx264" || it == "h264_videotoolbox" ||
+                    it == "-filter_complex"
+            },
+        )
         assertEquals("/tmp/out.m4a", command.last())
     }
 

@@ -27,10 +27,23 @@ WORK="${ROOT}/build/ffmpeg-src"
 OUT="${ROOT}/build/ffmpeg"
 mkdir -p "${WORK}" "${OUT}"
 
+# macOS encodes H.264 with VideoToolbox, a system framework: hardware accelerated, no external
+# library to link, and nothing for the binary to depend on at runtime. Linking libx264 there
+# produced a binary tied to the build machine's homebrew copy, since macOS ld has no -Bstatic and
+# prefers the dylib whenever both it and the archive are present.
 case "${TARGET}" in
-  macos)   INDEV=(--enable-indev=avfoundation) ;;
-  windows) INDEV=(--enable-indev=dshow) ;;
-  linux)   INDEV=(--enable-indev=v4l2 --enable-indev=alsa) ;;
+  macos)
+    INDEV=(--enable-indev=avfoundation)
+    VIDEO_ENCODER=(--enable-videotoolbox --enable-encoder=h264_videotoolbox)
+    ;;
+  windows)
+    INDEV=(--enable-indev=dshow)
+    VIDEO_ENCODER=(--enable-gpl --enable-libx264 --enable-encoder=libx264)
+    ;;
+  linux)
+    INDEV=(--enable-indev=v4l2 --enable-indev=alsa)
+    VIDEO_ENCODER=(--enable-gpl --enable-libx264 --enable-encoder=libx264)
+    ;;
   *) echo "unknown target: ${TARGET}" >&2; exit 2 ;;
 esac
 
@@ -47,20 +60,32 @@ CONFIGURE_FLAGS=(
   --disable-ffprobe
   --disable-shared
   --enable-static
-  --enable-gpl
-  --enable-libx264
+  # --enable-static only makes FFmpeg's own libraries static. Without this, libx264 links
+  # dynamically against the build machine's homebrew copy and the binary dies on any Mac that
+  # does not have it.
+  --pkg-config-flags=--static
+  # avdevice otherwise pulls in X11 screen grabbing, which drags libX11 in as another external
+  # dependency Mira never uses.
+  --disable-xlib
+  --disable-libxcb
   --enable-avdevice
 
   # Inputs: camera and microphone for this platform.
   "${INDEV[@]}"
 
-  # Encoders: H.264 video, AAC audio, MJPEG for the live preview stream.
-  --enable-encoder=libx264
+  # Encoders: H.264 video (per-platform, see above), AAC audio, MJPEG for the live preview.
+  "${VIDEO_ENCODER[@]}"
   --enable-encoder=aac
   --enable-encoder=mjpeg
 
-  # Decoders: reading back our own files for posters and waveforms.
+  # Decoders: reading back our own files for posters, waveforms and playback.
+  #
+  # hevc is not optional despite Mira always recording H.264. libavcodec shares h2645_sei.o
+  # between H.264 and HEVC, but only pulls in aom_film_grain.o for HEVC — so an H.264-only
+  # build fails to link with an undefined ff_aom_uninit_film_grain_params. It also means
+  # imported iPhone video, which is usually HEVC, can be played back.
   --enable-decoder=h264
+  --enable-decoder=hevc
   --enable-decoder=aac
   --enable-decoder=mjpeg
   --enable-decoder=rawvideo
@@ -77,10 +102,20 @@ CONFIGURE_FLAGS=(
   --enable-demuxer=mov
   --enable-demuxer=mjpeg
   --enable-demuxer=rawvideo
+  --enable-demuxer=wav
+  --enable-demuxer=aac
+  # Synthetic sources, so the shipped binary is the one the capture tests exercise rather than
+  # whatever ffmpeg happens to be on the build machine.
+  --enable-demuxer=lavfi
+  --enable-filter=testsrc
+  --enable-filter=sine
 
   --enable-protocol=file
   --enable-protocol=pipe
 
+  # split feeds the recording and preview branches from one camera feed; without it the whole
+  # filter graph fails to parse and capture never starts.
+  --enable-filter=split
   --enable-filter=scale
   --enable-filter=format
   --enable-filter=aformat
@@ -89,10 +124,12 @@ CONFIGURE_FLAGS=(
   --enable-filter=null
 
   --enable-parser=h264
+  --enable-parser=hevc
   --enable-parser=aac
   --enable-parser=mjpeg
 
   --enable-bsf=h264_mp4toannexb
+  --enable-bsf=hevc_mp4toannexb
   --enable-bsf=aac_adtstoasc
 )
 
@@ -107,9 +144,14 @@ fi
 
 cd "ffmpeg-${FFMPEG_VERSION}"
 
-if [[ ! -f config.h ]]; then
+# Reconfigure whenever the flag set changes; a stale config.h silently builds the old feature
+# set and the mismatch only shows up as a link error or a missing codec at runtime.
+FLAGS_FINGERPRINT="$(printf '%s\n' "${CONFIGURE_FLAGS[@]}" | shasum | cut -d' ' -f1)"
+if [[ ! -f config.h || "$(cat .mira-flags 2>/dev/null)" != "${FLAGS_FINGERPRINT}" ]]; then
   echo "==> Configuring (${TARGET})"
+  make distclean >/dev/null 2>&1 || true
   ./configure "${CONFIGURE_FLAGS[@]}" --prefix="${WORK}/install"
+  echo "${FLAGS_FINGERPRINT}" > .mira-flags
 fi
 
 echo "==> Building"
