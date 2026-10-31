@@ -99,6 +99,82 @@ jobs:
             echo "tag_name=${tag_name}"
           } >> "${GITHUB_OUTPUT}"
 
+  ffmpeg:
+    name: FFmpeg (${{ matrix.target }})
+    needs:
+      - version
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: macos
+            runner: macos-latest
+            artifact: ffmpeg-macos
+          - target: windows
+            runner: windows-latest
+            artifact: ffmpeg-windows
+          - target: linux
+            runner: ubuntu-latest
+            artifact: ffmpeg-linux
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag_name }}
+
+      # Keyed on the configure line, so a change to which encoders ship rebuilds and
+      # anything else restores. A cold build is ~20 minutes; a warm one is seconds.
+      - name: Cache FFmpeg build
+        id: ffmpeg-cache
+        uses: actions/cache@v4
+        with:
+          path: build/ffmpeg
+          key: ffmpeg-${{ matrix.target }}-${{ hashFiles('scripts/build-ffmpeg.sh') }}
+
+      - name: Install build dependencies (macOS)
+        if: matrix.target == 'macos' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        run: brew install nasm x264 pkg-config
+
+      - name: Install build dependencies (Linux)
+        if: matrix.target == 'linux' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nasm yasm libx264-dev libv4l-dev libasound2-dev pkg-config
+
+      - name: Install build dependencies (Windows)
+        if: matrix.target == 'windows' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            base-devel mingw-w64-x86_64-toolchain mingw-w64-x86_64-nasm
+            mingw-w64-x86_64-x264 make diffutils curl tar
+
+      - name: Build FFmpeg
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        shell: ${{ matrix.target == 'windows' && 'msys2 {0}' || 'bash' }}
+        run: ./scripts/build-ffmpeg.sh ${{ matrix.target }}
+
+      - name: Verify the binary runs
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="build/ffmpeg/ffmpeg"
+          [[ "${{ matrix.target }}" == "windows" ]] && binary="build/ffmpeg/ffmpeg.exe"
+          "${binary}" -hide_banner -version | head -1
+          ls -lh "${binary}"
+
+      - name: Upload FFmpeg binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          if-no-files-found: error
+          path: build/ffmpeg/*
+
   android:
     name: Android release
     needs:
@@ -184,7 +260,7 @@ jobs:
           FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
           FIREBASE_AUTH_DOMAIN: ${{ secrets.FIREBASE_AUTH_DOMAIN }}
           FIREBASE_STORAGE_BUCKET: ${{ secrets.FIREBASE_STORAGE_BUCKET }}
-          FIREBASE_FUNCTIONS_REGION: ${{ secrets.FIREBASE_FUNCTIONS_REGION }}
+          MIRA_GITHUB_OAUTH_CLIENT_ID: ${{ secrets.MIRA_GITHUB_OAUTH_CLIENT_ID }}
           MIRA_GOOGLE_WEB_CLIENT_ID: ${{ secrets.MIRA_GOOGLE_WEB_CLIENT_ID }}
           MIRA_GOOGLE_WEB_CLIENT_SECRET: ${{ secrets.MIRA_GOOGLE_WEB_CLIENT_SECRET }}
         run: >
@@ -220,6 +296,7 @@ jobs:
     name: Linux release
     needs:
       - version
+      - ffmpeg
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
@@ -243,13 +320,23 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      - name: Download the FFmpeg binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ffmpeg-linux
+          path: composeApp/resources/linux-x64
+
+      - name: Make FFmpeg executable
+        shell: bash
+        run: chmod +x composeApp/resources/linux-x64/* || true
+
       - name: Build Linux packages
         env:
           FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
           FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
           FIREBASE_AUTH_DOMAIN: ${{ secrets.FIREBASE_AUTH_DOMAIN }}
           FIREBASE_STORAGE_BUCKET: ${{ secrets.FIREBASE_STORAGE_BUCKET }}
-          FIREBASE_FUNCTIONS_REGION: ${{ secrets.FIREBASE_FUNCTIONS_REGION }}
+          MIRA_GITHUB_OAUTH_CLIENT_ID: ${{ secrets.MIRA_GITHUB_OAUTH_CLIENT_ID }}
           MIRA_GOOGLE_WEB_CLIENT_ID: ${{ secrets.MIRA_GOOGLE_WEB_CLIENT_ID }}
           MIRA_GOOGLE_WEB_CLIENT_SECRET: ${{ secrets.MIRA_GOOGLE_WEB_CLIENT_SECRET }}
         run: >
@@ -316,8 +403,14 @@ jobs:
     name: Windows release
     needs:
       - version
+      - ffmpeg
     runs-on: windows-latest
     timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
 
     steps:
       - name: Checkout
@@ -332,6 +425,16 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v4
 
+      - name: Download the FFmpeg binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ffmpeg-windows
+          path: composeApp/resources/windows-x64
+
+      - name: Make FFmpeg executable
+        shell: bash
+        run: chmod +x composeApp/resources/windows-x64/* || true
+
       - name: Build Windows MSI
         shell: pwsh
         env:
@@ -339,7 +442,7 @@ jobs:
           FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
           FIREBASE_AUTH_DOMAIN: ${{ secrets.FIREBASE_AUTH_DOMAIN }}
           FIREBASE_STORAGE_BUCKET: ${{ secrets.FIREBASE_STORAGE_BUCKET }}
-          FIREBASE_FUNCTIONS_REGION: ${{ secrets.FIREBASE_FUNCTIONS_REGION }}
+          MIRA_GITHUB_OAUTH_CLIENT_ID: ${{ secrets.MIRA_GITHUB_OAUTH_CLIENT_ID }}
           MIRA_GOOGLE_WEB_CLIENT_ID: ${{ secrets.MIRA_GOOGLE_WEB_CLIENT_ID }}
           MIRA_GOOGLE_WEB_CLIENT_SECRET: ${{ secrets.MIRA_GOOGLE_WEB_CLIENT_SECRET }}
         run: >
@@ -359,6 +462,27 @@ jobs:
         env:
           VERSION: ${{ needs.version.outputs.version }}
 
+      - name: Azure login
+        if: env.AZURE_CLIENT_ID != ''
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      - name: Sign the Windows installer
+        if: env.AZURE_CLIENT_ID != ''
+        uses: azure/artifact-signing-action@v1
+        with:
+          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}
+          certificate-profile-name: ${{ secrets.AZURE_SIGNING_CERTIFICATE_PROFILE_NAME }}
+          files-folder: release-artifacts
+          files-folder-filter: msi
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -370,6 +494,7 @@ jobs:
     name: macOS release
     needs:
       - version
+      - ffmpeg
     runs-on: macos-latest
     timeout-minutes: 90
     env:
@@ -430,13 +555,23 @@ jobs:
             echo "compose.desktop.mac.signing.keychain=${keychain_path}"
           } >> "${HOME}/.gradle/gradle.properties"
 
+      - name: Download the FFmpeg binary
+        uses: actions/download-artifact@v4
+        with:
+          name: ffmpeg-macos
+          path: composeApp/resources/macos-arm64
+
+      - name: Make FFmpeg executable
+        shell: bash
+        run: chmod +x composeApp/resources/macos-arm64/* || true
+
       - name: Build macOS DMG
         env:
           FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
           FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
           FIREBASE_AUTH_DOMAIN: ${{ secrets.FIREBASE_AUTH_DOMAIN }}
           FIREBASE_STORAGE_BUCKET: ${{ secrets.FIREBASE_STORAGE_BUCKET }}
-          FIREBASE_FUNCTIONS_REGION: ${{ secrets.FIREBASE_FUNCTIONS_REGION }}
+          MIRA_GITHUB_OAUTH_CLIENT_ID: ${{ secrets.MIRA_GITHUB_OAUTH_CLIENT_ID }}
           MIRA_GOOGLE_WEB_CLIENT_ID: ${{ secrets.MIRA_GOOGLE_WEB_CLIENT_ID }}
           MIRA_GOOGLE_WEB_CLIENT_SECRET: ${{ secrets.MIRA_GOOGLE_WEB_CLIENT_SECRET }}
         run: >
@@ -718,7 +853,7 @@ jobs:
           path: release-artifacts/*
 
   firebase:
-    name: Deploy Firebase backend
+    name: Deploy Firestore and Storage rules
     needs:
       - version
     runs-on: ubuntu-latest
@@ -732,8 +867,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
-          cache-dependency-path: firebase/functions/package-lock.json
 
       - name: Install Firebase CLI
         run: npm install -g firebase-tools
@@ -749,12 +882,17 @@ jobs:
             exit 1
           fi
 
-      - name: Deploy Cloud Functions, Firestore, and Storage
+      # Rules only. Mira has no Cloud Functions: media is normalised on the client, the
+      # GitHub archive uses device flow, and there is no transcription.
+      - name: Deploy Firestore and Storage rules
         env:
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
           FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
-          FIREBASE_FUNCTIONS_REGION: ${{ secrets.FIREBASE_FUNCTIONS_REGION }}
-        run: ./scripts/deploy-firebase-backend.sh --smoke-test
+        run: |
+          firebase deploy \
+            --project "${FIREBASE_PROJECT_ID}" \
+            --only firestore:rules,firestore:indexes,storage \
+            --non-interactive
 
   web:
     name: Web release
@@ -792,7 +930,7 @@ jobs:
           FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
           FIREBASE_AUTH_DOMAIN: ${{ secrets.FIREBASE_AUTH_DOMAIN }}
           FIREBASE_STORAGE_BUCKET: ${{ secrets.FIREBASE_STORAGE_BUCKET }}
-          FIREBASE_FUNCTIONS_REGION: ${{ secrets.FIREBASE_FUNCTIONS_REGION }}
+          MIRA_GITHUB_OAUTH_CLIENT_ID: ${{ secrets.MIRA_GITHUB_OAUTH_CLIENT_ID }}
           MIRA_GOOGLE_WEB_CLIENT_ID: ${{ secrets.MIRA_GOOGLE_WEB_CLIENT_ID }}
           MIRA_GOOGLE_WEB_CLIENT_SECRET: ${{ secrets.MIRA_GOOGLE_WEB_CLIENT_SECRET }}
         run: ./gradlew :composeApp:wasmJsBrowserDistribution --no-daemon
@@ -802,6 +940,7 @@ jobs:
         run: |
           dist="composeApp/build/dist/wasmJs/productionExecutable"
           touch "${dist}/.nojekyll"
+          echo "mira.joetr.com" > "${dist}/CNAME"
           cp "${dist}/index.html" "${dist}/404.html"
 
       - name: Upload GitHub Pages artifact

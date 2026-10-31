@@ -150,6 +150,11 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
             packageName = "Mira"
+
+            // Desktop capture runs a bundled FFmpeg subprocess; scripts/build-ffmpeg.sh drops the
+            // per-OS binary here in CI and FfmpegBinary resolves it through
+            // compose.application.resources.dir at runtime.
+            appResourcesRootDir.set(project.layout.projectDirectory.dir("resources"))
             val versionName = providers.gradleProperty("mira.versionName").orElse("0.1.0").get()
             val versionCode = providers.gradleProperty("mira.versionCode").orElse("1").get().toIntOrNull() ?: 1
             packageVersion = jpackagePackageVersion(versionName, versionCode)

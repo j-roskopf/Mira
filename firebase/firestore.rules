@@ -1,20 +1,17 @@
 rules_version = '2';
+
+// Mira is single-user by construction: every document lives under the owner's uid and nothing
+// is ever shared. These rules say exactly that and nothing more.
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /users/{uid}/recipes/{recipeId} {
+    match /users/{uid}/entries/{entryId} {
       allow read, write: if request.auth != null && request.auth.uid == uid;
     }
-    match /users/{uid}/importEvents/{eventId} {
-      allow read: if request.auth != null && request.auth.uid == uid;
-      allow write: if false;
+    match /users/{uid}/meta/{document} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
     }
-    match /otpCodes/{email} {
-      allow read, write: if false;
-    }
-    match /sharedRecipes/{token} {
-      allow read, write: if false;
-    }
-    match /mail/{document=**} {
+    // Anything outside a user's own subtree is denied, including by an authenticated caller.
+    match /{document=**} {
       allow read, write: if false;
     }
   }
