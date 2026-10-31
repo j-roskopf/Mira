@@ -53,7 +53,23 @@ import com.joetr.mira.ui.theme.MiraTheme
  * a light-mode token that was never checked, gets caught before a feature screen ships it.
  */
 @Composable
-public fun ComponentGalleryScreen(modifier: Modifier = Modifier) {
+public fun ComponentGalleryScreen(
+    modifier: Modifier = Modifier,
+    darkTheme: Boolean? = null,
+    accent: MiraAccent = MiraAccent.Default,
+) {
+    // Screenshot tests drive the theme directly; in the app it comes from the ambient MiraTheme.
+    if (darkTheme != null) {
+        MiraTheme(darkTheme = darkTheme, accent = accent, motionEnabled = false) {
+            GalleryContent(modifier)
+        }
+    } else {
+        GalleryContent(modifier)
+    }
+}
+
+@Composable
+private fun GalleryContent(modifier: Modifier = Modifier) {
     val colors = MiraTheme.colors
     var searchQuery by remember { mutableStateOf("") }
     var selectedChip by remember { mutableStateOf(0) }
@@ -66,7 +82,7 @@ public fun ComponentGalleryScreen(modifier: Modifier = Modifier) {
             .verticalScroll(rememberScrollState())
             .padding(MiraSpacing.gutter),
     ) {
-        Text("COMPONENTS", style = MiraTheme.type.monthTitle, color = colors.ink)
+        Text("MIRA COMPONENTS", style = MiraTheme.type.monthTitle, color = colors.ink)
         Spacer(Modifier.height(MiraSpacing.sectionGap))
 
         GallerySection("Type scale") {

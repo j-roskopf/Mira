@@ -18,7 +18,7 @@ class ComponentGalleryDesktopTest {
         setContent {
             ComponentGalleryScreen(darkTheme = false)
         }
-        onNodeWithText("Mira Components").assertExists()
+        onNodeWithText("MIRA COMPONENTS").assertExists()
         onRoot().captureRoboImage(roboDir.resolve("ComponentGallery_light.png").absolutePath)
     }
 

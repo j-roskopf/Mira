@@ -101,7 +101,7 @@ public fun SettingsScreen(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             text = session.email ?: "Signed in",
-                            style = MiraTheme.type.entryBody,
+                            style = MiraTheme.type.uiBody,
                             color = colors.ink,
                             modifier = Modifier.weight(1f),
                         )
@@ -112,7 +112,7 @@ public fun SettingsScreen(
                     Text(
                         text = "Writing locally. Sign in to sync across your devices — " +
                             "everything written so far comes with you.",
-                        style = MiraTheme.type.entryBody,
+                        style = MiraTheme.type.uiBody,
                         color = colors.inkMuted,
                     )
                     Spacer(Modifier.height(MiraSpacing.md))
@@ -168,7 +168,7 @@ public fun SettingsScreen(
                         SyncStatus.PENDING -> "${state.syncState.pendingCount} waiting to sync"
                         SyncStatus.ERROR -> state.syncState.errorMessage ?: "Sync failed"
                     },
-                    style = MiraTheme.type.entryBody,
+                    style = MiraTheme.type.uiBody,
                     color = if (state.syncState.status == SyncStatus.ERROR) {
                         colors.error
                     } else {
@@ -189,7 +189,7 @@ public fun SettingsScreen(
                 } else {
                     "Keep a plain-text copy of your journal in a private repository you own."
                 },
-                style = MiraTheme.type.entryBody,
+                style = MiraTheme.type.uiBody,
                 color = colors.inkMuted,
             )
             Spacer(Modifier.height(MiraSpacing.md))
@@ -214,7 +214,7 @@ public fun SettingsScreen(
         Section("Storage") {
             Text(
                 text = "${formatBytes(state.localMediaBytes)} of media on this device",
-                style = MiraTheme.type.entryBody,
+                style = MiraTheme.type.uiBody,
                 color = colors.ink,
             )
             Spacer(Modifier.height(MiraSpacing.xs))
@@ -260,7 +260,7 @@ public fun SettingsScreen(
         }
 
         Section("About") {
-            Text("Mira ${state.version}", style = MiraTheme.type.entryBody, color = colors.ink)
+            Text("Mira ${state.version}", style = MiraTheme.type.uiBody, color = colors.ink)
             Spacer(Modifier.height(MiraSpacing.md))
             state.updateAvailable?.let { version ->
                 Text(
@@ -300,7 +300,7 @@ private fun ToggleRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(Modifier.weight(1f)) {
-            Text(label, style = MiraTheme.type.entryBody, color = colors.ink)
+            Text(label, style = MiraTheme.type.uiBody, color = colors.ink)
             Text(detail, style = MiraTheme.type.meta, color = colors.inkMuted)
         }
         Switch(

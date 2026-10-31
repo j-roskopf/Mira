@@ -123,12 +123,17 @@ The rule: **if the user typed it, it is Literata. If the app says it, it is Inte
 | `yearNav` | Inter Tight | 11 / 16 | Medium | +1.2, UPPER | `JAN FEB MAR` month strip |
 | `dayNumeral` | Inter Tight | 13 / 13 | Medium | 0 | Numbers inside heatmap circles |
 | `weekdayHead` | Inter Tight | 10 / 12 | Medium | +1.0, UPPER | `SU M TU W TH F SA` |
+| `uiBody` | Inter Tight | 15 / 22 | Regular | 0 | Body text the app speaks: settings, explanations |
 | `entryBody` | **Literata** | 16 / 26 | Regular | 0 | The journal text itself |
 | `entryBodyLarge` | **Literata** | 18 / 30 | Regular | 0 | Single-entry reading view |
 | `entryExcerpt` | **Literata** | 14 / 21 | Regular | 0 | 2-line clamp in timeline rows |
 | `timestamp` | Inter Tight | 11 / 14 | Medium | +0.6 | `11:47 PM` |
 | `button` | Inter Tight | 13 / 16 | SemiBold | +0.3 | All buttons |
 | `meta` | Inter Tight | 12 / 16 | Regular | 0 | Durations, file sizes, counts |
+
+One deliberate exception: the empty state (*"Nothing yet."*) is set in Literata even though the app
+is speaking, because it occupies the column where an entry would be and stands in for text the user
+has not written yet.
 
 Entry body gets a **measure cap of 68 characters** on desktop and web. Compose Multiplatform will
 happily run a line of journal text across a 2560px monitor; `MiraContentWidth` (inherited from Basil's

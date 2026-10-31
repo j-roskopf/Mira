@@ -402,6 +402,9 @@ public fun SearchField(
  *
  * Most of this app's life is spent mostly empty, so an empty day has to look composed rather than
  * broken.
+ *
+ * Deliberately set in the reading face rather than the UI face: it occupies the column where an
+ * entry would be, standing in for text the user has not written yet.
  */
 @Composable
 public fun EmptyState(text: String, modifier: Modifier = Modifier) {
