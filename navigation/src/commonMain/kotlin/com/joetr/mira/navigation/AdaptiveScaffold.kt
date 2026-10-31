@@ -61,13 +61,9 @@ private fun SidebarLayout(
     accountLabel: String?,
     content: @Composable () -> Unit,
 ) {
-    val immersive = selected == TopLevelDestination.Import || selected == TopLevelDestination.Account
-    // Import and Account paint under the title bar; other tabs keep the whole shell in the safe area.
-    val canvas = if (immersive) {
-        MaterialTheme.colorScheme.primary
-    } else {
-        MaterialTheme.colorScheme.background
-    }
+    // Every Mira screen sits on the same canvas; nothing paints under the title bar.
+    val immersive = false
+    val canvas = MaterialTheme.colorScheme.background
     Row(
         Modifier
             .fillMaxSize()
@@ -98,7 +94,7 @@ private fun SidebarLayout(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { onNavigate(TopLevelDestination.Account) }
+                            .clickable { onNavigate(TopLevelDestination.Settings) }
                             .padding(MiraSpacing.sm),
                     )
                 }
@@ -119,12 +115,8 @@ private fun RailLayout(
     onNavigate: (TopLevelDestination) -> Unit,
     content: @Composable () -> Unit,
 ) {
-    val immersive = selected == TopLevelDestination.Import || selected == TopLevelDestination.Account
-    val canvas = if (immersive) {
-        MaterialTheme.colorScheme.primary
-    } else {
-        MaterialTheme.colorScheme.background
-    }
+    val immersive = false
+    val canvas = MaterialTheme.colorScheme.background
     Row(
         Modifier
             .fillMaxSize()
@@ -156,12 +148,8 @@ private fun BottomBarLayout(
     onNavigate: (TopLevelDestination) -> Unit,
     content: @Composable () -> Unit,
 ) {
-    val immersive = selected == TopLevelDestination.Import || selected == TopLevelDestination.Account
-    val canvas = if (immersive) {
-        MaterialTheme.colorScheme.primary
-    } else {
-        MaterialTheme.colorScheme.background
-    }
+    val immersive = false
+    val canvas = MaterialTheme.colorScheme.background
     val navBar = if (immersive) {
         MaterialTheme.colorScheme.primary
     } else {
@@ -179,7 +167,7 @@ private fun BottomBarLayout(
     }
 
     Column(Modifier.fillMaxSize().background(canvas)) {
-        // Import and Account fill under the title bar / status bar; their content applies safe padding.
+        // Mira has no immersive tab; the shell always stays inside the safe area.
         // Other tabs keep chrome + status/cutout padding on the content slot.
         val contentModifier = Modifier
             .weight(1f)
@@ -305,7 +293,8 @@ private data class Destination(
 )
 
 private val destinations = listOf(
-    Destination(TopLevelDestination.Recipes, "Recipes", MiraIcons.Recipes),
-    Destination(TopLevelDestination.Import, "Import", MiraIcons.Discover),
-    Destination(TopLevelDestination.Account, "Account", MiraIcons.Account),
+    Destination(TopLevelDestination.Calendar, "Calendar", MiraIcons.Calendar),
+    Destination(TopLevelDestination.Timeline, "Timeline", MiraIcons.Timeline),
+    Destination(TopLevelDestination.Search, "Search", MiraIcons.Search),
+    Destination(TopLevelDestination.Settings, "Settings", MiraIcons.Settings),
 )

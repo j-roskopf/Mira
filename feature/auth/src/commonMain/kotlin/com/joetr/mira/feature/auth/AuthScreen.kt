@@ -45,8 +45,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.joetr.mira.domain.repository.SessionRepository
-import com.joetr.mira.domain.usecase.MergeLocalIntoAccountUseCase
+import com.joetr.mira.domain.SessionRepository
 import com.joetr.mira.ui.components.MiraConfirmDialog
 import com.joetr.mira.ui.icons.MiraAppMark
 import com.joetr.mira.ui.icons.GoogleMark
@@ -56,7 +55,6 @@ import kotlinx.coroutines.launch
 
 public class AuthViewModel(
     private val sessionRepository: SessionRepository,
-    private val mergeUseCase: MergeLocalIntoAccountUseCase,
 ) {
     public suspend fun signIn(email: String, password: String) =
         sessionRepository.signInWithEmail(email, password)
@@ -69,11 +67,11 @@ public class AuthViewModel(
 
     public suspend fun signInGoogle() = sessionRepository.signInWithGoogle()
 
-    public suspend fun mergePrompt(): Pair<Boolean, Int> = mergeUseCase.needsPrompt()
+    public suspend fun mergePrompt(): Pair<Boolean, Int> = sessionRepository.needsMergePrompt()
 
-    public suspend fun acceptMerge(): Int = mergeUseCase.accept()
+    public suspend fun acceptMerge(): Int = sessionRepository.acceptMerge()
 
-    public suspend fun declineMerge() = mergeUseCase.decline()
+    public suspend fun declineMerge() = sessionRepository.declineMerge()
 }
 
 /**
