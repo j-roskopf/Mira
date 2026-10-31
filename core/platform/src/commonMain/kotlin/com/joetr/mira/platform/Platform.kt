@@ -10,33 +10,10 @@ public fun desktopDataDirectoryName(): String = ".mira"
 
 public fun localStorageDirectoryName(): String = "mira"
 
-/**
- * Coil on web fetches image bytes through Ktor, so cross-origin hosts must opt into CORS.
- *
- * Firebase Storage download URLs are loaded directly (bucket CORS allows mira.joetr.com).
- * Other remote hosts still go through the proxyImage Cloud Function.
- */
-public fun imageUrlForDisplay(imageUrl: String?): String? =
-    imageUrl?.let(::remoteImageUrlForPlatform)
-
-/** True when [imageUrl] is already hosted in Firebase Storage (CORS-enabled for web). */
-public fun isFirebaseStorageImageUrl(imageUrl: String?): Boolean {
-    if (imageUrl.isNullOrBlank()) return false
-    return imageUrl.contains("firebasestorage.googleapis.com") ||
-        imageUrl.contains(".firebasestorage.app/")
-}
-
-/** Same routing as [imageUrlForDisplay], for downloading remote images on web. */
-public fun remoteImageUrlForPlatform(imageUrl: String): String {
-    if (platformName() != "web") return imageUrl
-    if (!imageUrl.startsWith("http://") && !imageUrl.startsWith("https://")) return imageUrl
-    // Hosted recipe images already allow CORS — proxying them doubles latency and
-    // pays Cloud Function cold starts on every grid/detail load.
-    if (isFirebaseStorageImageUrl(imageUrl)) return imageUrl
-    val projectId = MiraConfig.FIREBASE_PROJECT_ID
-    if (projectId.isBlank()) return imageUrl
-    val region = MiraConfig.FIREBASE_FUNCTIONS_REGION
-    return "https://$region-$projectId.cloudfunctions.net/proxyImage?url=${encodeUrlParameter(imageUrl)}"
+/** True when [url] points at Firebase Storage, whose bucket CORS allows mira.joetr.com. */
+public fun isFirebaseStorageUrl(url: String?): Boolean {
+    if (url.isNullOrBlank()) return false
+    return url.contains("firebasestorage.googleapis.com") || url.contains(".firebasestorage.app/")
 }
 
 /** Percent-encode a value for use in a URL query parameter. */
@@ -56,14 +33,6 @@ public fun encodeUrlParameter(value: String): String = buildString {
         }
     }
 }
-
-/** Target product search for [query]. */
-public fun targetSearchUrl(query: String): String =
-    "https://www.target.com/s?searchTerm=${encodeUrlParameter(query)}"
-
-/** Hy-Vee Aisles Online search for [query]. */
-public fun hyVeeSearchUrl(query: String): String =
-    "https://www.hy-vee.com/aisles-online/search?search=${encodeUrlParameter(query)}"
 
 public expect fun currentTimeMillis(): Long
 

@@ -13,7 +13,7 @@ import org.jetbrains.compose.resources.configureWebResources
 @OptIn(ExperimentalComposeUiApi::class)
 public fun main() {
     // Compose resources default to "./$path" resolved against window.location.pathname.
-    // On deep SPA routes (e.g. /recipe/...), that 404s and painterResource stays blank.
+    // On deep routes (e.g. /day/2026-10-30) that 404s and painterResource stays blank.
     configureWebResources {
         resourcePathMapping { path -> "/$path" }
     }

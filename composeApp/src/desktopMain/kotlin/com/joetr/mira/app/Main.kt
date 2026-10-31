@@ -18,7 +18,7 @@ import com.joetr.mira.di.createMiraAppGraph
 import com.joetr.mira.platform.configureMacOsDesktopAppearance
 import com.joetr.mira.platform.desktopFileDialogOwner
 import com.joetr.mira.ui.layout.LocalWindowChromeInsets
-import com.joetr.mira.ui.theme.MiraColors
+import androidx.compose.ui.graphics.Color as ComposeColor
 import java.awt.Color
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -54,7 +54,8 @@ public fun main() {
                     window.rootPane.putClientProperty("apple.awt.transparentTitleBar", true)
                     window.rootPane.putClientProperty("apple.awt.windowTitleVisible", false)
                 }
-                val bg = MiraColors.BackgroundDark
+                // Matches the dark canvas token so the window never flashes white on open.
+                val bg = ComposeColor(0xFF0A0A0B)
                 window.background = Color(bg.toArgb(), true)
             }
 

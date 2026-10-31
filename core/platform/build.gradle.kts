@@ -69,11 +69,13 @@ tasks.register("generateMiraConfig") {
             .ifBlank { if (projectId.isNotBlank()) "$projectId.firebaseapp.com" else "" }
         val storageBucket = resolve("mira.firebase.storageBucket", "FIREBASE_STORAGE_BUCKET", "mira.firebase.storageBucket")
             .ifBlank { if (projectId.isNotBlank()) "$projectId.appspot.com" else "" }
-        val functionsRegion = resolve(
-            "mira.firebase.functionsRegion",
-            "FIREBASE_FUNCTIONS_REGION",
-            "mira.firebase.functionsRegion",
-        ).ifBlank { "us-central1" }
+        // No Cloud Functions in Mira; the GitHub archive uses device flow, which needs only a
+        // client id and no secret, so nothing here is sensitive at build time.
+        val gitHubClientId = resolve(
+            "mira.github.oauthClientId",
+            "MIRA_GITHUB_OAUTH_CLIENT_ID",
+            "mira.github.oauthClientId",
+        )
         val versionNameValue = versionName.get()
         val googleWebClientId = resolve(
             "mira.google.webClientId",
@@ -112,7 +114,7 @@ tasks.register("generateMiraConfig") {
                     const val FIREBASE_PROJECT_ID: String = "${esc(projectId)}"
                     const val FIREBASE_AUTH_DOMAIN: String = "${esc(authDomain)}"
                     const val FIREBASE_STORAGE_BUCKET: String = "${esc(storageBucket)}"
-                    const val FIREBASE_FUNCTIONS_REGION: String = "${esc(functionsRegion)}"
+                    const val GITHUB_OAUTH_CLIENT_ID: String = "${esc(gitHubClientId)}"
                     const val GOOGLE_WEB_CLIENT_ID: String = "${esc(googleWebClientId)}"
                     const val GOOGLE_WEB_CLIENT_SECRET: String = "${esc(googleWebClientSecret)}"
                     const val GOOGLE_IOS_CLIENT_ID: String = "${esc(googleIosClientId)}"

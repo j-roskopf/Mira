@@ -22,11 +22,8 @@ kotlinxBrowser = "0.5.0"
 atomicfu = "0.33.0"
 datetime = "0.7.0"
 camerax = "1.4.2"
-mlkitTextRecognition = "16.0.1"
 credentials = "1.5.0"
 googleid = "1.1.1"
-firebaseBom = "33.16.0"
-googleServices = "4.4.3"
 
 [libraries]
 compose-runtime = { module = "org.jetbrains.compose.runtime:runtime", version.ref = "compose" }
@@ -87,15 +84,9 @@ androidx-camera-core = { module = "androidx.camera:camera-core", version.ref = "
 androidx-camera-camera2 = { module = "androidx.camera:camera-camera2", version.ref = "camerax" }
 androidx-camera-lifecycle = { module = "androidx.camera:camera-lifecycle", version.ref = "camerax" }
 androidx-camera-view = { module = "androidx.camera:camera-view", version.ref = "camerax" }
-mlkit-text-recognition = { module = "com.google.mlkit:text-recognition", version.ref = "mlkitTextRecognition" }
 androidx-credentials = { module = "androidx.credentials:credentials", version.ref = "credentials" }
 androidx-credentials-play-services = { module = "androidx.credentials:credentials-play-services-auth", version.ref = "credentials" }
 googleid = { module = "com.google.android.libraries.identity.googleid:googleid", version.ref = "googleid" }
-firebase-bom = { module = "com.google.firebase:firebase-bom", version.ref = "firebaseBom" }
-firebase-auth = { module = "com.google.firebase:firebase-auth-ktx" }
-firebase-firestore = { module = "com.google.firebase:firebase-firestore-ktx" }
-firebase-storage = { module = "com.google.firebase:firebase-storage-ktx" }
-firebase-functions = { module = "com.google.firebase:firebase-functions-ktx" }
 
 [plugins]
 androidApplication = { id = "com.android.application", version.ref = "agp" }
@@ -107,4 +98,3 @@ kotlinSerialization = { id = "org.jetbrains.kotlin.plugin.serialization", versio
 sqldelight = { id = "app.cash.sqldelight", version.ref = "sqldelight" }
 roborazzi = { id = "io.github.takahirom.roborazzi", version.ref = "roborazzi" }
 metro = { id = "dev.zacsweers.metro", version.ref = "metro" }
-googleServices = { id = "com.google.gms.google-services", version.ref = "googleServices" }

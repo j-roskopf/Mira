@@ -1,101 +1,102 @@
 package com.joetr.mira.di
 
-import com.joetr.mira.data.auth.createFirebaseSessionStore
+import com.joetr.mira.data.archive.ArchiveService
+import com.joetr.mira.data.archive.GitHubDeviceFlow
 import com.joetr.mira.data.auth.DefaultSessionRepository
-import com.joetr.mira.data.image.DefaultImageRepository
-import com.joetr.mira.data.recipe.DefaultUserSettingsRepository
-import com.joetr.mira.data.recipe.DefaultImportRepository
-import com.joetr.mira.data.recipe.DefaultRecipeRepository
-import com.joetr.mira.data.recipe.DefaultSharedRecipeRepository
-import com.joetr.mira.data.recipe.DefaultSyncRepository
-import com.joetr.mira.data.recipe.sync.ImageUploadWorker
-import com.joetr.mira.data.recipe.sync.RecipeSyncService
+import com.joetr.mira.data.auth.createFirebaseSessionStore
+import com.joetr.mira.data.entries.DefaultEntryStore
+import com.joetr.mira.data.entries.DefaultSyncCoordinator
+import com.joetr.mira.data.entries.EntryRepository
+import com.joetr.mira.data.entries.media.MediaRepository
+import com.joetr.mira.data.entries.media.RetentionPolicy
+import com.joetr.mira.data.entries.sync.EntrySyncService
+import com.joetr.mira.data.settings.DefaultUserSettingsRepository
 import com.joetr.mira.database.MiraDataLayer
-import com.joetr.mira.domain.usecase.DeleteRecipeUseCase
-import com.joetr.mira.domain.usecase.CreateSharedRecipeUseCase
-import com.joetr.mira.domain.usecase.ExportRecipesUseCase
-import com.joetr.mira.domain.usecase.ImportMiraRecipesUseCase
-import com.joetr.mira.domain.usecase.ImportMelaRecipesUseCase
-import com.joetr.mira.domain.usecase.ImportRecipeFromUrlUseCase
-import com.joetr.mira.domain.usecase.GetSharedRecipeUseCase
-import com.joetr.mira.domain.usecase.MergeLocalIntoAccountUseCase
-import com.joetr.mira.domain.usecase.ObserveImportHistoryUseCase
-import com.joetr.mira.domain.usecase.ObserveRecipeUseCase
-import com.joetr.mira.domain.usecase.ObserveRecipesUseCase
-import com.joetr.mira.domain.usecase.ObserveSessionUseCase
-import com.joetr.mira.domain.usecase.ObserveSyncStateUseCase
-import com.joetr.mira.domain.usecase.ObserveShowStoreSearchLinksUseCase
-import com.joetr.mira.domain.usecase.ObserveThemeModeUseCase
-import com.joetr.mira.domain.usecase.SaveRecipeUseCase
-import com.joetr.mira.domain.usecase.SaveSharedRecipeCopyUseCase
-import com.joetr.mira.domain.usecase.ScanRecipeFromImageUseCase
-import com.joetr.mira.domain.usecase.RevokeSharedRecipeUseCase
-import com.joetr.mira.domain.usecase.SetShowStoreSearchLinksUseCase
-import com.joetr.mira.domain.usecase.SetThemeModeUseCase
-import com.joetr.mira.domain.usecase.SignOutUseCase
-import com.joetr.mira.domain.usecase.ToggleFavouriteUseCase
+import com.joetr.mira.domain.Attachment
+import com.joetr.mira.domain.AttachmentKind
+import com.joetr.mira.domain.AttachmentState
+import com.joetr.mira.domain.SystemClockZone
 import com.joetr.mira.feature.auth.AuthViewModel
-import com.joetr.mira.feature.cook.CookViewModel
-import com.joetr.mira.feature.editor.EditorViewModel
-import com.joetr.mira.feature.import.ImportViewModel
-import com.joetr.mira.feature.recipes.RecipeDetailViewModel
-import com.joetr.mira.feature.recipes.RecipesViewModel
-import com.joetr.mira.feature.recipes.SharedRecipeViewModel
-import com.joetr.mira.feature.scan.ScanViewModel
-import com.joetr.mira.feature.settings.SettingsViewModel
+import com.joetr.mira.media.CaptureKind
+import com.joetr.mira.media.CaptureResult
 import com.joetr.mira.network.MiraFirebase
-import com.joetr.mira.network.RecipeExtractor
 import com.joetr.mira.network.createMiraHttpClient
-import com.joetr.mira.network.createMiraImageHttpClient
 import com.joetr.mira.platform.AppLifecycleObserver
+import com.joetr.mira.platform.MiraConfig
+import com.joetr.mira.platform.currentTimeMillis
 import com.joetr.mira.updates.createAppUpdateService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
+/**
+ * Object graph for the app.
+ *
+ * Startup order matters: the persisted Firebase session is restored before anything asks who the
+ * owner is, and sync runs after — otherwise the first pull happens as the anonymous device user and
+ * pulls nothing.
+ */
 public class AppGraph(
     dataLayer: MiraDataLayer,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val httpClient = createMiraHttpClient()
-    public val imageHttpClient = createMiraImageHttpClient()
+    private val clock = SystemClockZone()
+
     private val firebase = MiraFirebase.create(
         httpClient = httpClient,
         sessionStore = createFirebaseSessionStore(dataLayer.database),
     )
-    private val imageRepository = DefaultImageRepository(dataLayer.database, imageHttpClient, firebase)
-    private val syncService = RecipeSyncService(dataLayer.database, firebase, imageRepository, scope)
-    private val recipeRepository = DefaultRecipeRepository(dataLayer.database, syncService, imageRepository)
-    private val sharedRecipeRepository = DefaultSharedRecipeRepository(firebase)
-    private val syncRepository = DefaultSyncRepository(syncService)
+
+    public val entries: EntryRepository = EntryRepository(dataLayer.database, clock)
+
+    private val syncService = EntrySyncService(dataLayer.database, firebase, scope)
+    private val syncCoordinator = DefaultSyncCoordinator(syncService)
+    private val entryStore = DefaultEntryStore(dataLayer.database)
+
+    public val media: MediaRepository = MediaRepository(
+        database = dataLayer.database,
+        firebase = firebase,
+        entries = entries,
+        policy = defaultRetentionPolicy(),
+    )
+
+    public val archive: ArchiveService = ArchiveService(
+        database = dataLayer.database,
+        entries = entries,
+        media = media,
+        httpClient = httpClient,
+        scope = scope,
+    )
+
+    public val settings: DefaultUserSettingsRepository =
+        DefaultUserSettingsRepository(dataLayer.database)
+
     private val sessionRepository = DefaultSessionRepository(
         dataLayer.database,
-        recipeRepository,
+        entryStore,
         firebase,
-        syncRepository,
+        syncCoordinator,
     )
-    private val saveRecipeUseCase = SaveRecipeUseCase(recipeRepository)
-    private val createSharedRecipeUseCase = CreateSharedRecipeUseCase(sharedRecipeRepository)
-    private val getSharedRecipeUseCase = GetSharedRecipeUseCase(sharedRecipeRepository)
-    private val revokeSharedRecipeUseCase = RevokeSharedRecipeUseCase(sharedRecipeRepository)
-    private val recipeExtractor = RecipeExtractor(firebase)
-    private val importRepository = DefaultImportRepository(dataLayer.database, recipeExtractor)
-    public val imageRepositoryPublic: DefaultImageRepository get() = imageRepository
-    private val imageUploadWorker = ImageUploadWorker(imageRepository, syncService, scope)
-    private val userSettingsRepository = DefaultUserSettingsRepository(dataLayer.database, scope)
+
+    public val session: DefaultSessionRepository get() = sessionRepository
+    public val sync: EntrySyncService get() = syncService
     public val updates = createAppUpdateService(scope, httpClient)
 
+    public val authViewModel: AuthViewModel = AuthViewModel(sessionRepository)
+
     private val startupJob = scope.launch {
+        settings.load()
+        archive.load()
         firebase.preloadPersistedSession()
         val signedInViaOAuth = sessionRepository.resumePendingWebOAuth()
         sessionRepository.ensureSession()
         if (signedInViaOAuth) {
-            syncRepository.syncAfterSignIn()
+            syncCoordinator.syncAfterSignIn()
         } else {
             syncService.syncNow()
         }
-        imageUploadWorker.start()
         updates.checkForUpdates()
     }
 
@@ -109,56 +110,66 @@ public class AppGraph(
         startupJob.join()
     }
 
-    public val recipesViewModel: RecipesViewModel = RecipesViewModel(ObserveRecipesUseCase(recipeRepository))
-    public val recipeDetailViewModel: RecipeDetailViewModel = RecipeDetailViewModel(
-        observeRecipe = ObserveRecipeUseCase(recipeRepository),
-        deleteRecipe = DeleteRecipeUseCase(recipeRepository),
-        toggleFavouriteUseCase = ToggleFavouriteUseCase(recipeRepository),
-        createSharedRecipe = createSharedRecipeUseCase,
-        revokeSharedRecipe = revokeSharedRecipeUseCase,
-    )
-    public val sharedRecipeViewModel: SharedRecipeViewModel = SharedRecipeViewModel(
-        getSharedRecipe = getSharedRecipeUseCase,
-        saveSharedRecipeCopy = SaveSharedRecipeCopyUseCase(
-            saveRecipe = saveRecipeUseCase,
-            observeSession = ObserveSessionUseCase(sessionRepository),
-        ),
-    )
-    public val importViewModel: ImportViewModel = ImportViewModel(
-        ImportRecipeFromUrlUseCase(importRepository),
-        ImportMelaRecipesUseCase(recipeRepository, imageRepository, syncRepository, ObserveSessionUseCase(sessionRepository)),
-        ImportMiraRecipesUseCase(recipeRepository, imageRepository, syncRepository, ObserveSessionUseCase(sessionRepository)),
-        ExportRecipesUseCase(recipeRepository, imageRepository, ObserveSessionUseCase(sessionRepository)),
-        ObserveImportHistoryUseCase(importRepository),
-    )
-    public val editorViewModel: EditorViewModel = EditorViewModel(
-        saveRecipe = saveRecipeUseCase,
-        observeSession = ObserveSessionUseCase(sessionRepository),
-        observeRecipe = ObserveRecipeUseCase(recipeRepository),
-        imageRepository = imageRepository,
-    )
-    public val cookViewModel: CookViewModel = CookViewModel(ObserveRecipeUseCase(recipeRepository))
-    public val authViewModel: AuthViewModel = AuthViewModel(
-        sessionRepository,
-        MergeLocalIntoAccountUseCase(sessionRepository),
-    )
-    public val scanViewModel: ScanViewModel = ScanViewModel(
-        ScanRecipeFromImageUseCase(importRepository),
-        imageRepository,
-    )
-    public val settingsViewModel: SettingsViewModel = SettingsViewModel(
-        ObserveSessionUseCase(sessionRepository),
-        ObserveSyncStateUseCase(syncRepository),
-        syncRepository,
-        ObserveThemeModeUseCase(userSettingsRepository),
-        SetThemeModeUseCase(userSettingsRepository),
-        ObserveShowStoreSearchLinksUseCase(userSettingsRepository),
-        SetShowStoreSearchLinksUseCase(userSettingsRepository),
-        SignOutUseCase(sessionRepository),
-        updates,
-    )
+    /** The archive's HTTP client, shared with the rest of the app. */
+    public fun httpClientForArchive(): io.ktor.client.HttpClient = httpClient
 
+    /**
+     * Device flow for connecting the GitHub archive, or null when no client id was configured.
+     *
+     * There is no client secret by design — device flow needs only the id, which is what keeps the
+     * archive feature free of any server component.
+     */
+    public fun gitHubDeviceFlow(): GitHubDeviceFlow? {
+        val clientId = MiraConfig.GITHUB_OAUTH_CLIENT_ID
+        if (clientId.isBlank()) return null
+        return GitHubDeviceFlow(httpClient, clientId)
+    }
+
+    /**
+     * Turns a finished recording into an attachment and stages its bytes for upload.
+     *
+     * The attachment is created in [AttachmentState.LOCAL] and only becomes UPLOADED once Storage
+     * confirms it, which is what lets an entry sync to another device ahead of its media.
+     */
+    public suspend fun attachFrom(result: CaptureResult, entryId: String?): Attachment {
+        val attachmentId = "${currentTimeMillis()}-${result.kind.name.lowercase()}"
+        val attachment = Attachment(
+            id = attachmentId,
+            kind = if (result.kind == CaptureKind.VIDEO) {
+                AttachmentKind.VIDEO
+            } else {
+                AttachmentKind.AUDIO
+            },
+            storagePath = "",
+            mime = result.mime,
+            bytes = result.sizeBytes,
+            durationMs = result.durationMs,
+            state = AttachmentState.LOCAL,
+        )
+        media.stage(
+            entryId = entryId ?: attachmentId,
+            attachmentId = attachmentId,
+            path = result.path,
+            bytes = result.bytes,
+            size = result.sizeBytes,
+        )
+        return attachment
+    }
+
+    /** Called after any local write: entry sync is eager, the archive push is debounced. */
+    public fun onLocalWrite() {
+        syncService.onLocalWrite()
+        archive.onLocalWrite()
+    }
 }
+
+/**
+ * How much media this platform keeps locally once it is safely in Storage.
+ *
+ * Desktop keeps a complete offline archive; mobile keeps an LRU-capped cache; web keeps nothing,
+ * because browser storage quota is a fraction of free disk and is evicted without warning.
+ */
+internal expect fun defaultRetentionPolicy(): RetentionPolicy
 
 public suspend fun createMiraAppGraph(): AppGraph {
     val dataLayer = com.joetr.mira.database.createMiraDataLayer()

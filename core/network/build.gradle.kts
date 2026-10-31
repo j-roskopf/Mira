@@ -18,12 +18,8 @@ kotlin {
         }
         androidMain {
             dependencies {
+                // Firebase is reached entirely over REST from commonMain, so no native SDK here.
                 implementation(libs.ktor.client.okhttp)
-                implementation(project.dependencies.platform(libs.firebase.bom))
-                implementation(libs.firebase.auth)
-                implementation(libs.firebase.firestore)
-                implementation(libs.firebase.storage)
-                implementation(libs.firebase.functions)
             }
         }
         val desktopMain by getting {
