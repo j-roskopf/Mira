@@ -79,10 +79,11 @@ private fun SidebarLayout(
                 .padding(28.dp),
         ) {
             Column(Modifier.fillMaxHeight()) {
+                // The wordmark is chrome, not an active state — only the selected tab takes accent.
                 Text(
-                    "Mira",
+                    "MIRA",
                     style = MaterialTheme.typography.displayMedium,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = MaterialTheme.colorScheme.onBackground,
                 )
                 Spacer(Modifier.height(MiraSpacing.xl))
                 ColumnNav(selected, onNavigate)
@@ -153,7 +154,7 @@ private fun BottomBarLayout(
     val navBar = if (immersive) {
         MaterialTheme.colorScheme.primary
     } else {
-        MaterialTheme.colorScheme.surface
+        MaterialTheme.colorScheme.background
     }
     val activeTint = if (immersive) {
         MaterialTheme.colorScheme.onPrimary
@@ -163,7 +164,7 @@ private fun BottomBarLayout(
     val inactiveTint = if (immersive) {
         MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.55f)
     } else {
-        MaterialTheme.colorScheme.onSurface
+        MaterialTheme.colorScheme.onSurfaceVariant
     }
 
     Column(Modifier.fillMaxSize().background(canvas)) {
@@ -231,7 +232,7 @@ private fun ColumnNav(
         val tint = if (active) {
             MaterialTheme.colorScheme.primary
         } else {
-            MaterialTheme.colorScheme.onSurface
+            MaterialTheme.colorScheme.onSurfaceVariant
         }
         Row(
             modifier = Modifier

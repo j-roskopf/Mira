@@ -9,7 +9,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 
-private val MaxContentWidth = 1280.dp
+/**
+ * Entry text is meant to be read, and Compose will happily run a line of it across a 2560px
+ * monitor. 720dp keeps the measure near the 68-character cap in DESIGN.md and keeps the calendar
+ * grid from stretching into a sparse lattice.
+ */
+private val MaxContentWidth = 720.dp
 
 @Composable
 public fun MiraContentWidth(
@@ -18,9 +23,11 @@ public fun MiraContentWidth(
 ) {
     BoxWithConstraints(modifier) {
         Box(
+            // widthIn must come first: fillMaxWidth pins minWidth to the parent's max, and a
+            // later widthIn cannot shrink below that min, so the cap would be ignored.
             Modifier
-                .fillMaxWidth()
                 .widthIn(max = MaxContentWidth)
+                .fillMaxWidth()
                 .align(Alignment.TopCenter),
         ) {
             content()

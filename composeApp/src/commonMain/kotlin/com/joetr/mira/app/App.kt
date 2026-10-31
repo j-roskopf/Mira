@@ -50,6 +50,7 @@ import com.joetr.mira.navigation.TimelineKey
 import com.joetr.mira.navigation.TopLevelDestination
 import com.joetr.mira.navigation.YearKey
 import com.joetr.mira.navigation.parseWebRoute
+import com.joetr.mira.ui.layout.MiraContentWidth
 import com.joetr.mira.ui.motion.LocalNavAnimatedVisibilityScope
 import com.joetr.mira.ui.motion.LocalSharedTransitionScope
 import com.joetr.mira.ui.motion.navSharedElementTransitionSpec
@@ -132,6 +133,7 @@ public fun App(graph: AppGraph, initialWebPath: String? = null) {
                         CompositionLocalProvider(
                             LocalNavAnimatedVisibilityScope provides this@AnimatedContent,
                         ) {
+                            MiraContentWidth(Modifier.fillMaxSize()) {
                             Screen(
                                 key = key,
                                 graph = graph,
@@ -152,6 +154,7 @@ public fun App(graph: AppGraph, initialWebPath: String? = null) {
                                 onSelectDate = { selectedDate = it },
                                 onRefresh = ::refresh,
                             )
+                            }
                         }
                     }
                 }

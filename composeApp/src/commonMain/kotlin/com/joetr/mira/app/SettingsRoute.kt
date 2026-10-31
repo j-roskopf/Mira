@@ -60,7 +60,7 @@ internal fun SettingsRoute(
         modifier = modifier,
         state = SettingsUiState(
             session = session,
-            syncState = syncState as SyncState,
+            syncState = syncState,
             themeMode = themeMode,
             accent = MiraAccent.fromName(accentName),
             archiveRepo = archiveStatus.repoSlug,
