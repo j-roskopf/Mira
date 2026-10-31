@@ -7,6 +7,7 @@ import com.joetr.mira.db.MiraDatabase
 import com.joetr.mira.domain.Attachment
 import com.joetr.mira.domain.AttachmentKind
 import com.joetr.mira.domain.AttachmentState
+import com.joetr.mira.media.MediaSource
 import com.joetr.mira.network.MiraFirebase
 import com.joetr.mira.platform.currentTimeMillis
 import kotlinx.coroutines.Dispatchers
@@ -115,6 +116,27 @@ public class MediaRepository(
 
         if (uploaded > 0) enforceRetention()
         return uploaded
+    }
+
+    /**
+     * Where a player should read this attachment from.
+     *
+     * Prefers a local file so playback starts instantly and works offline, falls back to a signed
+     * Storage URL so it streams, and only materialises bytes when neither is available — which is
+     * the web case, and anything captured but not yet uploaded.
+     */
+    public suspend fun sourceFor(attachment: Attachment): MediaSource? {
+        val blob = io { queries.selectBlob(attachment.id).awaitAsOneOrNull() }
+        if (blob != null) {
+            io { queries.touchBlob(currentTimeMillis(), attachment.id) }
+            blob.path?.let { path -> return MediaSource.LocalFile(path) }
+            blob.data_?.let { bytes -> return MediaSource.Bytes(bytes, attachment.mime) }
+        }
+        attachment.url?.let { return MediaSource.Remote(it) }
+
+        // No local copy and no usable URL: fetch it so playback can still happen.
+        val bytes = bytesFor(attachment) ?: return null
+        return MediaSource.Bytes(bytes, attachment.mime)
     }
 
     /** Bytes for playback: local if cached, otherwise streamed from Storage. */

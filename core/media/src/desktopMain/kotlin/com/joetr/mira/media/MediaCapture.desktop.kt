@@ -11,7 +11,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -217,44 +216,13 @@ internal class DesktopMediaRecorderController : MediaRecorderController {
         }
     }
 
-    /**
-     * Splits the MJPEG stream into frames on its SOI/EOI markers.
-     *
-     * MJPEG over a pipe is just concatenated JPEGs with no framing of its own, so the boundaries
-     * have to be found by scanning for `FFD8` … `FFD9`.
-     */
     private suspend fun readMjpegFrames(stream: InputStream) = withContext(Dispatchers.IO) {
-        val buffer = ArrayList<Byte>(256 * 1024)
-        val chunk = ByteArray(16 * 1024)
-        try {
-            while (isActive) {
-                val read = stream.read(chunk)
-                if (read <= 0) break
-                for (index in 0 until read) buffer.add(chunk[index])
-
-                var start = indexOfMarker(buffer, 0xD8)
-                var end = if (start >= 0) indexOfMarker(buffer, 0xD9, start + 2) else -1
-                while (start >= 0 && end > start) {
-                    val frame = ByteArray(end + 2 - start) { buffer[start + it] }
-                    runCatching { decodeJpeg(frame) }.getOrNull()?.let { previewFrame.value = it }
-                    repeat(end + 2) { if (buffer.isNotEmpty()) buffer.removeAt(0) }
-                    start = indexOfMarker(buffer, 0xD8)
-                    end = if (start >= 0) indexOfMarker(buffer, 0xD9, start + 2) else -1
-                }
-            }
-        } catch (_: Throwable) {
-            // Stream closes when the recording stops; nothing to report.
+        readJpegFrames(stream) { bytes ->
+            decodeJpegFrame(bytes)?.let { previewFrame.value = it }
+            isActive
         }
     }
 
-    private fun indexOfMarker(buffer: List<Byte>, marker: Int, from: Int = 0): Int {
-        var index = from
-        while (index < buffer.size - 1) {
-            if (buffer[index] == 0xFF.toByte() && buffer[index + 1] == marker.toByte()) return index
-            index++
-        }
-        return -1
-    }
 
     private suspend fun drain(stream: InputStream) = withContext(Dispatchers.IO) {
         runCatching {
@@ -268,9 +236,6 @@ internal class DesktopMediaRecorderController : MediaRecorderController {
     }
 }
 
-private fun decodeJpeg(bytes: ByteArray): ImageBitmap? =
-    runCatching { org.jetbrains.skia.Image.makeFromEncoded(bytes).toComposeImageBitmap() }
-        .getOrNull()
 
 @Composable
 public actual fun CameraPreview(

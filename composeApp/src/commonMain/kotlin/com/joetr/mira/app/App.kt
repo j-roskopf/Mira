@@ -274,7 +274,11 @@ private fun Screen(
                 date = date,
                 initialBody = body,
                 recorder = recorder,
-                attachmentCount = attachments.size,
+                attachments = attachments,
+                sourceFor = { graph.media.sourceFor(it) },
+                onRemoveAttachment = { attachment ->
+                    attachments = attachments.filterNot { it.id == attachment.id }
+                },
                 initialCapture = when (key.initialCapture) {
                     "audio" -> CaptureKind.AUDIO
                     "video" -> CaptureKind.VIDEO

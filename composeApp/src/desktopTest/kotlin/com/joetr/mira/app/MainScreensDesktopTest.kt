@@ -20,6 +20,9 @@ import com.joetr.mira.domain.SessionState
 import com.joetr.mira.domain.SyncState
 import com.joetr.mira.domain.SyncStatus
 import com.joetr.mira.domain.ThemeMode
+import androidx.compose.runtime.remember
+import com.joetr.mira.feature.compose.ComposeEntryScreen
+import com.joetr.mira.media.createMediaRecorderController
 import com.joetr.mira.feature.calendar.CalendarScreen
 import com.joetr.mira.feature.calendar.YearScreen
 import com.joetr.mira.feature.day.DayScreen
@@ -65,6 +68,9 @@ class MainScreensDesktopTest {
 
     @Test fun searchDark() = capture("Search_dark", dark = true) { SearchSample() }
     @Test fun searchLight() = capture("Search_light", dark = false) { SearchSample() }
+
+    @Test fun composeEntryDark() = capture("ComposeEntry_dark", dark = true) { ComposeSample() }
+    @Test fun composeEntryLight() = capture("ComposeEntry_light", dark = false) { ComposeSample() }
 
     @Test fun settingsDark() = capture("Settings_dark", dark = true) { SettingsSample() }
     @Test fun settingsLight() = capture("Settings_light", dark = false) { SettingsSample() }
@@ -222,6 +228,25 @@ private fun SearchSample() {
         onQueryChange = {},
         onFiltersChange = {},
         onEntryClick = {},
+    )
+}
+
+@Composable
+private fun ComposeSample() {
+    val recorder = remember { createMediaRecorderController() }
+    ComposeEntryScreen(
+        date = sampleDate,
+        initialBody = sampleEntries[1].body,
+        recorder = recorder,
+        attachments = sampleEntries[1].attachments,
+        sourceFor = { null },
+        onRemoveAttachment = {},
+        onBodyChange = {},
+        onDateClick = {},
+        onCaptureFinished = {},
+        onSave = {},
+        onCancel = {},
+        onDelete = {},
     )
 }
 

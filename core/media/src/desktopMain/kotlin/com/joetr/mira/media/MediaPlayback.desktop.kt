@@ -1,0 +1,333 @@
+package com.joetr.mira.media
+
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.toComposeImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.InputStream
+import javax.sound.sampled.AudioFormat
+import javax.sound.sampled.AudioSystem
+import javax.sound.sampled.SourceDataLine
+import java.util.concurrent.TimeUnit
+
+public actual fun createMediaPlayerController(): MediaPlayerController =
+    DesktopMediaPlayerController()
+
+/**
+ * Desktop playback, decoded by the same bundled FFmpeg that handles capture.
+ *
+ * The JDK can play uncompressed PCM through `javax.sound.sampled` but has no AAC or H.264 decoder,
+ * so FFmpeg decodes to raw PCM for audio and to MJPEG frames for video. Since the binary is already
+ * bundled for capture, playback costs nothing extra — which is the compounding argument for the
+ * subprocess approach over a media library.
+ *
+ * Audio and video run as two processes over the same file, paced against the wall clock. A file is
+ * not a camera, so opening it twice is fine.
+ */
+internal class DesktopMediaPlayerController : MediaPlayerController {
+
+    private val _state = MutableStateFlow(PlaybackState())
+    override val state: StateFlow<PlaybackState> = _state.asStateFlow()
+
+    internal val frame = MutableStateFlow<ImageBitmap?>(null)
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    private var sourcePath: String? = null
+    private var tempFile: File? = null
+    private var kind: CaptureKind = CaptureKind.AUDIO
+
+    private var audioProcess: Process? = null
+    private var videoProcess: Process? = null
+    private var audioJob: Job? = null
+    private var videoJob: Job? = null
+    private var clockJob: Job? = null
+
+    private var startedAtMs: Long = 0
+    private var startOffsetMs: Long = 0
+
+    override suspend fun load(source: MediaSource, kind: CaptureKind) {
+        release()
+        this.kind = kind
+        _state.value = PlaybackState(preparing = true)
+
+        if (!FfmpegBinary.isAvailable) {
+            _state.value = PlaybackState(errorMessage = "FFmpeg is not available in this build")
+            return
+        }
+
+        val path = withContext(Dispatchers.IO) { resolvePath(source) }
+        if (path == null) {
+            _state.value = PlaybackState(errorMessage = "Could not open this recording")
+            return
+        }
+        sourcePath = path
+        _state.value = PlaybackState(durationMs = probeDurationMs(path))
+    }
+
+    override suspend fun play() {
+        val path = sourcePath ?: return
+        if (_state.value.playing) return
+        val from = if (_state.value.ended) 0L else _state.value.positionMs
+
+        startOffsetMs = from
+        startedAtMs = System.currentTimeMillis()
+        _state.value = _state.value.copy(playing = true, ended = false, preparing = false)
+
+        audioJob = scope.launch { streamAudio(path, from) }
+        if (kind == CaptureKind.VIDEO) {
+            videoJob = scope.launch { streamVideo(path, from) }
+        }
+        clockJob = scope.launch { trackPosition() }
+    }
+
+    override fun pause() {
+        stopProcesses()
+        _state.value = _state.value.copy(playing = false)
+    }
+
+    override suspend fun seekTo(positionMs: Long) {
+        val wasPlaying = _state.value.playing
+        stopProcesses()
+        _state.value = _state.value.copy(positionMs = positionMs, ended = false, playing = false)
+        if (wasPlaying) play()
+    }
+
+    override fun release() {
+        stopProcesses()
+        tempFile?.delete()
+        tempFile = null
+        sourcePath = null
+        frame.value = null
+        _state.value = PlaybackState()
+    }
+
+    private fun stopProcesses() {
+        audioJob?.cancel()
+        videoJob?.cancel()
+        clockJob?.cancel()
+        audioProcess?.destroyForcibly()
+        videoProcess?.destroyForcibly()
+        audioProcess = null
+        videoProcess = null
+    }
+
+    /**
+     * Decodes to signed 16-bit stereo PCM and writes it straight into the output line.
+     *
+     * `SourceDataLine.write` blocks while the buffer drains, which is what paces playback — no
+     * separate timing loop is needed for the audio itself.
+     */
+    private suspend fun streamAudio(path: String, fromMs: Long) = withContext(Dispatchers.IO) {
+        val binary = FfmpegBinary.path ?: return@withContext
+        val format = AudioFormat(44_100f, 16, 2, true, false)
+        val line = runCatching {
+            (AudioSystem.getLine(javax.sound.sampled.DataLine.Info(SourceDataLine::class.java, format)) as SourceDataLine)
+                .apply {
+                    open(format, 64 * 1024)
+                    start()
+                }
+        }.getOrNull() ?: return@withContext
+
+        val process = runCatching {
+            ProcessBuilder(
+                binary, "-hide_banner", "-loglevel", "error",
+                "-ss", (fromMs / 1000.0).toString(),
+                "-i", path,
+                "-vn",
+                "-f", "s16le", "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
+                "pipe:1",
+            ).redirectErrorStream(false).start()
+        }.getOrNull()
+
+        if (process == null) {
+            line.close()
+            return@withContext
+        }
+        audioProcess = process
+
+        val buffer = ByteArray(16 * 1024)
+        try {
+            while (isActive) {
+                val read = process.inputStream.read(buffer)
+                if (read <= 0) break
+                line.write(buffer, 0, read)
+            }
+            if (isActive) {
+                line.drain()
+                _state.value = _state.value.copy(playing = false, ended = true)
+            }
+        } catch (_: Throwable) {
+            // The stream closes on pause or seek; nothing to report.
+        } finally {
+            runCatching {
+                line.stop()
+                line.close()
+            }
+            process.destroyForcibly()
+        }
+    }
+
+    /** Decodes video to MJPEG frames, paced against the wall clock so it tracks the audio. */
+    private suspend fun streamVideo(path: String, fromMs: Long) = withContext(Dispatchers.IO) {
+        val binary = FfmpegBinary.path ?: return@withContext
+        val fps = 24
+        val process = runCatching {
+            ProcessBuilder(
+                binary, "-hide_banner", "-loglevel", "error",
+                "-ss", (fromMs / 1000.0).toString(),
+                "-i", path,
+                "-an",
+                "-r", fps.toString(),
+                "-f", "mjpeg", "-q:v", "6",
+                "pipe:1",
+            ).redirectErrorStream(false).start()
+        }.getOrNull() ?: return@withContext
+        videoProcess = process
+
+        var frameIndex = 0
+        readJpegFrames(process.inputStream) { bytes ->
+            if (!isActive) return@readJpegFrames false
+            // Hold each frame until its presentation time, so video does not race ahead of audio.
+            val targetMs = startedAtMs + (frameIndex * 1000L / fps)
+            val waitMs = targetMs - System.currentTimeMillis()
+            if (waitMs > 0) delay(waitMs)
+            decodeJpegFrame(bytes)?.let { frame.value = it }
+            frameIndex++
+            true
+        }
+        process.destroyForcibly()
+    }
+
+    private suspend fun trackPosition() {
+        while (scope.isActive && _state.value.playing) {
+            val elapsed = System.currentTimeMillis() - startedAtMs + startOffsetMs
+            val duration = _state.value.durationMs
+            _state.value = _state.value.copy(
+                positionMs = if (duration > 0) elapsed.coerceAtMost(duration) else elapsed,
+            )
+            delay(100)
+        }
+    }
+
+    /** Reads `Duration: HH:MM:SS.ss` from FFmpeg's own report of the file. */
+    private suspend fun probeDurationMs(path: String): Long = withContext(Dispatchers.IO) {
+        val binary = FfmpegBinary.path ?: return@withContext 0L
+        val process = runCatching {
+            ProcessBuilder(binary, "-hide_banner", "-i", path)
+                .redirectErrorStream(true)
+                .start()
+        }.getOrNull() ?: return@withContext 0L
+
+        val text = runCatching { process.inputStream.bufferedReader().readText() }.getOrDefault("")
+        process.waitFor(5, TimeUnit.SECONDS)
+
+        val match = Regex("""Duration:\s*(\d+):(\d{2}):(\d{2})\.(\d{1,2})""").find(text)
+            ?: return@withContext 0L
+        val (hours, minutes, seconds, fraction) = match.destructured
+        hours.toLong() * 3_600_000 +
+            minutes.toLong() * 60_000 +
+            seconds.toLong() * 1_000 +
+            fraction.padEnd(2, '0').toLong() * 10
+    }
+
+    private fun resolvePath(source: MediaSource): String? = when (source) {
+        is MediaSource.LocalFile -> source.path.takeIf { File(it).exists() }
+        is MediaSource.Remote -> source.url
+        is MediaSource.Bytes -> {
+            val extension = if (source.mime.startsWith("video/")) "mp4" else "m4a"
+            runCatching {
+                File.createTempFile("mira-playback-", ".$extension").apply {
+                    deleteOnExit()
+                    writeBytes(source.bytes)
+                    tempFile = this
+                }.absolutePath
+            }.getOrNull()
+        }
+    }
+}
+
+/**
+ * Splits an MJPEG stream into frames on its SOI/EOI markers.
+ *
+ * MJPEG over a pipe is concatenated JPEGs with no framing of its own, so boundaries have to be
+ * found by scanning for `FFD8` … `FFD9`.
+ */
+internal suspend fun readJpegFrames(stream: InputStream, onFrame: suspend (ByteArray) -> Boolean) {
+    val buffer = ArrayList<Byte>(256 * 1024)
+    val chunk = ByteArray(32 * 1024)
+    try {
+        while (true) {
+            val read = stream.read(chunk)
+            if (read <= 0) break
+            for (index in 0 until read) buffer.add(chunk[index])
+
+            var start = indexOfJpegMarker(buffer, 0xD8)
+            var end = if (start >= 0) indexOfJpegMarker(buffer, 0xD9, start + 2) else -1
+            while (start >= 0 && end > start) {
+                val frame = ByteArray(end + 2 - start) { buffer[start + it] }
+                if (!onFrame(frame)) return
+                repeat(end + 2) { if (buffer.isNotEmpty()) buffer.removeAt(0) }
+                start = indexOfJpegMarker(buffer, 0xD8)
+                end = if (start >= 0) indexOfJpegMarker(buffer, 0xD9, start + 2) else -1
+            }
+        }
+    } catch (_: Throwable) {
+        // The stream closes when playback stops.
+    }
+}
+
+private fun indexOfJpegMarker(buffer: List<Byte>, marker: Int, from: Int = 0): Int {
+    var index = from
+    while (index < buffer.size - 1) {
+        if (buffer[index] == 0xFF.toByte() && buffer[index + 1] == marker.toByte()) return index
+        index++
+    }
+    return -1
+}
+
+internal fun decodeJpegFrame(bytes: ByteArray): ImageBitmap? =
+    runCatching { org.jetbrains.skia.Image.makeFromEncoded(bytes).toComposeImageBitmap() }
+        .getOrNull()
+
+@Composable
+public actual fun VideoSurface(
+    controller: MediaPlayerController,
+    modifier: Modifier,
+) {
+    val desktopController = controller as? DesktopMediaPlayerController
+    val frame by (desktopController?.frame ?: MutableStateFlow(null)).collectAsState()
+
+    Box(modifier.background(Color.Black), contentAlignment = Alignment.Center) {
+        frame?.let { bitmap ->
+            Image(
+                bitmap = bitmap,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Fit,
+            )
+        }
+    }
+}

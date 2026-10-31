@@ -230,14 +230,18 @@ public object MiraIcons {
     }
 
 
-    public val Play: MiraIconPainter = MiraIconPainter { scope, tint, stroke ->
+    /**
+     * A bare triangle, nudged right so it reads as centred.
+     *
+     * Every place Mira draws this already sits inside a circular button, so the icon must not draw
+     * its own ring — two concentric circles read as a record button, not a play button.
+     */
+    public val Play: MiraIconPainter = MiraIconPainter { scope, tint, _ ->
         with(scope) {
-            val c = Offset(size.width / 2, size.height / 2)
-            drawCircle(tint, radius = size.minDimension * 0.36f, center = c, style = stroke)
             val path = Path().apply {
-                moveTo(size.width * 0.42f, size.height * 0.32f)
-                lineTo(size.width * 0.72f, size.height * 0.5f)
-                lineTo(size.width * 0.42f, size.height * 0.68f)
+                moveTo(size.width * 0.30f, size.height * 0.20f)
+                lineTo(size.width * 0.80f, size.height * 0.50f)
+                lineTo(size.width * 0.30f, size.height * 0.80f)
                 close()
             }
             drawPath(path, tint)

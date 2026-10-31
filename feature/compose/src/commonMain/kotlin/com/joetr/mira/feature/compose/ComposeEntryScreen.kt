@@ -31,18 +31,19 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.style.TextAlign
+import com.joetr.mira.domain.Attachment
 import com.joetr.mira.domain.LocalDateKey
 import com.joetr.mira.media.CameraPreview
 import com.joetr.mira.media.CaptureKind
 import com.joetr.mira.media.CaptureLimits
 import com.joetr.mira.media.CaptureResult
 import com.joetr.mira.media.MediaRecorderController
+import com.joetr.mira.media.MediaSource
 import com.joetr.mira.media.RecordingState
 import com.joetr.mira.media.supportsCapture
 import com.joetr.mira.ui.components.CircleIconButton
 import com.joetr.mira.ui.components.PillButton
 import com.joetr.mira.ui.components.RecordButton
-import com.joetr.mira.ui.components.SectionLabel
 import com.joetr.mira.ui.displayDate
 import com.joetr.mira.ui.formatDuration
 import com.joetr.mira.ui.icons.MiraIcons
@@ -64,7 +65,9 @@ public fun ComposeEntryScreen(
     date: LocalDateKey,
     initialBody: String,
     recorder: MediaRecorderController,
-    attachmentCount: Int,
+    attachments: List<Attachment>,
+    sourceFor: suspend (Attachment) -> MediaSource?,
+    onRemoveAttachment: (Attachment) -> Unit,
     onBodyChange: (String) -> Unit,
     onDateClick: () -> Unit,
     onCaptureFinished: (CaptureResult) -> Unit,
@@ -123,7 +126,7 @@ public fun ComposeEntryScreen(
             PillButton(
                 text = "Save",
                 onClick = onSave,
-                enabled = body.isNotBlank() || attachmentCount > 0,
+                enabled = body.isNotBlank() || attachments.isNotEmpty(),
             )
         }
 
@@ -148,6 +151,15 @@ public fun ComposeEntryScreen(
             )
         }
 
+        if (attachments.isNotEmpty()) {
+            Spacer(Modifier.height(MiraSpacing.xl))
+            AttachmentSection(
+                attachments = attachments,
+                sourceFor = sourceFor,
+                onRemove = onRemoveAttachment,
+            )
+        }
+
         if (activeCapture == CaptureKind.VIDEO) {
             CameraPreview(
                 controller = recorder,
@@ -162,7 +174,6 @@ public fun ComposeEntryScreen(
         CaptureBar(
             state = state,
             activeCapture = activeCapture,
-            attachmentCount = attachmentCount,
             onStart = { kind ->
                 activeCapture = kind
                 scope.launch { recorder.start(kind) }
@@ -182,7 +193,6 @@ public fun ComposeEntryScreen(
 private fun CaptureBar(
     state: RecordingState,
     activeCapture: CaptureKind?,
-    attachmentCount: Int,
     onStart: (CaptureKind) -> Unit,
     onStop: () -> Unit,
     onCancelCapture: () -> Unit,
@@ -211,11 +221,6 @@ private fun CaptureBar(
                 modifier = Modifier.fillMaxWidth(),
                 textAlign = TextAlign.Center,
             )
-            Spacer(Modifier.height(MiraSpacing.sm))
-        }
-
-        if (attachmentCount > 0 && recording == null) {
-            SectionLabel("$attachmentCount attached")
             Spacer(Modifier.height(MiraSpacing.sm))
         }
 
