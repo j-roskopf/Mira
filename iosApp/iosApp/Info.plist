@@ -26,6 +26,12 @@
 				<string>mira</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.51337295499-jgesskoooqfcpd1ko10r9n9t2094hbn4</string>
+			</array>
+		</dict>
 	</array>
 	<key>CFBundleVersion</key>
 	<string>1</string>
