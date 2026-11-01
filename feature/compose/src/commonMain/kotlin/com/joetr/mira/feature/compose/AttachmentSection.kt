@@ -1,12 +1,27 @@
 package com.joetr.mira.feature.compose
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Text
+import androidx.compose.runtime.key
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
@@ -17,6 +32,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.joetr.mira.domain.Attachment
 import com.joetr.mira.domain.AttachmentKind
 import com.joetr.mira.media.CaptureKind
@@ -26,11 +47,16 @@ import com.joetr.mira.media.createMediaPlayerController
 import com.joetr.mira.ui.components.AttachmentPlaybackState
 import com.joetr.mira.ui.components.AudioAttachmentRow
 import com.joetr.mira.ui.components.CircleIconButton
+import com.joetr.mira.ui.formatDuration
 import com.joetr.mira.ui.components.SectionLabel
 import com.joetr.mira.ui.components.VideoAttachmentTile
+import com.joetr.mira.ui.icons.MiraIcon
 import com.joetr.mira.ui.icons.MiraIcons
+import com.joetr.mira.ui.theme.MiraRadii
 import com.joetr.mira.ui.theme.MiraSpacing
+import com.joetr.mira.ui.theme.MiraTheme
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 
 /**
  * Playable attachments on an entry.
@@ -51,6 +77,9 @@ internal fun AttachmentSection(
     val scope = rememberCoroutineScope()
     val controller = remember { createMediaPlayerController() }
     var activeId by remember { mutableStateOf<String?>(null) }
+    var loading by remember { mutableStateOf(false) }
+    var sourceError by remember { mutableStateOf<String?>(null) }
+    var expandedId by remember { mutableStateOf<String?>(null) }
 
     DisposableEffect(controller) {
         onDispose { controller.release() }
@@ -59,105 +88,254 @@ internal fun AttachmentSection(
     val playback by controller.state.collectAsState()
 
     fun toggle(attachment: Attachment) {
+        if (loading) return
         scope.launch {
-            if (activeId == attachment.id) {
+            if (activeId == attachment.id && sourceError == null && playback.errorMessage == null) {
                 if (playback.playing) controller.pause() else controller.play()
                 return@launch
             }
             controller.release()
             activeId = attachment.id
-            val source = sourceFor(attachment)
-            if (source == null) {
-                activeId = null
-                return@launch
+            sourceError = null
+            loading = true
+            try {
+                val source = sourceFor(attachment)
+                if (source == null) {
+                    sourceError = "This recording is unavailable. Its local file may be missing and no cloud copy could be loaded."
+                    return@launch
+                }
+                controller.load(
+                    source = source,
+                    kind = if (attachment.kind == AttachmentKind.VIDEO) CaptureKind.VIDEO else CaptureKind.AUDIO,
+                )
+                if (controller.state.value.errorMessage == null) controller.play()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                sourceError = "Could not open this recording. Please try again."
+            } finally {
+                loading = false
             }
-            controller.load(
-                source = source,
-                kind = if (attachment.kind == AttachmentKind.VIDEO) {
-                    CaptureKind.VIDEO
-                } else {
-                    CaptureKind.AUDIO
-                },
-            )
-            controller.play()
         }
     }
 
-    Column(modifier.fillMaxWidth()) {
-        SectionLabel(if (attachments.size == 1) "Attachment" else "Attachments")
-        Spacer(Modifier.height(MiraSpacing.md))
+    fun stateFor(attachment: Attachment): AttachmentPlaybackState =
+        if (activeId == attachment.id) {
+            AttachmentPlaybackState(
+                playing = playback.playing,
+                preparing = loading || playback.preparing,
+                positionMs = playback.positionMs,
+                durationMs = playback.durationMs,
+                errorMessage = sourceError ?: playback.errorMessage,
+                videoWidth = playback.videoWidth,
+                videoHeight = playback.videoHeight,
+            )
+        } else {
+            AttachmentPlaybackState(durationMs = attachment.durationMs)
+        }
 
-        attachments.forEach { attachment ->
-            val isActive = activeId == attachment.id
-            val state = if (isActive) {
-                AttachmentPlaybackState(
-                    playing = playback.playing,
-                    preparing = playback.preparing,
-                    positionMs = playback.positionMs,
-                    durationMs = playback.durationMs,
-                    errorMessage = playback.errorMessage,
+    fun seek(attachment: Attachment, fraction: Float) {
+        if (activeId != attachment.id) return
+        scope.launch {
+            controller.seekTo((fraction * playback.durationMs).toLong())
+        }
+    }
+
+    fun remove(attachment: Attachment) {
+        if (activeId == attachment.id) {
+            controller.release()
+            activeId = null
+        }
+        onRemove(attachment)
+    }
+
+    // Bound the collection, not each item, so every recording stays reachable without
+    // displacing the editor and capture controls. Use the same layout at every window width.
+    val listHeight = with(LocalDensity.current) {
+        (LocalWindowInfo.current.containerSize.height * 0.4f).toDp()
+    }
+    Column(modifier.fillMaxWidth()) {
+        SectionLabel("Attachments · ${attachments.size}")
+        Spacer(Modifier.height(MiraSpacing.md))
+        Column(
+            modifier = Modifier.fillMaxWidth()
+                .heightIn(max = listHeight)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(MiraSpacing.md),
+        ) {
+            attachments.forEachIndexed { index, attachment ->
+                key(attachment.id) {
+                    AttachmentEntry(
+                        attachment = attachment,
+                        label = "${if (attachment.kind == AttachmentKind.VIDEO) "Video" else "Voice note"} ${index + 1}",
+                        state = stateFor(attachment),
+                        started = activeId == attachment.id && expandedId != attachment.id,
+                        onPlayPause = { toggle(attachment) },
+                        onSeek = { fraction -> seek(attachment, fraction) },
+                        onRemove = { remove(attachment) },
+                        onExpand = {
+                            if (activeId != attachment.id) toggle(attachment)
+                            expandedId = attachment.id
+                        },
+                        surface = { surfaceModifier -> VideoSurface(controller, surfaceModifier) },
+                    )
+                }
+            }
+        }
+    }
+
+    val expanded = attachments.firstOrNull { it.id == expandedId }
+    if (expanded != null && expanded.kind == AttachmentKind.VIDEO) {
+        val isActive = activeId == expanded.id
+        val state = if (isActive) {
+            AttachmentPlaybackState(
+                playing = playback.playing,
+                preparing = loading || playback.preparing,
+                positionMs = playback.positionMs,
+                durationMs = playback.durationMs,
+                errorMessage = sourceError ?: playback.errorMessage,
+                videoWidth = playback.videoWidth,
+                videoHeight = playback.videoHeight,
+            )
+        } else {
+            AttachmentPlaybackState(durationMs = expanded.durationMs)
+        }
+        FullScreenVideo(
+            attachment = expanded,
+            state = state,
+            onDismiss = { expandedId = null },
+            onPlayPause = { toggle(expanded) },
+            surface = { surfaceModifier -> VideoSurface(controller, surfaceModifier) },
+        )
+    }
+}
+
+@Composable
+private fun AttachmentEntry(
+    attachment: Attachment,
+    label: String,
+    state: AttachmentPlaybackState,
+    started: Boolean,
+    onPlayPause: () -> Unit,
+    onSeek: (Float) -> Unit,
+    onRemove: () -> Unit,
+    onExpand: () -> Unit,
+    surface: @Composable (Modifier) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = MiraTheme.colors
+    Column(
+        modifier = modifier.fillMaxWidth()
+            .background(colors.surfaceRaised, RoundedCornerShape(MiraRadii.card))
+            .padding(MiraSpacing.md),
+        verticalArrangement = Arrangement.spacedBy(MiraSpacing.sm),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(MiraSpacing.sm),
+        ) {
+            if (attachment.kind == AttachmentKind.VIDEO && !started) {
+                CircleIconButton(
+                    icon = MiraIcons.Play,
+                    contentDescription = "Play $label",
+                    onClick = onPlayPause,
+                    tint = colors.accent,
                 )
             } else {
-                AttachmentPlaybackState(durationMs = attachment.durationMs)
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(MiraSpacing.sm),
-            ) {
-                Box(Modifier.weight(1f)) {
-                    when (attachment.kind) {
-                        AttachmentKind.AUDIO -> AudioAttachmentRow(
-                            attachment = attachment,
-                            state = state,
-                            onPlayPause = { toggle(attachment) },
-                            onSeek = { fraction ->
-                                if (isActive) {
-                                    scope.launch {
-                                        controller.seekTo(
-                                            (fraction * playback.durationMs).toLong(),
-                                        )
-                                    }
-                                }
-                            },
-                        )
-
-                        AttachmentKind.VIDEO -> VideoAttachmentTile(
-                            attachment = attachment,
-                            state = state,
-                            started = isActive,
-                            onPlayPause = { toggle(attachment) },
-                            onSeek = { fraction ->
-                                if (isActive) {
-                                    scope.launch {
-                                        controller.seekTo(
-                                            (fraction * playback.durationMs).toLong(),
-                                        )
-                                    }
-                                }
-                            },
-                            surface = { surfaceModifier ->
-                                VideoSurface(controller, surfaceModifier)
-                            },
-                        )
-                    }
-                }
-
-                CircleIconButton(
-                    icon = MiraIcons.Trash,
-                    contentDescription = "Remove attachment",
-                    onClick = {
-                        if (isActive) {
-                            controller.release()
-                            activeId = null
-                        }
-                        onRemove(attachment)
-                    },
+                MiraIcon(
+                    if (attachment.kind == AttachmentKind.VIDEO) MiraIcons.Video else MiraIcons.Microphone,
+                    tint = colors.inkMuted,
+                    size = 18.dp,
                 )
             }
+            Text(label, style = MiraTheme.type.uiBody, color = colors.ink, modifier = Modifier.weight(1f))
+            Text(formatDuration(attachment.durationMs), style = MiraTheme.type.meta, color = colors.inkMuted)
+            CircleIconButton(
+                icon = MiraIcons.Trash,
+                contentDescription = "Remove $label",
+                onClick = onRemove,
+            )
+        }
+        when (attachment.kind) {
+            AttachmentKind.AUDIO -> AudioAttachmentRow(
+                attachment = attachment,
+                state = state,
+                onPlayPause = onPlayPause,
+                onSeek = onSeek,
+            )
+            AttachmentKind.VIDEO -> if (started) VideoAttachmentTile(
+                attachment = attachment,
+                state = state,
+                started = started,
+                onPlayPause = onPlayPause,
+                onSeek = onSeek,
+                onExpand = onExpand,
+                surface = surface,
+                modifier = Modifier.widthIn(max = 360.dp).fillMaxWidth(),
+            )
+        }
+    }
+}
 
-            Spacer(Modifier.height(MiraSpacing.md))
+@Composable
+private fun FullScreenVideo(
+    attachment: Attachment,
+    state: AttachmentPlaybackState,
+    onDismiss: () -> Unit,
+    onPlayPause: () -> Unit,
+    surface: @Composable (Modifier) -> Unit,
+) {
+    val colors = MiraTheme.colors
+    val ratio = if (state.videoWidth > 0 && state.videoHeight > 0) {
+        state.videoWidth.toFloat() / state.videoHeight
+    } else {
+        null
+    }
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Color.Black),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (ratio != null) {
+                val fit = if (ratio >= 1f) {
+                    Modifier.fillMaxWidth().aspectRatio(ratio)
+                } else {
+                    Modifier.fillMaxHeight().aspectRatio(ratio)
+                }
+                surface(fit)
+            } else {
+                surface(Modifier.fillMaxSize())
+            }
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .clickable(onClickLabel = if (state.playing) "Pause" else "Play", onClick = onPlayPause),
+            )
+            if (!state.playing) {
+                Box(
+                    modifier = Modifier
+                        .size(60.dp)
+                        .background(colors.accent, CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    MiraIcon(MiraIcons.Play, tint = colors.onAccent, size = 24.dp)
+                }
+            }
+            CircleIconButton(
+                icon = MiraIcons.Close,
+                contentDescription = "Close full screen video",
+                onClick = onDismiss,
+                tint = Color.White,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(MiraSpacing.lg),
+            )
         }
     }
 }

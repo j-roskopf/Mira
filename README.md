@@ -79,8 +79,10 @@ domain/ navigation/ ui/ build-logic/
 ```
 
 Copy `local.properties.example` to `local.properties` and fill in the Firebase and OAuth values.
-Everything except Firebase works without them; without a Firebase project the app simply stays
-local.
+Without a Firebase project the app stays local. GitHub archive connection also requires a GitHub
+OAuth app with **Enable Device Flow** selected. Set `mira.github.oauthClientId` in `local.properties`
+(or `MIRA_GITHUB_OAUTH_CLIENT_ID` in the build environment), then rebuild the app. No GitHub client
+secret is needed. Release builds read the `MIRA_GITHUB_OAUTH_CLIENT_ID` repository secret.
 
 Desktop capture needs the FFmpeg binary. CI builds it per platform; locally:
 

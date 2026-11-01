@@ -63,6 +63,32 @@ class CaptureCommandTest {
     }
 
     @Test
+    fun microsecondCameraRateDoesNotFloodEncodersWithDuplicateFrames() {
+        assumeTrue("FFmpeg is not available", ffmpeg != null)
+        val output = File.createTempFile("mira-rate-test-", ".mp4").apply { delete() }
+        try {
+            // Like the observed AVFoundation feed: declared 1M fps, actual timestamps ~30 fps.
+            val command = buildCaptureCommand(
+                binary = ffmpeg!!,
+                kind = CaptureKind.VIDEO,
+                outputPath = output.absolutePath,
+                inputArgs = listOf(
+                    "-itsscale", "33333.333333", "-f", "lavfi", "-i", "testsrc=size=64x64:rate=1000000",
+                    "-f", "lavfi", "-i", "sine=frequency=440",
+                ),
+                audioInputIndex = 1,
+                durationSeconds = 2,
+            )
+            val result = run(command)
+            assertEquals(result.stderr, 0, result.exitCode)
+            val frames = countJpegFrames(result.stdout)
+            assertTrue("Expected ~60 preview frames, got $frames", frames in 50..70)
+        } finally {
+            output.delete()
+        }
+    }
+
+    @Test
     fun audioCaptureWritesMonoAacAtTheConfiguredRate() {
         assumeTrue("FFmpeg is not available", ffmpeg != null)
         val output = File.createTempFile("mira-capture-test-", ".m4a").apply { delete() }
@@ -145,14 +171,103 @@ class CaptureCommandTest {
         assertEquals("/tmp/out.m4a", command.last())
     }
 
+    @Test
+    fun portraitCameraUsesSelectedFormatForBothRecordingAndPreview() {
+        assumeTrue("FFmpeg is not available", ffmpeg != null)
+        for (aspect in VideoAspectRatio.entries) {
+            for (quality in VideoQuality.entries) {
+                val settings = VideoCaptureSettings(aspect, quality)
+                val output = File.createTempFile("mira-format-test-", ".mp4").apply { delete() }
+                val camera = File.createTempFile("mira-camera-edges-", ".jpg")
+                val source = java.awt.image.BufferedImage(360, 640, java.awt.image.BufferedImage.TYPE_INT_RGB)
+                source.createGraphics().apply {
+                    color = java.awt.Color.WHITE
+                    fillRect(0, 0, 360, 640)
+                    color = java.awt.Color.RED
+                    fillRect(0, 0, 360, 64)
+                    color = java.awt.Color.BLUE
+                    fillRect(0, 576, 360, 64)
+                    color = java.awt.Color.GREEN
+                    fillRect(0, 64, 36, 512)
+                    color = java.awt.Color.YELLOW
+                    fillRect(324, 64, 36, 512)
+                    dispose()
+                }
+                javax.imageio.ImageIO.write(source, "jpg", camera)
+                try {
+                    val command = buildCaptureCommand(
+                        binary = ffmpeg!!,
+                        kind = CaptureKind.VIDEO,
+                        outputPath = output.absolutePath,
+                        inputArgs = listOf(
+                            "-f", "mjpeg", "-i", camera.absolutePath,
+                            "-f", "lavfi", "-i", "sine=frequency=440",
+                        ),
+                        audioInputIndex = 1,
+                        durationSeconds = 1,
+                        videoSettings = settings,
+                    )
+                    assertEquals(quality.bitrate.toString(), command[command.indexOf("-b:v:0") + 1])
+                    val result = run(command)
+                    assertEquals("$settings: ${result.stderr}", 0, result.exitCode)
+                    val preview = javax.imageio.ImageIO.read(java.io.ByteArrayInputStream(result.stdout))
+                    val decoded = run(listOf(
+                        ffmpeg, "-v", "error", "-i", output.absolutePath,
+                        "-frames:v", "1", "-f", "mjpeg", "-c:v", "mjpeg", "pipe:1",
+                    ))
+                    assertEquals(decoded.stderr, 0, decoded.exitCode)
+                    val recording = javax.imageio.ImageIO.read(java.io.ByteArrayInputStream(decoded.stdout))
+                    val edge = quality.shortEdge
+                    val expected = when (aspect) {
+                        VideoAspectRatio.LANDSCAPE -> edge * 16 / 9 to edge
+                        VideoAspectRatio.PORTRAIT, VideoAspectRatio.ORIGINAL -> edge to edge * 16 / 9
+                        VideoAspectRatio.SQUARE -> edge to edge
+                    }
+                    assertEquals("$settings width", expected.first, recording.width)
+                    assertEquals("$settings height", expected.second, recording.height)
+                    // All four camera edges must survive both outputs; cropping would remove them.
+                    for (image in listOf(recording, preview)) {
+                        val scale = minOf(image.width / 360.0, image.height / 640.0)
+                        val left = (image.width - 360 * scale) / 2
+                        val top = (image.height - 640 * scale) / 2
+                        val points = listOf(
+                            Triple(180, 32, java.awt.Color.RED), Triple(180, 608, java.awt.Color.BLUE),
+                            Triple(18, 320, java.awt.Color.GREEN), Triple(342, 320, java.awt.Color.YELLOW),
+                        )
+                        for ((x, y, expectedColor) in points) {
+                            val actual = java.awt.Color(image.getRGB((left + x * scale).toInt(), (top + y * scale).toInt()))
+                            assertTrue("$settings lost camera edge at $x,$y: $actual",
+                                kotlin.math.abs(actual.red - expectedColor.red) < 40 &&
+                                    kotlin.math.abs(actual.green - expectedColor.green) < 40 &&
+                                    kotlin.math.abs(actual.blue - expectedColor.blue) < 40)
+                        }
+                    }
+                    assertEquals(
+                        "$settings preview must match the saved frame",
+                        recording.width.toDouble() / recording.height,
+                        preview.width.toDouble() / preview.height,
+                        0.005,
+                    )
+                } finally {
+                    output.delete()
+                    camera.delete()
+                }
+            }
+        }
+    }
+
     private data class Result(val exitCode: Int, val stdout: ByteArray, val stderr: String)
 
     private fun run(command: List<String>): Result {
         val process = ProcessBuilder(command).start()
-        val stdout = process.inputStream.readBytes()
-        val stderr = process.errorStream.bufferedReader().readText()
-        process.waitFor(60, TimeUnit.SECONDS)
-        return Result(process.exitValue(), stdout, stderr)
+        val stdout = java.util.concurrent.CompletableFuture.supplyAsync { process.inputStream.readBytes() }
+        val stderr = java.util.concurrent.CompletableFuture.supplyAsync { process.errorStream.bufferedReader().readText() }
+        try {
+            assertTrue("Capture pipeline stalled", process.waitFor(20, TimeUnit.SECONDS))
+            return Result(process.exitValue(), stdout.get(), stderr.get())
+        } finally {
+            process.destroyForcibly()
+        }
     }
 
     /**

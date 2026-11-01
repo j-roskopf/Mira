@@ -23,11 +23,35 @@ public object CaptureLimits {
     public const val WARN_DURATION_MS: Long = 5 * 60 * 1000
 }
 
+public enum class VideoAspectRatio(public val label: String, public val ratio: Float?) {
+    ORIGINAL("Camera original", null),
+    LANDSCAPE("Landscape 16:9", 16f / 9f),
+    PORTRAIT("Portrait 9:16", 9f / 16f),
+    SQUARE("Square 1:1", 1f),
+}
+
+public enum class VideoQuality(public val label: String, public val shortEdge: Int, public val bitrate: Int) {
+    STANDARD("720p · smaller files", 720, 2_000_000),
+    HIGH("1080p · higher quality", 1080, 4_000_000),
+}
+
+public enum class CameraFacing(public val label: String) {
+    BACK("Back camera"),
+    FRONT("Front camera"),
+}
+
+public data class VideoCaptureSettings(
+    val aspectRatio: VideoAspectRatio = VideoAspectRatio.ORIGINAL,
+    val quality: VideoQuality = VideoQuality.HIGH,
+    val facing: CameraFacing = CameraFacing.BACK,
+)
+
 public enum class CaptureKind { AUDIO, VIDEO }
 
 public sealed interface RecordingState {
     public data object Idle : RecordingState
     public data object Preparing : RecordingState
+    public data object Finalizing : RecordingState
     public data class Recording(val elapsedMs: Long, val amplitude: Float = 0f) : RecordingState
     public data class Finished(val result: CaptureResult) : RecordingState
     public data class Failed(val message: String) : RecordingState
@@ -57,6 +81,19 @@ public data class CaptureResult(
 
 public interface MediaRecorderController {
     public val state: StateFlow<RecordingState>
+
+    public val supportsVideoSettings: Boolean get() = false
+
+    /** Which aspect ratios this platform can actually record. */
+    public val supportedAspectRatios: List<VideoAspectRatio> get() = VideoAspectRatio.entries
+
+    /** Which quality presets this platform can actually record. */
+    public val supportedQualities: List<VideoQuality> get() = VideoQuality.entries
+
+    /** Whether the user can switch between the front and back camera. */
+    public val supportsCameraFacing: Boolean get() = false
+
+    public fun configureVideo(settings: VideoCaptureSettings) {}
 
     public suspend fun start(kind: CaptureKind)
     public suspend fun stop()

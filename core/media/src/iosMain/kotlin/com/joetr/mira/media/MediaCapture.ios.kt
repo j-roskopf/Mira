@@ -24,7 +24,7 @@ import platform.AVFoundation.AVCaptureSession
 import platform.AVFoundation.AVCaptureSessionPresetHigh
 import platform.AVFoundation.AVCaptureVideoPreviewLayer
 import platform.AVFoundation.AVCaptureFileOutput
-import platform.AVFoundation.AVLayerVideoGravityResizeAspectFill
+import platform.AVFoundation.AVLayerVideoGravityResizeAspect
 import platform.AVFoundation.AVMediaTypeAudio
 import platform.AVFoundation.AVMediaTypeVideo
 import platform.CoreAudioTypes.kAudioFormatMPEG4AAC
@@ -209,11 +209,20 @@ public actual fun CameraPreview(
             val view = UIView()
             iosController?.captureSession?.let { session ->
                 val layer = AVCaptureVideoPreviewLayer(session = session)
-                layer.videoGravity = AVLayerVideoGravityResizeAspectFill
+                layer.videoGravity = AVLayerVideoGravityResizeAspect
                 layer.frame = view.bounds
                 view.layer.addSublayer(layer)
             }
             view
         },
+        update = { view -> view.syncPreviewLayer() },
+        onResize = { view, _ -> view.syncPreviewLayer() },
+        // Let Compose receive taps so the preview can expand to full screen.
+        interactive = false,
     )
+}
+
+@OptIn(ExperimentalForeignApi::class)
+private fun UIView.syncPreviewLayer() {
+    (layer.sublayers?.firstOrNull() as? AVCaptureVideoPreviewLayer)?.frame = bounds
 }

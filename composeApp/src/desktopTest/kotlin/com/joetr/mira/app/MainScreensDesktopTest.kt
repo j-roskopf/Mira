@@ -5,6 +5,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.runDesktopComposeUiTest
@@ -55,6 +57,19 @@ class MainScreensDesktopTest {
     @Test fun calendarEmptyDark() =
         capture("CalendarEmpty_dark", dark = true) { CalendarSample(empty = true) }
 
+    @Test fun calendarWideDark() =
+        capture("CalendarWide_dark", dark = true, width = 1400, height = 950, contentWidth = 1200.dp) {
+            CalendarSample()
+        }
+
+    @Test fun calendarWideEmptyLight() =
+        capture("CalendarWideEmpty_light", dark = false, width = 1400, height = 950, contentWidth = 1200.dp) {
+            CalendarSample(empty = true)
+        }
+
+    @Test fun calendarCompactDark() =
+        capture("CalendarCompact_dark", dark = true, width = 390, height = 780) { CalendarSample() }
+
     @Test fun yearDark() = capture("Year_dark", dark = true) { YearSample() }
     @Test fun yearLight() = capture("Year_light", dark = false) { YearSample() }
 
@@ -84,8 +99,11 @@ class MainScreensDesktopTest {
         name: String,
         dark: Boolean,
         accent: MiraAccent = MiraAccent.Default,
+        width: Int = 900,
+        height: Int = 1100,
+        contentWidth: Dp = 720.dp,
         content: @Composable () -> Unit,
-    ) = runDesktopComposeUiTest(width = 900, height = 1100) {
+    ) = runDesktopComposeUiTest(width = width, height = height) {
         setContent {
             // Motion off: a staggered reveal mid-animation makes screenshots flaky.
             MiraTheme(darkTheme = dark, accent = accent, motionEnabled = false) {
@@ -96,7 +114,7 @@ class MainScreensDesktopTest {
                         .fillMaxSize()
                         .background(MiraTheme.colors.canvas),
                 ) {
-                    MiraContentWidth(Modifier.fillMaxSize()) { content() }
+                    MiraContentWidth(Modifier.fillMaxSize(), maxWidth = contentWidth) { content() }
                 }
             }
         }
@@ -276,6 +294,7 @@ private fun SettingsSample() {
             onAccentChange = {},
             onSyncNow = {},
             onConnectGitHub = {},
+            onDisconnectGitHub = {},
             onBackUpNow = {},
             onToggleArchiveMedia = {},
             onToggleVideoUnmetered = {},

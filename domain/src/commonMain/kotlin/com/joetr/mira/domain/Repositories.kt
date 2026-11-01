@@ -48,7 +48,7 @@ public interface UserSettingsRepository {
     public fun observeVideoUploadOnUnmeteredOnly(): Flow<Boolean>
     public suspend fun setVideoUploadOnUnmeteredOnly(enabled: Boolean)
 
-    /** Whether the GitHub archive commits media files via LFS as well as links. */
+    /** Whether the GitHub archive commits media files as files as well as links. */
     public fun observeIncludeMediaInArchive(): Flow<Boolean>
     public suspend fun setIncludeMediaInArchive(enabled: Boolean)
 }

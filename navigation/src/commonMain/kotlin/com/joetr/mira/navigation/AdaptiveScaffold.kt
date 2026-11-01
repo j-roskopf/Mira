@@ -1,19 +1,28 @@
 package com.joetr.mira.navigation
 
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.graphics.Path
+import com.joetr.mira.ui.components.MiraFab
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.exclude
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.only
@@ -26,12 +35,16 @@ import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.NavigationRailItemDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.movableContentOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.joetr.mira.ui.icons.MiraIcon
 import com.joetr.mira.ui.icons.MiraIconPainter
 import com.joetr.mira.ui.icons.MiraIcons
@@ -45,12 +58,19 @@ public fun AdaptiveScaffold(
     selected: TopLevelDestination,
     onNavigate: (TopLevelDestination) -> Unit,
     accountLabel: String? = null,
+    onCompose: () -> Unit = {},
+    accentCanvas: Boolean = false,
+    editorSurface: Boolean = false,
     content: @Composable () -> Unit,
 ) {
+    // Rotation can move a phone between the bottom-bar and rail layouts. Moving the same
+    // composition between them keeps the note draft, its attachments, and any open dialog alive.
+    val latestContent by rememberUpdatedState(content)
+    val movableContent = remember { movableContentOf { latestContent() } }
     when {
-        widthDp >= 960 -> SidebarLayout(selected, onNavigate, accountLabel, content)
-        widthDp >= 600 -> RailLayout(selected, onNavigate, content)
-        else -> BottomBarLayout(selected, onNavigate, content)
+        widthDp >= 960 -> SidebarLayout(selected, onNavigate, accountLabel, accentCanvas, movableContent)
+        widthDp >= 600 -> RailLayout(selected, onNavigate, accentCanvas, movableContent)
+        else -> BottomBarLayout(selected, onNavigate, onCompose, accentCanvas, editorSurface, movableContent)
     }
 }
 
@@ -59,23 +79,23 @@ private fun SidebarLayout(
     selected: TopLevelDestination,
     onNavigate: (TopLevelDestination) -> Unit,
     accountLabel: String?,
+    accentCanvas: Boolean,
     content: @Composable () -> Unit,
 ) {
-    // Every Mira screen sits on the same canvas; nothing paints under the title bar.
-    val immersive = false
-    val canvas = MaterialTheme.colorScheme.background
+    // Paint each column before applying insets so its colour reaches behind window chrome.
+    val canvas = if (accentCanvas) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.background
     Row(
         Modifier
             .fillMaxSize()
             .background(canvas)
-            .then(if (immersive) Modifier else Modifier.miraSafeArea()),
+            .windowInsetsPadding(WindowInsets.ime.exclude(WindowInsets.navigationBars)),
     ) {
         Box(
             Modifier
                 .width(260.dp)
                 .fillMaxHeight()
                 .background(MaterialTheme.colorScheme.surface)
-                .then(if (immersive) Modifier.windowInsetsPadding(LocalWindowChromeInsets.current) else Modifier)
+                .miraSafeArea()
                 .padding(28.dp),
         ) {
             Column(Modifier.fillMaxHeight()) {
@@ -105,7 +125,7 @@ private fun SidebarLayout(
             Modifier
                 .weight(1f)
                 .fillMaxHeight()
-                .then(if (immersive) Modifier else Modifier.padding(28.dp)),
+                .miraSafeArea().padding(28.dp),
         ) { content() }
     }
 }
@@ -114,23 +134,20 @@ private fun SidebarLayout(
 private fun RailLayout(
     selected: TopLevelDestination,
     onNavigate: (TopLevelDestination) -> Unit,
+    accentCanvas: Boolean,
     content: @Composable () -> Unit,
 ) {
-    val immersive = false
-    val canvas = MaterialTheme.colorScheme.background
+    val canvas = if (accentCanvas) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.background
     Row(
         Modifier
             .fillMaxSize()
             .background(canvas)
-            .then(if (immersive) Modifier else Modifier.miraSafeArea()),
+            .windowInsetsPadding(WindowInsets.ime.exclude(WindowInsets.navigationBars)),
     ) {
         NavigationRail(
             containerColor = MaterialTheme.colorScheme.surface,
-            windowInsets = if (immersive) {
-                LocalWindowChromeInsets.current
-            } else {
-                WindowInsets(0, 0, 0, 0)
-            },
+            modifier = Modifier.fillMaxHeight().background(MaterialTheme.colorScheme.surface).miraSafeArea(),
+            windowInsets = WindowInsets(0, 0, 0, 0),
         ) {
             destinations.forEach { dest -> RailItem(dest, selected, onNavigate) }
         }
@@ -138,7 +155,7 @@ private fun RailLayout(
             Modifier
                 .weight(1f)
                 .fillMaxHeight()
-                .then(if (immersive) Modifier else Modifier.padding(MiraSpacing.lg)),
+                .miraSafeArea().padding(MiraSpacing.lg),
         ) { content() }
     }
 }
@@ -147,76 +164,74 @@ private fun RailLayout(
 private fun BottomBarLayout(
     selected: TopLevelDestination,
     onNavigate: (TopLevelDestination) -> Unit,
+    onCompose: () -> Unit,
+    accentCanvas: Boolean,
+    editorSurface: Boolean,
     content: @Composable () -> Unit,
 ) {
-    val immersive = false
-    val canvas = MaterialTheme.colorScheme.background
-    val navBar = if (immersive) {
-        MaterialTheme.colorScheme.primary
-    } else {
-        MaterialTheme.colorScheme.background
+    val canvas = when {
+        editorSurface -> MaterialTheme.colorScheme.surface
+        accentCanvas -> MaterialTheme.colorScheme.primary
+        else -> MaterialTheme.colorScheme.background
     }
-    val activeTint = if (immersive) {
-        MaterialTheme.colorScheme.onPrimary
-    } else {
-        MaterialTheme.colorScheme.primary
-    }
-    val inactiveTint = if (immersive) {
-        MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.55f)
-    } else {
-        MaterialTheme.colorScheme.onSurfaceVariant
-    }
-
-    Column(Modifier.fillMaxSize().background(canvas)) {
-        // Mira has no immersive tab; the shell always stays inside the safe area.
-        // Other tabs keep chrome + status/cutout padding on the content slot.
-        val contentModifier = Modifier
-            .weight(1f)
-            .fillMaxWidth()
-            .then(
-                if (immersive) {
-                    Modifier
-                } else {
-                    Modifier
-                        .windowInsetsPadding(LocalWindowChromeInsets.current)
-                        .windowInsetsPadding(
-                            WindowInsets.safeDrawing.only(
-                                WindowInsetsSides.Top + WindowInsetsSides.Horizontal,
-                            ),
-                        )
-                },
-            )
-        Box(contentModifier) { content() }
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .background(navBar)
-                .navigationBarsPadding()
-                .height(74.dp),
-            horizontalArrangement = Arrangement.SpaceEvenly,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            destinations.forEach { dest ->
-                val active = dest.topLevel == selected
-                val tint = if (active) activeTint else inactiveTint
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                        ) { onNavigate(dest.topLevel) }
-                        .padding(top = 11.dp, bottom = 8.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    MiraIcon(dest.icon, tint = tint, size = 20.dp, strokeWidth = 1.6.dp)
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        dest.label,
-                        color = tint,
-                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp, lineHeight = 10.sp),
-                    )
+    val bar = MaterialTheme.colorScheme.surface
+    val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    Column(Modifier.fillMaxSize().background(canvas).imePadding()) {
+        Box(Modifier.weight(1f).fillMaxWidth()
+            .windowInsetsPadding(LocalWindowChromeInsets.current)
+            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))) {
+            content()
+        }
+        if (!keyboardVisible) {
+            Box(Modifier.fillMaxWidth()) {
+                // A continuous raised crest cradles the circular action, like the reference.
+                Canvas(Modifier.matchParentSize()) {
+                    val top = 32.dp.toPx()
+                    val topCorner = 8.dp.toPx()
+                    val center = size.width / 2
+                    val shoulder = 54.dp.toPx()
+                    val path = Path().apply {
+                        moveTo(0f, top + topCorner)
+                        quadraticTo(0f, top, topCorner, top)
+                        lineTo(center - shoulder, top)
+                        cubicTo(center - 34.dp.toPx(), top, center - 36.dp.toPx(), 0f, center, 0f)
+                        cubicTo(center + 36.dp.toPx(), 0f, center + 34.dp.toPx(), top, center + shoulder, top)
+                        lineTo(size.width - topCorner, top)
+                        quadraticTo(size.width, top, size.width, top + topCorner)
+                        lineTo(size.width, size.height)
+                        lineTo(0f, size.height)
+                        close()
+                    }
+                    drawPath(path, bar)
                 }
+                // Insets protect controls while the painted bar extends behind system chrome.
+                Row(Modifier.fillMaxWidth()
+                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
+                    .navigationBarsPadding()
+                    .height(108.dp).padding(top = 32.dp, bottom = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    destinations.forEachIndexed { index, dest ->
+                        if (index == 2) Spacer(Modifier.width(76.dp))
+                        val active = dest.topLevel == selected
+                        val tint = if (active) activeNavigationTint() else MaterialTheme.colorScheme.onSurfaceVariant
+                        Column(
+                            Modifier.weight(1f)
+                                .selectable(selected = active, role = Role.Tab, onClick = { onNavigate(dest.topLevel) })
+                                .semantics { contentDescription = dest.label }
+                                .padding(vertical = 10.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            MiraIcon(dest.icon, tint = tint, size = 24.dp)
+                            Spacer(Modifier.height(4.dp))
+                            // Reserve the same label space so inactive icons stay aligned.
+                            Box(Modifier.height(16.dp), contentAlignment = Alignment.Center) {
+                                if (active) Text(dest.label, color = tint, style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
+                    }
+                }
+                MiraFab(MiraIcons.Plus, "New entry", onCompose,
+                    Modifier.align(Alignment.TopCenter).padding(top = 10.dp))
             }
         }
     }
@@ -230,7 +245,7 @@ private fun ColumnNav(
     destinations.forEach { dest ->
         val active = dest.topLevel == selected
         val tint = if (active) {
-            MaterialTheme.colorScheme.primary
+            activeNavigationTint()
         } else {
             MaterialTheme.colorScheme.onSurfaceVariant
         }
@@ -259,7 +274,7 @@ private fun RailItem(
     onNavigate: (TopLevelDestination) -> Unit,
 ) {
     val active = dest.topLevel == selected
-    val activeTint = MaterialTheme.colorScheme.primary
+    val activeTint = activeNavigationTint()
     val inactiveTint = MaterialTheme.colorScheme.onSurface
     NavigationRailItem(
         selected = active,
@@ -285,6 +300,16 @@ private fun RailItem(
             unselectedTextColor = inactiveTint,
         ),
     )
+}
+
+/** Pale accents such as Bone still need a visible selected destination on a light bar. */
+@Composable
+private fun activeNavigationTint(): Color {
+    val scheme = MaterialTheme.colorScheme
+    val accent = scheme.primary.luminance()
+    val surface = scheme.surface.luminance()
+    val contrast = (maxOf(accent, surface) + 0.05f) / (minOf(accent, surface) + 0.05f)
+    return if (contrast >= 3f) scheme.primary else scheme.onSurface
 }
 
 private data class Destination(

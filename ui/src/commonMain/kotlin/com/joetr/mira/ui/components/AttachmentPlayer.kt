@@ -48,6 +48,8 @@ public data class AttachmentPlaybackState(
     val positionMs: Long = 0,
     val durationMs: Long = 0,
     val errorMessage: String? = null,
+    val videoWidth: Int = 0,
+    val videoHeight: Int = 0,
 ) {
     public val progress: Float
         get() = if (durationMs <= 0) 0f else (positionMs.toFloat() / durationMs).coerceIn(0f, 1f)
@@ -136,6 +138,7 @@ public fun VideoAttachmentTile(
     onSeek: (Float) -> Unit,
     modifier: Modifier = Modifier,
     started: Boolean = false,
+    onExpand: (() -> Unit)? = null,
     surface: @Composable (Modifier) -> Unit = {},
 ) {
     val colors = MiraTheme.colors
@@ -154,7 +157,10 @@ public fun VideoAttachmentTile(
             if (started) {
                 surface(Modifier.fillMaxWidth().fillMaxHeight())
             }
-            if (!state.playing) {
+            if (state.preparing) {
+                Text("Loading recording…", color = Color.White, style = MiraTheme.type.meta)
+            }
+            if (!state.playing && !state.preparing) {
                 Box(
                     modifier = Modifier
                         .size(52.dp)
@@ -162,6 +168,19 @@ public fun VideoAttachmentTile(
                     contentAlignment = Alignment.Center,
                 ) {
                     MiraIcon(MiraIcons.Play, tint = colors.onAccent, size = 22.dp)
+                }
+            }
+            onExpand?.let { expand ->
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(MiraSpacing.sm)
+                        .size(34.dp)
+                        .background(Color.Black.copy(alpha = 0.45f), CircleShape)
+                        .clickable(onClickLabel = "Play full screen", onClick = expand),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    MiraIcon(MiraIcons.Expand, tint = Color.White, size = 16.dp)
                 }
             }
         }

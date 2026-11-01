@@ -3,6 +3,16 @@ plugins {
     id("mira.metro")
 }
 
+tasks.named<org.gradle.api.tasks.testing.Test>("desktopTest") {
+    // Exercise the same trimmed helper we ship, not a full Homebrew FFmpeg found on PATH.
+    val helperDir = rootProject.layout.buildDirectory.dir("ffmpeg").get().asFile
+    val helper = helperDir.resolve(if (System.getProperty("os.name").startsWith("Windows")) "ffmpeg.exe" else "ffmpeg")
+    if (helper.isFile) {
+        systemProperty("compose.application.resources.dir", helperDir.absolutePath)
+        inputs.file(helper)
+    }
+}
+
 kotlin {
     sourceSets {
         commonMain {

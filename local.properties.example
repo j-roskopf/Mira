@@ -10,3 +10,6 @@ sdk.dir=/Users/joer/Library/Android/sdk
 # iOS Google sign-in: CLIENT_ID from iosApp/iosApp/GoogleService-Info.plist (or set iosClientId above).
 # Required for desktop/web Google sign-in (authorization-code flow). Get both from the same
 # Google Cloud "Web application" OAuth client. Also add redirect URIs — see README.
+
+# GitHub archive: OAuth app client ID with device flow enabled (no client secret).
+# mira.github.oauthClientId=

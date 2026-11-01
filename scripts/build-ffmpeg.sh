@@ -89,6 +89,8 @@ CONFIGURE_FLAGS=(
   --enable-decoder=aac
   --enable-decoder=mjpeg
   --enable-decoder=rawvideo
+  # lavfi synthetic inputs deliver wrapped frames, used by the bundled-helper regression tests.
+  --enable-decoder=wrapped_avframe
   # Capture devices hand over raw PCM, and the macOS microphone specifically delivers 32-bit
   # float — without pcm_f32le, recording fails with "no decoder found for: pcm_f32le".
   --enable-decoder=pcm_f32le
@@ -127,6 +129,10 @@ CONFIGURE_FLAGS=(
   # filter graph fails to parse and capture never starts.
   --enable-filter=split
   --enable-filter=scale
+  # Recording format controls fit the selected shape and normalize pixel aspect ratio.
+  --enable-filter=crop
+  --enable-filter=pad
+  --enable-filter=setsar
   --enable-filter=format
   --enable-filter=aformat
   --enable-filter=aresample
@@ -153,6 +159,16 @@ if [[ ! -d "ffmpeg-${FFMPEG_VERSION}" ]]; then
 fi
 
 cd "ffmpeg-${FFMPEG_VERSION}"
+
+if [[ "${TARGET}" == "macos" ]]; then
+  AUDIO_PATCH="${ROOT}/scripts/ffmpeg-patches/avfoundation-audio-queue.patch"
+  if patch -p1 --dry-run --forward < "${AUDIO_PATCH}" >/dev/null 2>&1; then
+    patch -p1 --forward < "${AUDIO_PATCH}"
+  elif ! patch -p1 --dry-run --reverse < "${AUDIO_PATCH}" >/dev/null 2>&1; then
+    echo "::error::AVFoundation audio patch does not match this FFmpeg source" >&2
+    exit 1
+  fi
+fi
 
 # Reconfigure whenever the flag set changes; a stale config.h silently builds the old feature
 # set and the mismatch only shows up as a link error or a missing codec at runtime.

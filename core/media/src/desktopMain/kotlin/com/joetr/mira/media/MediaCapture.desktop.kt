@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -22,10 +23,13 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.InputStream
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicBoolean
 
 public actual fun supportsCapture(kind: CaptureKind): Boolean = FfmpegBinary.isAvailable
 
@@ -39,65 +43,83 @@ public actual fun createMediaRecorderController(): MediaRecorderController =
  * the live preview, via the `tee` muxer. Two processes would mean opening the camera twice, which
  * many webcams refuse outright.
  */
-internal class DesktopMediaRecorderController : MediaRecorderController {
+internal class DesktopMediaRecorderController(
+    private val startupTimeoutMs: Long = 120_000L,
+    private val commandFactory: ((CaptureKind, File, String?) -> List<String>)? = null,
+) : MediaRecorderController {
 
     private companion object {
-        /** A capture that is still alive after this started cleanly. */
-        const val STARTUP_GRACE_MS = 1_200L
         const val MAX_STDERR_LINES = 40
-
-        /**
-         * How long a capture may produce nothing before it is treated as blocked.
-         *
-         * Generous on purpose: a cold camera takes a second or two to deliver its first frame,
-         * and calling that a permission failure is worse than waiting.
-         */
-        const val STALL_TIMEOUT_MS = 8_000L
+        val PROGRESS_LINE = Regex("^[a-zA-Z0-9_]+=.*")
     }
 
+    override val supportsVideoSettings: Boolean = true
+    private var videoSettings = VideoCaptureSettings()
+    private var cameraSize: CameraSize? = null
+
+    override fun configureVideo(settings: VideoCaptureSettings) {
+        check(_state.value !is RecordingState.Recording && _state.value != RecordingState.Preparing && _state.value != RecordingState.Finalizing)
+        videoSettings = settings
+    }
+
+    private val startLock = Mutex()
+    private val generation = AtomicLong()
 
     private val _state = MutableStateFlow<RecordingState>(RecordingState.Idle)
     override val state: StateFlow<RecordingState> = _state.asStateFlow()
 
+    @Volatile private var previewJpeg: ByteArray? = null
+
     internal val previewFrame = MutableStateFlow<ImageBitmap?>(null)
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var process: Process? = null
+    @Volatile private var process: Process? = null
+    private val shutdownHook = Thread({ process?.destroyForcibly() }, "mira-capture-shutdown")
+        .also { Runtime.getRuntime().addShutdownHook(it) }
     private var outputFile: File? = null
     private var startedAt: Long = 0
     private var currentKind: CaptureKind = CaptureKind.AUDIO
     private val stderrLines = mutableListOf<String>()
 
-    /** Frames FFmpeg has produced. This is the camera-health signal, not the decoded count. */
-    private var framesReceived = 0
-    private var framesDecoded = 0
-
     override suspend fun start(kind: CaptureKind) {
-        if (FfmpegBinary.path == null) {
-            _state.value = RecordingState.Failed("FFmpeg is not available in this build")
-            return
+        if (!startLock.tryLock()) return
+        val request = generation.get()
+        try {
+            if (process != null || _state.value == RecordingState.Finalizing) return
+            if (commandFactory == null && FfmpegBinary.path == null) {
+                _state.value = RecordingState.Failed("FFmpeg is not available in this build")
+                return
+            }
+            _state.value = RecordingState.Preparing
+            previewFrame.value = null
+            previewJpeg = null
+            currentKind = kind
+            cameraSize = preferredCameraSize(videoSettings)
+            val extension = if (kind == CaptureKind.VIDEO) "mp4" else "m4a"
+            val file = File.createTempFile("mira-capture-", ".$extension").apply { deleteOnExit() }
+            outputFile = file
+
+            if (launch(kind, file, pixelFormat = null, request = request)) return
+            if (generation.get() != request) return
+
+            if (kind == CaptureKind.VIDEO && desktopOs == DesktopOs.MAC && cameraSize != null) {
+                val fallbackSize = fallbackCameraSize(stderrText(), cameraSize!!)
+                if (fallbackSize != null && fallbackSize != cameraSize) {
+                    cameraSize = fallbackSize
+                    if (launch(kind, file, pixelFormat = null, request = request)) return
+                    if (generation.get() != request) return
+                }
+            }
+            val offered = parseSupportedPixelFormats(stderrText())
+            val fallback = MAC_PIXEL_FORMATS.firstOrNull { it in offered } ?: offered.firstOrNull()
+            if (fallback != null && launch(kind, file, pixelFormat = fallback, request = request)) return
+            if (generation.get() == request) _state.value = RecordingState.Failed(failureMessage())
+        } catch (cancelled: CancellationException) {
+            if (generation.get() == request) cancel()
+            throw cancelled
+        } finally {
+            startLock.unlock()
         }
-        if (process != null) return
-
-        _state.value = RecordingState.Preparing
-        currentKind = kind
-
-        val extension = if (kind == CaptureKind.VIDEO) "mp4" else "m4a"
-        val file = withContext(Dispatchers.IO) {
-            File.createTempFile("mira-capture-", ".$extension").apply { deleteOnExit() }
-        }
-        outputFile = file
-
-        if (launch(kind, file, pixelFormat = null)) return
-
-        // avfoundation rejects a pixel format by printing the ones it does support, so the
-        // failure carries its own fix. Retry once with whichever of our preferences the device
-        // actually offers rather than guessing a second time.
-        val offered = parseSupportedPixelFormats(stderrText())
-        val fallback = MAC_PIXEL_FORMATS.firstOrNull { it in offered } ?: offered.firstOrNull()
-        if (fallback != null && launch(kind, file, pixelFormat = fallback)) return
-
-        _state.value = RecordingState.Failed(failureMessage())
     }
 
     /**
@@ -106,44 +128,69 @@ internal class DesktopMediaRecorderController : MediaRecorderController {
      * Returns false when the process dies on startup — which is how an unsupported pixel format or
      * a missing camera presents itself, since FFmpeg exits before producing a single frame.
      */
-    private suspend fun launch(kind: CaptureKind, file: File, pixelFormat: String?): Boolean {
-        val binary = FfmpegBinary.path ?: return false
-        stderrLines.clear()
+    private suspend fun launch(
+        kind: CaptureKind,
+        file: File,
+        pixelFormat: String?,
+        request: Long,
+    ): Boolean {
+        val binary = if (commandFactory == null) FfmpegBinary.path ?: return false else ""
+        synchronized(stderrLines) { stderrLines.clear() }
 
-        val command = buildCommand(binary, kind, file, pixelFormat)
+        val command = commandFactory?.invoke(kind, file, pixelFormat)
+            ?: buildCommand(binary, kind, file, pixelFormat)
         val started = withContext(Dispatchers.IO) {
             runCatching {
-                ProcessBuilder(command).redirectErrorStream(false).start()
+                ProcessBuilder(command).redirectErrorStream(false).start().also { process = it }
             }.getOrNull()
         } ?: return false
 
-        process = started
-        scope.launch { drain(started.errorStream) }
+        if (generation.get() != request) {
+            started.destroyForcibly()
+            if (process === started) process = null
+            return true
+        }
+        val mediaProduced = AtomicBoolean(false)
+        val stderrJob = scope.launch { drain(started, kind, mediaProduced) }
 
         // Read stdout before waiting, not after. The preview pipe holds about 64KB — roughly
         // three frames — and once it fills FFmpeg blocks on the write. With tee that stalls the
-        // mp4 branch as well, so the whole capture would sit still for the length of the grace.
-        framesReceived = 0
-        framesDecoded = 0
+        // mp4 branch as well.
         if (kind == CaptureKind.VIDEO) {
-            scope.launch { readMjpegFrames(started.inputStream) }
+            scope.launch { readMjpegFrames(started, mediaProduced) }
         }
 
-        // Startup failures are immediate; a healthy capture is still alive after this.
-        val exitedEarly = withContext(Dispatchers.IO) {
-            started.waitFor(STARTUP_GRACE_MS, TimeUnit.MILLISECONDS)
+        // Permission dialogs and device warmup are part of Preparing. A live process alone
+        // is not evidence of recording, and an MP4 header alone is not evidence of audio.
+        val ready = withTimeoutOrNull(startupTimeoutMs) {
+            while (process === started && started.isAlive) {
+                if (mediaProduced.get()) {
+                    return@withTimeoutOrNull true
+                }
+                delay(50)
+            }
+            false
         }
-        if (exitedEarly) {
+        if (process !== started) return true // cancelled; never resurrect this attempt
+        if (ready != true) {
             process = null
+            if (ready == null) {
+                started.destroyForcibly()
+                _state.value = RecordingState.Failed(
+                    "Capture did not start. Check camera and microphone access and whether " +
+                        "another app is using the device, then try again.",
+                )
+                return true
+            }
+            stderrJob.join() // Pixel-format retry must see the complete diagnostic.
             return false
         }
 
         startedAt = System.currentTimeMillis()
         _state.value = RecordingState.Recording(0)
 
-        scope.launch { tickElapsed() }
+        scope.launch { tickElapsed(started) }
         scope.launch { watchForDeath(started) }
-        scope.launch { watchForStall(started, kind, file) }
         return true
     }
 
@@ -156,79 +203,80 @@ internal class DesktopMediaRecorderController : MediaRecorderController {
         binary = binary,
         kind = kind,
         outputPath = file.absolutePath,
-        inputArgs = if (kind == CaptureKind.VIDEO) videoInputArgs(pixelFormat) else audioInputArgs(),
+        inputArgs = if (kind == CaptureKind.VIDEO) videoInputArgs(pixelFormat, cameraSize) else audioInputArgs(),
         // Linux opens video and audio as two separate inputs; macOS and Windows as one.
         audioInputIndex = if (desktopOs == DesktopOs.LINUX) 1 else 0,
+        videoSettings = videoSettings,
     )
 
     override suspend fun stop() {
-        val running = process ?: return
-        withContext(Dispatchers.IO) {
-            // 'q' asks FFmpeg to finalise the container; killing it leaves an unplayable file.
-            runCatching {
-                running.outputStream.write('q'.code)
-                running.outputStream.flush()
-            }
-            if (!running.waitFor(5, TimeUnit.SECONDS)) running.destroy()
-            if (!running.waitFor(3, TimeUnit.SECONDS)) running.destroyForcibly()
-        }
-        process = null
-
-        val file = outputFile
-        val elapsed = System.currentTimeMillis() - startedAt
-        if (file == null || !file.exists() || file.length() == 0L) {
-            _state.value = RecordingState.Failed("Recording produced no audio or video")
+        if (_state.value == RecordingState.Preparing) {
+            cancel()
             return
         }
-
-        val poster = if (currentKind == CaptureKind.VIDEO) extractPoster(file) else null
-
-        _state.value = RecordingState.Finished(
-            CaptureResult(
-                kind = currentKind,
-                path = file.absolutePath,
-                bytes = null,
-                mime = if (currentKind == CaptureKind.VIDEO) "video/mp4" else "audio/mp4",
-                sizeBytes = file.length(),
-                durationMs = elapsed,
-                posterBytes = poster,
-            ),
-        )
+        if (_state.value !is RecordingState.Recording) return
+        val running = process ?: return
+        val request = generation.get()
+        val elapsed = System.currentTimeMillis() - startedAt
+        val file = outputFile
+        val kind = currentKind
+        val poster = previewJpeg
+        _state.value = RecordingState.Finalizing
+        try {
+            val completed = withContext(Dispatchers.IO) {
+                // Keep draining stdout while FFmpeg flushes both tee outputs; otherwise the
+                // preview pipe fills and prevents the MP4 trailer from being written.
+                runCatching {
+                    running.outputStream.write('q'.code)
+                    running.outputStream.flush()
+                }
+                if (!running.waitFor(5, TimeUnit.SECONDS)) running.destroy()
+                if (!running.waitFor(3, TimeUnit.SECONDS)) {
+                    running.destroyForcibly()
+                    running.waitFor(2, TimeUnit.SECONDS)
+                }
+                !running.isAlive && running.exitValue() == 0
+            }
+            if (generation.get() != request) return
+            if (!completed || file == null || !file.exists() || file.length() == 0L) {
+                _state.value = RecordingState.Failed("Could not finish this recording. Please try again.")
+                return
+            }
+            _state.value = RecordingState.Finished(
+                CaptureResult(
+                    kind = kind,
+                    path = file.absolutePath,
+                    bytes = null,
+                    mime = if (kind == CaptureKind.VIDEO) "video/mp4" else "audio/mp4",
+                    sizeBytes = file.length(),
+                    durationMs = elapsed,
+                    posterBytes = if (kind == CaptureKind.VIDEO) poster else null,
+                ),
+            )
+        } finally {
+            if (process === running) process = null
+        }
     }
 
     override fun cancel() {
+        generation.incrementAndGet()
         process?.destroyForcibly()
         process = null
         outputFile?.delete()
         outputFile = null
         previewFrame.value = null
+        previewJpeg = null
         _state.value = RecordingState.Idle
     }
 
     override fun release() {
         cancel()
         scope.cancel()
+        runCatching { Runtime.getRuntime().removeShutdownHook(shutdownHook) }
     }
 
-    /** First frame of the clip, for the timeline's video poster. */
-    private suspend fun extractPoster(file: File): ByteArray? = withContext(Dispatchers.IO) {
-        val binary = FfmpegBinary.path ?: return@withContext null
-        val poster = File.createTempFile("mira-poster-", ".jpg").apply { deleteOnExit() }
-        val ok = runCatching {
-            ProcessBuilder(
-                binary, "-hide_banner", "-loglevel", "error",
-                "-y", "-i", file.absolutePath,
-                "-frames:v", "1", "-vf", "scale=640:-2",
-                poster.absolutePath,
-            ).start().waitFor(10, TimeUnit.SECONDS)
-        }.getOrDefault(false)
-        val bytes = if (ok && poster.length() > 0) poster.readBytes() else null
-        poster.delete()
-        bytes
-    }
-
-    private suspend fun tickElapsed() {
-        while (scope.isActive && process != null) {
+    private suspend fun tickElapsed(active: Process) {
+        while (scope.isActive && process === active && _state.value is RecordingState.Recording) {
             val elapsed = System.currentTimeMillis() - startedAt
             if (_state.value is RecordingState.Recording) {
                 _state.value = RecordingState.Recording(elapsed)
@@ -241,47 +289,24 @@ internal class DesktopMediaRecorderController : MediaRecorderController {
         }
     }
 
-    private suspend fun readMjpegFrames(stream: InputStream) = withContext(Dispatchers.IO) {
-        readJpegFrames(stream) { bytes ->
-            // Count what arrived, then what decoded. Gating the watchdog on decoding made a
-            // preview problem indistinguishable from a camera that was never granted access.
-            framesReceived++
-            decodeJpegFrame(bytes)?.let {
-                previewFrame.value = it
-                framesDecoded++
+    private suspend fun readMjpegFrames(active: Process, mediaProduced: AtomicBoolean) = withContext(Dispatchers.IO) {
+        readJpegFrames(active.inputStream) { bytes ->
+            if (process !== active) return@readJpegFrames false
+            if (_state.value == RecordingState.Finalizing) return@readJpegFrames true
+            val decoded = decodeJpegFrame(bytes)
+            if (decoded == null) {
+                // Do not silently claim to be recording with an unusable black preview.
+                _state.value = RecordingState.Failed("Could not display the camera preview. Please try again.")
+                process = null
+                active.destroyForcibly()
+                return@readJpegFrames false
             }
+            previewJpeg = bytes
+            previewFrame.value = decoded
+            mediaProduced.set(true)
             isActive
         }
     }
-
-    /**
-     * Catches a capture that starts but never produces anything.
-     *
-     * Without camera or microphone permission, macOS does not fail the FFmpeg process — it simply
-     * never delivers a frame, so the recorder would sit in Recording forever with a ticking timer
-     * and an empty preview. Nothing in stderr says so; silence is the only symptom.
-     */
-    private suspend fun watchForStall(active: Process, kind: CaptureKind, file: File) {
-        delay(STALL_TIMEOUT_MS)
-        if (process !== active || _state.value !is RecordingState.Recording) return
-
-        val producedSomething =
-            if (kind == CaptureKind.VIDEO) framesReceived > 0 else file.length() > 0
-        if (producedSomething) return
-
-        active.destroyForcibly()
-        process = null
-        _state.value = RecordingState.Failed(
-            if (kind == CaptureKind.VIDEO) {
-                "No video from the camera. Allow camera access for Mira in System Settings → " +
-                    "Privacy & Security."
-            } else {
-                "No audio from the microphone. Allow microphone access for Mira in System " +
-                    "Settings → Privacy & Security."
-            },
-        )
-    }
-
 
     /**
      * Collects FFmpeg's stderr.
@@ -290,10 +315,18 @@ internal class DesktopMediaRecorderController : MediaRecorderController {
      * here too, and treating the first line as fatal meant a warning killed a capture that was
      * still running fine. The process exiting is the only thing that actually means failure.
      */
-    private suspend fun drain(stream: InputStream) = withContext(Dispatchers.IO) {
+    private suspend fun drain(
+        active: Process,
+        kind: CaptureKind,
+        mediaProduced: AtomicBoolean,
+    ) = withContext(Dispatchers.IO) {
         runCatching {
-            stream.bufferedReader().forEachLine { line ->
-                if (line.isNotBlank()) {
+            active.errorStream.bufferedReader().forEachLine { line ->
+                // FFmpeg progress confirms encoded audio, unlike a container header.
+                if (kind == CaptureKind.AUDIO && line.startsWith("out_time_us=")) {
+                    if ((line.substringAfter('=').toLongOrNull() ?: 0) > 0) mediaProduced.set(true)
+                }
+                if (line.isNotBlank() && !PROGRESS_LINE.matches(line)) {
                     synchronized(stderrLines) {
                         if (stderrLines.size < MAX_STDERR_LINES) stderrLines.add(line)
                     }
@@ -342,7 +375,8 @@ public actual fun CameraPreview(
                 bitmap = bitmap,
                 contentDescription = null,
                 modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop,
+                // Show the same full frame as the recording, including portrait camera feeds.
+                contentScale = ContentScale.Fit,
             )
         }
     }
@@ -366,11 +400,14 @@ internal fun buildCaptureCommand(
     inputArgs: List<String>,
     audioInputIndex: Int,
     durationSeconds: Long = CaptureLimits.MAX_DURATION_MS / 1000,
+    videoSettings: VideoCaptureSettings = VideoCaptureSettings(),
 ): List<String> = buildList {
     add(binary)
     add("-hide_banner")
     add("-loglevel")
     add("error")
+    add("-progress")
+    add("pipe:2")
     addAll(inputArgs)
     add("-t")
     add(durationSeconds.toString())
@@ -378,8 +415,8 @@ internal fun buildCaptureCommand(
     if (kind == CaptureKind.VIDEO) {
         add("-filter_complex")
         add(
-            "[0:v]split=2[rec][prev];" +
-                "[rec]scale=${CaptureLimits.VIDEO_WIDTH}:-2,format=yuv420p[vrec];" +
+            "[0:v]${videoFilter(videoSettings)},split=2[rec][prev];" +
+                "[rec]format=yuv420p[vrec];" +
                 "[prev]scale=$PREVIEW_WIDTH:-2,format=yuvj420p[vprev]",
         )
         add("-map")
@@ -389,7 +426,12 @@ internal fun buildCaptureCommand(
         add("-map")
         add("$audioInputIndex:a")
 
-        addAll(videoEncoderArgs())
+        addAll(videoEncoderArgs(videoSettings.quality.bitrate))
+        // AVFoundation can report its microsecond time base as a 1,000,000 fps rate.
+        // The input -framerate option does not constrain output synchronization: without
+        // this, tee duplicates tens of thousands of frames and starves the preview branch.
+        add("-r:v")
+        add("30")
         add("-c:v:1")
         add("mjpeg")
         add("-q:v:1")
@@ -427,15 +469,28 @@ internal const val PREVIEW_WIDTH: Int = 640
  * library and stays self-contained, and encoding runs on dedicated hardware. It takes no `-preset`
  * — that option is libx264's, and passing it makes FFmpeg exit.
  */
-internal fun videoEncoderArgs(): List<String> = when (desktopOs) {
+internal fun videoEncoderArgs(bitrate: Int = CaptureLimits.VIDEO_BITRATE): List<String> = when (desktopOs) {
     DesktopOs.MAC -> listOf(
         "-c:v:0", "h264_videotoolbox",
-        "-b:v:0", CaptureLimits.VIDEO_BITRATE.toString(),
+        "-b:v:0", bitrate.toString(),
         "-realtime", "1",
     )
     DesktopOs.WINDOWS, DesktopOs.LINUX -> listOf(
         "-c:v:0", "libx264",
         "-preset", "veryfast",
-        "-b:v:0", CaptureLimits.VIDEO_BITRATE.toString(),
+        "-b:v:0", bitrate.toString(),
     )
+}
+
+/** Fit the entire camera image, then pad before splitting so preview and recording match. */
+internal fun videoFilter(settings: VideoCaptureSettings): String {
+    val edge = settings.quality.shortEdge
+    val (width, height) = when (settings.aspectRatio) {
+        VideoAspectRatio.LANDSCAPE -> edge * 16 / 9 to edge
+        VideoAspectRatio.PORTRAIT -> edge to edge * 16 / 9
+        VideoAspectRatio.SQUARE -> edge to edge
+        VideoAspectRatio.ORIGINAL -> return "scale=${edge * 16 / 9}:${edge * 16 / 9}:force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1"
+    }
+    return "scale=$width:$height:force_original_aspect_ratio=decrease:force_divisible_by=2," +
+        "pad=$width:$height:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1"
 }

@@ -57,7 +57,8 @@ public class MediaRepository(
             queries.insertBlob(
                 id = attachmentId,
                 entry_id = entryId,
-                path = path,
+                // Capture files belong to the recorder and may be deleted on release.
+                path = path?.let { preserveLocalFile(it) },
                 data_ = bytes,
                 bytes = size,
                 uploaded = 0L,
@@ -129,7 +130,9 @@ public class MediaRepository(
         val blob = io { queries.selectBlob(attachment.id).awaitAsOneOrNull() }
         if (blob != null) {
             io { queries.touchBlob(currentTimeMillis(), attachment.id) }
-            blob.path?.let { path -> return MediaSource.LocalFile(path) }
+            blob.path?.let { path ->
+                if (localFileExists(path)) return MediaSource.LocalFile(path)
+            }
             blob.data_?.let { bytes -> return MediaSource.Bytes(bytes, attachment.mime) }
         }
         attachment.url?.let { return MediaSource.Remote(it) }
@@ -178,6 +181,10 @@ public class MediaRepository(
                 }
             }
         }
+        for (attachment in attachments) {
+            val blob = io { queries.selectBlob(attachment.id).awaitAsOneOrNull() }
+            blob?.path?.let { deletePreservedFile(it) }
+        }
         io { queries.deleteBlobsForEntry(entryId) }
     }
 
@@ -220,6 +227,7 @@ public class MediaRepository(
             RetentionPolicy.StreamOnly -> {
                 io {
                     queries.selectEvictionCandidates().awaitAsList().forEach {
+                        it.path?.let { path -> deletePreservedFile(path) }
                         queries.deleteBlob(it.id)
                     }
                 }
@@ -230,6 +238,7 @@ public class MediaRepository(
                 val candidates = io { queries.selectEvictionCandidates().awaitAsList() }
                 for (blob in candidates) {
                     if (used <= policy.capBytes) break
+                    blob.path?.let { deletePreservedFile(it) }
                     io { queries.deleteBlob(blob.id) }
                     used -= blob.bytes
                 }
@@ -257,3 +266,11 @@ internal fun extensionFor(mime: String): String = when {
 
 /** Reads a captured file from disk. Web has no filesystem, so it stores bytes inline instead. */
 internal expect suspend fun readLocalFile(path: String): ByteArray?
+
+/** Gives Android staged media a durable copy independent of the recorder cache. */
+internal expect suspend fun preserveLocalFile(path: String): String
+
+internal expect suspend fun localFileExists(path: String): Boolean
+
+/** Removes files owned by Android staging when their blob is deleted or evicted. */
+internal expect suspend fun deletePreservedFile(path: String)

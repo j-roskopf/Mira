@@ -8,6 +8,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
+import com.joetr.mira.feature.day.DayEntriesSheet
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -18,6 +19,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Modifier
 import androidx.navigationevent.NavigationEventInfo
 import androidx.navigationevent.compose.NavigationBackHandler
@@ -34,7 +36,6 @@ import com.joetr.mira.feature.auth.AuthScreen
 import com.joetr.mira.feature.calendar.CalendarScreen
 import com.joetr.mira.feature.calendar.YearScreen
 import com.joetr.mira.feature.compose.ComposeEntryScreen
-import com.joetr.mira.feature.day.DayScreen
 import com.joetr.mira.feature.search.SearchScreen
 import com.joetr.mira.feature.timeline.TimelineScreen
 import com.joetr.mira.media.CaptureKind
@@ -55,13 +56,15 @@ import com.joetr.mira.ui.layout.MiraContentWidth
 import com.joetr.mira.ui.motion.LocalNavAnimatedVisibilityScope
 import com.joetr.mira.ui.motion.LocalSharedTransitionScope
 import com.joetr.mira.ui.motion.navSharedElementTransitionSpec
+import com.joetr.mira.ui.motion.miraDateTransition
+import com.joetr.mira.ui.motion.miraHierarchyTransition
 import com.joetr.mira.ui.theme.MiraAccent
 import com.joetr.mira.ui.theme.MiraTheme
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
-public fun App(graph: AppGraph, initialWebPath: String? = null) {
+public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: Boolean = true) {
     val clock = remember { SystemClockZone() }
     val scope = rememberCoroutineScope()
 
@@ -84,34 +87,37 @@ public fun App(graph: AppGraph, initialWebPath: String? = null) {
         )
     }
     val current = backStack.last()
+    val screenKey = if (current is DayKey) {
+        backStack.dropLast(1).lastOrNull() ?: CalendarKey(current.date.take(7))
+    } else current
+    var refreshVersion by remember { mutableStateOf(0) }
 
     var selectedDate by remember { mutableStateOf<LocalDateKey?>(null) }
-    var entriesForDay by remember { mutableStateOf<List<Entry>>(emptyList()) }
     var activity by remember { mutableStateOf<Map<LocalDateKey, Int>>(emptyMap()) }
     var timeline by remember { mutableStateOf<List<Entry>>(emptyList()) }
 
     val ownerId = session.ownerId
-    val month = remember(current) {
-        (current as? CalendarKey)?.month?.let { MonthKey.parseOrNull(it) }
+    val month = remember(screenKey) {
+        (screenKey as? CalendarKey)?.month?.let { MonthKey.parseOrNull(it) }
             ?: MonthKey.of(clock.today().toLocalDate())
     }
 
     fun refresh() {
-        scope.launch {
-            activity = graph.entries.activityForMonth(ownerId, month)
-            selectedDate?.let { entriesForDay = graph.entries.entriesForDate(ownerId, it) }
-            timeline = graph.entries.timeline(ownerId, limit = 200, offset = 0)
-        }
+        refreshVersion++
     }
 
-    LaunchedEffect(ownerId, month) { refresh() }
+    // Cancel obsolete loads when month navigation interrupts an in-flight request.
+    LaunchedEffect(ownerId, month, refreshVersion) {
+        activity = graph.entries.activityForMonth(ownerId, month)
+        timeline = graph.entries.timeline(ownerId, limit = 200, offset = 0)
+    }
 
     val navigationState = rememberNavigationEventState(currentInfo = NavigationEventInfo.None)
     NavigationBackHandler(state = navigationState, isBackEnabled = backStack.size > 1) {
         if (backStack.size > 1) backStack.removeAt(backStack.lastIndex)
     }
 
-    MiraTheme(darkTheme = dark, accent = MiraAccent.fromName(accentName)) {
+    MiraTheme(darkTheme = dark, accent = MiraAccent.fromName(accentName), motionEnabled = motionEnabled) {
         BoxWithConstraints(
             Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
         ) {
@@ -120,29 +126,47 @@ public fun App(graph: AppGraph, initialWebPath: String? = null) {
             CompositionLocalProvider(LocalSharedTransitionScope provides this) {
                 AdaptiveScaffold(
                     widthDp = maxWidth.value.toInt(),
-                    selected = current.topLevel(),
+                    selected = screenKey.topLevel(),
+                    accentCanvas = screenKey is CalendarKey || screenKey is YearKey,
+                    editorSurface = screenKey is ComposeKey,
+                    onCompose = { backStack.add(ComposeKey(date = clock.today().value)) },
                     onNavigate = { destination ->
                         backStack.clear()
                         backStack.add(destination.rootKey())
                     },
                 ) {
+                    val dateTransition = miraDateTransition()
+                    val hierarchyTransition = miraHierarchyTransition()
+                    val defaultTransition = navSharedElementTransitionSpec()
                     AnimatedContent(
-                        targetState = current,
-                        transitionSpec = navSharedElementTransitionSpec(),
+                        targetState = screenKey,
+                        contentKey = { if (it is CalendarKey) CalendarKey::class else it },
+                        transitionSpec = {
+                            val from = initialState
+                            val to = targetState
+                            when {
+                                from is YearKey && to is YearKey -> dateTransition(to.year.compareTo(from.year))
+                                from is CalendarKey && to is YearKey -> hierarchyTransition(false)
+                                from is YearKey && to is CalendarKey -> hierarchyTransition(true)
+                                else -> defaultTransition()
+                            }
+                        },
                         label = "screen",
                     ) { key ->
                         CompositionLocalProvider(
                             LocalNavAnimatedVisibilityScope provides this@AnimatedContent,
                         ) {
-                            MiraContentWidth(Modifier.fillMaxSize()) {
+                            MiraContentWidth(
+                                Modifier.fillMaxSize(),
+                                maxWidth = if (key is CalendarKey) 1200.dp else 720.dp,
+                            ) {
                             Screen(
                                 key = key,
                                 graph = graph,
                                 ownerId = ownerId,
-                                month = month,
                                 today = clock.today(),
                                 selectedDate = selectedDate,
-                                entriesForDay = entriesForDay,
+                                showComposeButton = maxWidth >= 600.dp,
                                 activity = activity,
                                 timeline = timeline,
                                 onNavigate = { backStack.add(it) },
@@ -161,6 +185,39 @@ public fun App(graph: AppGraph, initialWebPath: String? = null) {
                 }
             }
             }
+            if (current is DayKey) {
+                val date = LocalDateKey(current.date)
+                var entries by remember(date, ownerId) { mutableStateOf<List<Entry>>(emptyList()) }
+                var loading by remember(date, ownerId) { mutableStateOf(true) }
+                var error by remember(date, ownerId) { mutableStateOf<String?>(null) }
+                var retry by remember(date, ownerId) { mutableStateOf(0) }
+                LaunchedEffect(date, ownerId, refreshVersion, retry) {
+                    loading = true
+                    error = null
+                    try {
+                        entries = graph.entries.entriesForDate(ownerId, date)
+                    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        error = "Could not load this day's entries. Please try again."
+                    } finally {
+                        loading = false
+                    }
+                }
+                DayEntriesSheet(
+                    date = date,
+                    entries = entries,
+                    loading = loading,
+                    error = error,
+                    onRetry = { retry++ },
+                    onDismiss = {
+                        if (backStack.size > 1) backStack.removeAt(backStack.lastIndex)
+                        else backStack[0] = CalendarKey(date.value.take(7))
+                    },
+                    onEntryClick = { backStack.add(ComposeKey(entryId = it.id, date = date.value)) },
+                    onCompose = { backStack.add(ComposeKey(date = date.value)) },
+                )
+            }
         }
     }
 }
@@ -170,10 +227,9 @@ private fun Screen(
     key: Any,
     graph: AppGraph,
     ownerId: String,
-    month: MonthKey,
     today: LocalDateKey,
     selectedDate: LocalDateKey?,
-    entriesForDay: List<Entry>,
+    showComposeButton: Boolean,
     activity: Map<LocalDateKey, Int>,
     timeline: List<Entry>,
     onNavigate: (Any) -> Unit,
@@ -186,10 +242,11 @@ private fun Screen(
 
     when (key) {
         is CalendarKey -> CalendarScreen(
-            month = month,
+            month = key.month?.let { MonthKey.parseOrNull(it) } ?: MonthKey.of(today.toLocalDate()),
             today = today,
             activity = activity,
             selected = selectedDate,
+            showComposeButton = showComposeButton,
             onMonthChange = { onReplaceTop(CalendarKey(it.value)) },
             onDayClick = { date ->
                 onSelectDate(date)
@@ -216,27 +273,21 @@ private fun Screen(
             )
         }
 
-        is DayKey -> {
-            val date = LocalDateKey(key.date)
-            DayScreen(
-                date = date,
-                entries = entriesForDay,
-                onBack = onBack,
-                onEntryClick = { onNavigate(ComposeKey(entryId = it.id, date = key.date)) },
-                onCompose = { onNavigate(ComposeKey(date = key.date)) },
-                onPreviousDay = {},
-                onNextDay = {},
-            )
-        }
-
         is ComposeKey -> {
             val recorder = remember { createMediaRecorderController() }
+            androidx.compose.runtime.DisposableEffect(recorder) {
+                onDispose { recorder.release() }
+            }
             val date = key.date?.let { LocalDateKey(it) } ?: today
             var body by remember(key) { mutableStateOf("") }
             var attachments by remember(key) {
                 mutableStateOf<List<com.joetr.mira.domain.Attachment>>(emptyList())
             }
             var confirmDelete by remember(key) { mutableStateOf(false) }
+            var entryError by remember(key) { mutableStateOf<String?>(null) }
+            var loaded by remember(key) { mutableStateOf(key.entryId == null) }
+            var saving by remember(key) { mutableStateOf(false) }
+            var stagingRecording by remember(key) { mutableStateOf(false) }
 
             val deletableId = key.entryId
             if (confirmDelete && deletableId != null) {
@@ -263,15 +314,37 @@ private fun Screen(
 
             LaunchedEffect(key.entryId) {
                 key.entryId?.let { id ->
-                    graph.entries.entry(id)?.let { existing ->
-                        body = existing.body
-                        attachments = existing.attachments
+                    try {
+                        val existing = graph.entries.entry(id)
+                        if (existing == null) {
+                            entryError = "This entry is no longer available."
+                        } else {
+                            body = existing.body
+                            attachments = existing.attachments
+                            loaded = true
+                        }
+                    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        entryError = "Could not load this entry. Go back and try again."
                     }
                 }
             }
 
+            if (!loaded) {
+                androidx.compose.foundation.layout.Column {
+                    androidx.compose.material3.Text(entryError ?: "Loading entry…")
+                    androidx.compose.material3.TextButton(onClick = onBack) {
+                        androidx.compose.material3.Text("Back")
+                    }
+                }
+                return
+            }
+
             ComposeEntryScreen(
                 date = date,
+                saving = saving || stagingRecording,
+                errorMessage = entryError,
                 initialBody = body,
                 recorder = recorder,
                 attachments = attachments,
@@ -287,29 +360,47 @@ private fun Screen(
                 onBodyChange = { body = it },
                 onDateClick = {},
                 onCaptureFinished = { result ->
+                    stagingRecording = true
                     scope.launch {
-                        val attachment = graph.attachFrom(result, key.entryId)
-                        attachments = attachments + attachment
+                        try {
+                            val attachment = graph.attachFrom(result, key.entryId)
+                            attachments = attachments + attachment
+                        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                            throw cancelled
+                        } catch (_: Exception) {
+                            entryError = "Could not save the recording. Please try recording again."
+                        } finally {
+                            stagingRecording = false
+                        }
                     }
                 },
                 onSave = {
-                    scope.launch {
-                        val existing = key.entryId?.let { graph.entries.entry(it) }
-                        if (existing == null) {
-                            graph.entries.create(
-                                ownerId = ownerId,
-                                body = body,
-                                date = date,
-                                attachments = attachments,
-                            )
-                        } else {
-                            graph.entries.save(
-                                existing.copy(body = body, attachments = attachments),
-                            )
+                    if (!saving && !stagingRecording) scope.launch {
+                        saving = true
+                        try {
+                            val existing = key.entryId?.let { graph.entries.entry(it) }
+                            if (key.entryId == null) {
+                                graph.entries.create(
+                                    ownerId = ownerId,
+                                    body = body,
+                                    date = date,
+                                    attachments = attachments,
+                                )
+                            } else {
+                                graph.entries.save(
+                                    requireNotNull(existing).copy(body = body, attachments = attachments),
+                                )
+                            }
+                            graph.onEntrySaved(ownerId)
+                            onRefresh()
+                            onBack()
+                        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                            throw cancelled
+                        } catch (_: Exception) {
+                            entryError = "Could not save your entry. Please try again."
+                        } finally {
+                            saving = false
                         }
-                        graph.onLocalWrite()
-                        onRefresh()
-                        onBack()
                     }
                 },
                 onCancel = {

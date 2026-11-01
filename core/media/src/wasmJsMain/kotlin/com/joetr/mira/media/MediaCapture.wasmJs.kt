@@ -3,8 +3,12 @@ package com.joetr.mira.media
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -90,11 +94,41 @@ internal class WebMediaRecorderController : MediaRecorderController {
     override fun release(): Unit = cancel()
 }
 
+/**
+ * Bounds of every live preview, in composition order, so the JS `<video>` element follows whichever
+ * one is on top — the inline preview or the full-screen one.
+ */
+private var nextPreviewId: Int = 0
+private val previewBounds = linkedMapOf<Int, List<Double>>()
+
 @Composable
 public actual fun CameraPreview(
     controller: MediaRecorderController,
     modifier: Modifier,
 ) {
     // The preview is a <video> element positioned by the JS side; Compose reserves the space.
-    Box(modifier.background(Color.Black))
+    val id = remember { nextPreviewId++ }
+    DisposableEffect(id) {
+        onDispose {
+            previewBounds.remove(id)
+            previewBounds.values.lastOrNull()?.let { bounds ->
+                positionWebPreview(bounds[0], bounds[1], bounds[2], bounds[3])
+            }
+        }
+    }
+    Box(
+        modifier
+            .background(Color.Black)
+            .onGloballyPositioned { coordinates ->
+                val bounds = coordinates.boundsInWindow()
+                val values = listOf(
+                    bounds.left.toDouble(),
+                    bounds.top.toDouble(),
+                    bounds.width.toDouble(),
+                    bounds.height.toDouble(),
+                )
+                previewBounds[id] = values
+                positionWebPreview(values[0], values[1], values[2], values[3])
+            },
+    )
 }

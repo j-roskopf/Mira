@@ -1,18 +1,31 @@
 package com.joetr.mira.data.archive
 
 import io.ktor.client.HttpClient
+import io.ktor.client.plugins.expectSuccess
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
+import io.ktor.http.isSuccess
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+
+/** A safe, actionable explanation that can be shown without exposing OAuth response bodies. */
+public class GitHubAuthorizationException(message: String) : Exception(message)
+
+private fun authorizationErrorMessage(error: String): String = when (error) {
+    "device_flow_disabled" -> "Device flow is disabled for Mira's GitHub OAuth app. " +
+        "Enable Device Flow in the app's GitHub settings, save, and try again."
+    "incorrect_client_credentials" -> "GitHub did not recognize Mira's OAuth client ID. " +
+        "Check the client ID configured for this build."
+    else -> "GitHub could not authorize Mira. Please try connecting again."
+}
 
 public data class DeviceCodeRequest(
     val userCode: String,
@@ -44,7 +57,9 @@ public class GitHubDeviceFlow(
     private val json = Json { ignoreUnknownKeys = true }
 
     public suspend fun requestCode(): DeviceCodeRequest? {
-        val body = httpClient.post("https://github.com/login/device/code") {
+        val response = httpClient.post("https://github.com/login/device/code") {
+            // OAuth errors have useful JSON bodies even when the HTTP status is 400.
+            expectSuccess = false
             contentType(ContentType.Application.Json)
             header("Accept", "application/json")
             setBody(
@@ -54,9 +69,16 @@ public class GitHubDeviceFlow(
                     put("scope", JsonPrimitive("repo"))
                 }.toString(),
             )
-        }.bodyAsText()
-
-        val fields = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull() ?: return null
+        }
+        val body = response.bodyAsText()
+        val fields = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull()
+        fields?.get("error")?.jsonPrimitive?.content?.let {
+            throw GitHubAuthorizationException(authorizationErrorMessage(it))
+        }
+        if (!response.status.isSuccess()) {
+            throw GitHubAuthorizationException("GitHub authorization request failed (HTTP ${response.status.value}). Please try again.")
+        }
+        if (fields == null) return null
         val deviceCode = fields["device_code"]?.jsonPrimitive?.content ?: return null
         val userCode = fields["user_code"]?.jsonPrimitive?.content ?: return null
         return DeviceCodeRequest(
@@ -84,7 +106,8 @@ public class GitHubDeviceFlow(
             delay(intervalMs)
             waited += intervalMs
 
-            val body = httpClient.post("https://github.com/login/oauth/access_token") {
+            val response = httpClient.post("https://github.com/login/oauth/access_token") {
+                expectSuccess = false
                 contentType(ContentType.Application.Json)
                 header("Accept", "application/json")
                 setBody(
@@ -97,11 +120,15 @@ public class GitHubDeviceFlow(
                         )
                     }.toString(),
                 )
-            }.bodyAsText()
+            }
+            val body = response.bodyAsText()
 
             val fields = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull()
-                ?: continue
+                ?: return DeviceFlowResult.Failed("GitHub returned an invalid authorization response.")
 
+            if (!response.status.isSuccess() && fields["error"] == null) {
+                return DeviceFlowResult.Failed("GitHub authorization request failed (HTTP ${response.status.value}). Please try again.")
+            }
             fields["access_token"]?.jsonPrimitive?.content?.let {
                 return DeviceFlowResult.Success(it)
             }
@@ -113,7 +140,7 @@ public class GitHubDeviceFlow(
                 "access_denied" -> return DeviceFlowResult.Denied
                 null -> Unit
                 else -> return DeviceFlowResult.Failed(
-                    fields["error_description"]?.jsonPrimitive?.content ?: "Authorization failed",
+                    authorizationErrorMessage(fields["error"]!!.jsonPrimitive.content),
                 )
             }
         }

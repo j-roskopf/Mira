@@ -1,11 +1,14 @@
 package com.joetr.mira.feature.calendar
 
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.AnimatedContent
+import com.joetr.mira.ui.motion.miraDateTransition
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -17,14 +20,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.joetr.mira.domain.LocalDateKey
 import com.joetr.mira.domain.MonthKey
@@ -32,14 +31,15 @@ import com.joetr.mira.domain.lengthOfMonth
 import com.joetr.mira.ui.WEEKDAY_HEADS
 import com.joetr.mira.ui.components.CircleIconButton
 import com.joetr.mira.ui.components.HeatmapDay
+import com.joetr.mira.ui.components.MiraFab
 import com.joetr.mira.ui.displayName
 import com.joetr.mira.ui.icons.MiraIcons
 import com.joetr.mira.ui.monthShortName
 import com.joetr.mira.ui.sundayFirstColumn
 import com.joetr.mira.ui.motion.sharedDayCircle
-import com.joetr.mira.ui.theme.MiraMotion
 import com.joetr.mira.ui.theme.MiraSizes
 import com.joetr.mira.ui.theme.MiraSpacing
+import com.joetr.mira.ui.theme.MiraAccentCanvas
 import com.joetr.mira.ui.theme.MiraTheme
 import com.joetr.mira.ui.theme.busyThreshold
 import com.joetr.mira.ui.theme.heatmapStep
@@ -63,54 +63,79 @@ public fun CalendarScreen(
     onSettingsClick: () -> Unit,
     onComposeClick: () -> Unit,
     modifier: Modifier = Modifier,
+    showComposeButton: Boolean = true,
 ) {
-    val colors = MiraTheme.colors
-    val threshold = remember(activity) { busyThreshold(activity.values) }
+    MiraAccentCanvas {
+        val colors = MiraTheme.colors
+        val threshold = remember(activity) { busyThreshold(activity.values) }
 
-    Box(modifier.fillMaxSize().background(colors.canvas)) {
-        Column(Modifier.fillMaxSize().padding(horizontal = MiraSpacing.gutter)) {
-            Spacer(Modifier.height(MiraSpacing.lg))
+        BoxWithConstraints(modifier.fillMaxSize().background(colors.canvas)) {
+            val expanded = maxWidth >= 800.dp
+            val availableHeight = maxHeight
+            val dateTransition = miraDateTransition()
+            Column(
+                Modifier.fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = MiraSpacing.gutter),
+            ) {
+                Spacer(Modifier.height(MiraSpacing.lg))
 
-            YearNavigator(
-                month = month,
-                onMonthSelect = { onMonthChange(MonthKey.of(month.year, it)) },
-                onYearClick = { onYearClick(month.year) },
-                onYearStep = { onMonthChange(month.plusMonths(it * 12)) },
-                onSettingsClick = onSettingsClick,
-            )
+                YearNavigator(
+                    month = month,
+                    onMonthSelect = { onMonthChange(MonthKey.of(month.year, it)) },
+                    onYearClick = { onYearClick(month.year) },
+                    onYearStep = { onMonthChange(month.plusMonths(it * 12)) },
+                    onSettingsClick = onSettingsClick,
+                )
 
-            Spacer(Modifier.height(MiraSpacing.xxxl))
+                Spacer(Modifier.height(MiraSpacing.xxxl))
 
-            Text(
-                text = month.displayName().uppercase(),
-                style = MiraTheme.type.monthTitle,
-                color = colors.ink,
-            )
+                AnimatedContent(
+                    targetState = month,
+                    transitionSpec = { dateTransition(targetState.value.compareTo(initialState.value)) },
+                    label = "calendar-month",
+                ) { displayMonth ->
+                    val rows = (displayMonth.firstDay.sundayFirstColumn() +
+                        lengthOfMonth(displayMonth.year, displayMonth.monthNumber) + 6) / 7
+                    val rowHeight = if (expanded) {
+                        ((availableHeight - 304.dp) / rows).coerceIn(64.dp, 120.dp)
+                    } else MiraSizes.touchTarget
+                    Column {
+                        Text(
+                            text = displayMonth.displayName().uppercase(),
+                            style = MiraTheme.type.monthTitle,
+                            color = colors.ink,
+                        )
 
-            Spacer(Modifier.height(MiraSpacing.xl))
+                        Spacer(Modifier.height(MiraSpacing.xl))
 
-            WeekdayHeader()
-            Spacer(Modifier.height(MiraSpacing.sm))
+                        WeekdayHeader()
+                        Spacer(Modifier.height(MiraSpacing.sm))
 
-            MonthGrid(
-                month = month,
-                today = today,
-                selected = selected,
-                activity = activity,
-                busyThreshold = threshold,
-                onDayClick = onDayClick,
+                        MonthGrid(
+                            month = displayMonth,
+                            today = today,
+                            selected = selected,
+                            activity = activity,
+                            busyThreshold = threshold,
+                            onDayClick = onDayClick,
+                            rowHeight = rowHeight,
+                            daySize = if (expanded) 56.dp else MiraSizes.dayCircle,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(104.dp))
+            }
+
+            if (showComposeButton) MiraFab(
+                icon = MiraIcons.Plus,
+                contentDescription = "New entry",
+                onClick = onComposeClick,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(MiraSpacing.xxl),
             )
         }
-
-        CircleIconButton(
-            icon = MiraIcons.Plus,
-            contentDescription = "New entry",
-            onClick = onComposeClick,
-            filled = true,
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(MiraSpacing.xxl),
-        )
     }
 }
 
@@ -198,44 +223,34 @@ private fun MonthGrid(
     activity: Map<LocalDateKey, Int>,
     busyThreshold: Int,
     onDayClick: (LocalDateKey) -> Unit,
+    rowHeight: Dp,
+    daySize: Dp,
 ) {
     val daysInMonth = lengthOfMonth(month.year, month.monthNumber)
     val leadingBlanks = remember(month) { month.firstDay.sundayFirstColumn() }
     val cells = leadingBlanks + daysInMonth
     val rows = (cells + 6) / 7
 
-    // Staggered first paint, once per month rather than on every recomposition.
-    var revealed by remember(month) { mutableStateOf(false) }
-    LaunchedEffect(month) { revealed = true }
-
     Column(verticalArrangement = Arrangement.spacedBy(MiraSizes.dayGap)) {
         repeat(rows) { row ->
-            Row(Modifier.fillMaxWidth()) {
+            Row(Modifier.fillMaxWidth().height(rowHeight)) {
                 repeat(7) { column ->
                     val index = row * 7 + column
                     val dayNumber = index - leadingBlanks + 1
-                    Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                    Box(Modifier.weight(1f).height(rowHeight), contentAlignment = Alignment.Center) {
                         if (dayNumber in 1..daysInMonth) {
                             val date = LocalDateKey(
                                 "${month.value}-${dayNumber.toString().padStart(2, '0')}",
                             )
                             val count = activity[date] ?: 0
-                            val alpha by animateFloatAsState(
-                                targetValue = if (revealed || !MiraTheme.motionEnabled) 1f else 0f,
-                                animationSpec = tween(
-                                    durationMillis = MiraMotion.STANDARD_MS,
-                                    delayMillis = index * MiraMotion.HEATMAP_STAGGER_MS,
-                                ),
-                                label = "heatmap-reveal",
-                            )
                             HeatmapDay(
                                 day = dayNumber,
+                                circleSize = daySize,
                                 rampStep = heatmapStep(count, busyThreshold),
                                 isToday = date == today,
                                 isSelected = date == selected,
                                 onClick = { onDayClick(date) },
                                 modifier = Modifier
-                                    .alpha(alpha)
                                     .sharedDayCircle(date.value),
                             )
                         }

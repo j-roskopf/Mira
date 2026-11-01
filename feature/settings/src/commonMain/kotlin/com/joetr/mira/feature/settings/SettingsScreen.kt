@@ -28,11 +28,9 @@ import com.joetr.mira.domain.SyncState
 import com.joetr.mira.domain.SyncStatus
 import com.joetr.mira.domain.ThemeMode
 import com.joetr.mira.ui.components.Chip
-import com.joetr.mira.ui.components.CircleIconButton
 import com.joetr.mira.ui.components.PillButton
 import com.joetr.mira.ui.components.SectionLabel
 import com.joetr.mira.ui.formatBytes
-import com.joetr.mira.ui.icons.MiraIcons
 import com.joetr.mira.ui.theme.MiraAccent
 import com.joetr.mira.ui.theme.MiraSpacing
 import com.joetr.mira.ui.theme.MiraTheme
@@ -51,6 +49,8 @@ public data class SettingsUiState(
     val orphanCount: Int?,
     val version: String,
     val updateAvailable: String?,
+    val archivePushing: Boolean = false,
+    val archiveError: String? = null,
 )
 
 public data class SettingsActions(
@@ -61,6 +61,7 @@ public data class SettingsActions(
     val onAccentChange: (MiraAccent) -> Unit,
     val onSyncNow: () -> Unit,
     val onConnectGitHub: () -> Unit,
+    val onDisconnectGitHub: () -> Unit,
     val onBackUpNow: () -> Unit,
     val onToggleArchiveMedia: (Boolean) -> Unit,
     val onToggleVideoUnmetered: (Boolean) -> Unit,
@@ -86,12 +87,6 @@ public fun SettingsScreen(
             .padding(horizontal = MiraSpacing.gutter),
     ) {
         Spacer(Modifier.height(MiraSpacing.lg))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            CircleIconButton(MiraIcons.Back, "Back", onClick = actions.onBack)
-            Spacer(Modifier.weight(1f))
-        }
-
-        Spacer(Modifier.height(MiraSpacing.md))
         Text("SETTINGS", style = MiraTheme.type.monthTitle, color = colors.ink)
         Spacer(Modifier.height(MiraSpacing.sectionGap))
 
@@ -193,9 +188,13 @@ public fun SettingsScreen(
                 color = colors.inkMuted,
             )
             Spacer(Modifier.height(MiraSpacing.md))
-            Row(horizontalArrangement = Arrangement.spacedBy(MiraSpacing.sm)) {
+            Column(verticalArrangement = Arrangement.spacedBy(MiraSpacing.sm)) {
                 if (state.archiveConnected) {
-                    PillButton("Back up now", onClick = actions.onBackUpNow, filled = false)
+                    PillButton(if (state.archivePushing) "Backing up…" else "Back up now", onClick = {
+                        if (!state.archivePushing) actions.onBackUpNow()
+                    }, filled = false)
+                    state.archiveError?.let { Text(it, color = colors.error, style = MiraTheme.type.uiBody) }
+                    PillButton("Disconnect GitHub", onClick = actions.onDisconnectGitHub, filled = false)
                 } else {
                     PillButton("Connect GitHub", onClick = actions.onConnectGitHub)
                 }
@@ -204,7 +203,7 @@ public fun SettingsScreen(
                 Spacer(Modifier.height(MiraSpacing.md))
                 ToggleRow(
                     label = "Include media in backup",
-                    detail = "Commits audio and video via Git LFS, not just links.",
+                    detail = "Backs up audio and video files as well as entry text.",
                     checked = state.includeMediaInArchive,
                     onCheckedChange = actions.onToggleArchiveMedia,
                 )

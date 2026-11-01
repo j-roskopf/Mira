@@ -2,9 +2,17 @@ package com.joetr.mira.media
 
 import androidx.compose.foundation.background
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.interop.UIKitView
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.IntSize
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -26,12 +34,16 @@ import platform.AVFoundation.duration
 import platform.AVFoundation.pause
 import platform.AVFoundation.play
 import platform.AVFoundation.seekToTime
+import platform.CoreGraphics.CGRectGetHeight
+import platform.CoreGraphics.CGRectGetWidth
+import platform.CoreGraphics.CGRectMake
 import platform.CoreMedia.CMTimeGetSeconds
 import platform.CoreMedia.CMTimeMakeWithSeconds
 import platform.Foundation.NSData
 import platform.Foundation.NSTemporaryDirectory
 import platform.Foundation.NSURL
 import platform.Foundation.writeToFile
+import platform.QuartzCore.CATransaction
 import platform.UIKit.UIView
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.usePinned
@@ -159,18 +171,69 @@ public actual fun VideoSurface(
     modifier: Modifier,
 ) {
     val iosController = controller as? IosMediaPlayerController
+    val density = LocalDensity.current
+    var surfaceSize by remember { mutableStateOf(IntSize.Zero) }
+
     UIKitView(
-        modifier = modifier.background(Color.Black),
-        factory = {
-            val view = UIView()
-            iosController?.player?.let { player ->
-                val layer = AVPlayerLayer()
-                layer.player = player
-                layer.videoGravity = AVLayerVideoGravityResizeAspect
-                layer.frame = view.bounds
-                view.layer.addSublayer(layer)
-            }
-            view
+        modifier = modifier
+            .onSizeChanged { surfaceSize = it }
+            .background(Color.Black),
+        factory = { PlayerView() },
+        update = { view ->
+            view.playerLayer.player = iosController?.player
+            view.setVideoFrame(surfaceSize, density)
         },
+        interactive = false,
     )
+}
+
+/**
+ * Hosts the `AVPlayerLayer` and keeps it the same size as the view.
+ *
+ * Compose creates the interop view at its intrinsic size and resizes it when the layout settles,
+ * after `factory` has already run. Syncing from `layoutSubviews` is the only hook that is
+ * guaranteed to fire for every resize, including the one that gives the tile its real size.
+ */
+@OptIn(ExperimentalForeignApi::class)
+private class PlayerView : UIView(frame = CGRectMake(0.0, 0.0, 0.0, 0.0)) {
+    val playerLayer = AVPlayerLayer().apply {
+        videoGravity = AVLayerVideoGravityResizeAspect
+    }
+
+    private var frameFromCompose = false
+
+    init {
+        layer.addSublayer(playerLayer)
+    }
+
+    /**
+     * Sizes the layer from Compose rather than from [bounds].
+     *
+     * The interop view can report a stale or partial height while Compose is still settling the
+     * tile, which is what left the video at a fraction of its box. The Compose size is the source
+     * of truth, and the interop's clipping view still trims the layer to the visible tile.
+     */
+    fun setVideoFrame(size: IntSize, density: Density) {
+        if (size.width <= 0 || size.height <= 0) return
+        frameFromCompose = true
+        applyFrame(
+            width = size.width / density.density.toDouble(),
+            height = size.height / density.density.toDouble(),
+        )
+    }
+
+    override fun layoutSubviews() {
+        super.layoutSubviews()
+        if (!frameFromCompose) {
+            applyFrame(CGRectGetWidth(bounds), CGRectGetHeight(bounds))
+        }
+    }
+
+    private fun applyFrame(width: Double, height: Double) {
+        // Frame changes are animatable; without this the layer can be captured mid-resize.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        playerLayer.frame = CGRectMake(0.0, 0.0, width, height)
+        CATransaction.commit()
+    }
 }

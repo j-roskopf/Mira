@@ -212,15 +212,14 @@ compose.desktop {
 }
 
 /**
- * Signs the bundled FFmpeg helper so it inherits Mira's camera and microphone access.
+ * Signs the bundled FFmpeg helper with its own hardened-runtime capture capabilities.
  *
- * A child process of a hardened-runtime app is its own TCC subject. FFmpeg has no Info.plist to
- * carry usage descriptions, so without `com.apple.security.cs.inherit` macOS denies the camera and
- * never prompts — the capture simply produces nothing. Signing a nested binary also breaks the
- * bundle's seal, so the app is re-signed afterwards.
+ * Camera and audio-input entitlements must be present on the executable opening the devices.
+ * They are not inherited from the JVM app. Signing a nested binary also changes the bundle seal,
+ * so the app is re-signed afterwards.
  */
 val signBundledFfmpeg = tasks.register("signBundledFfmpeg") {
-    description = "Signs the bundled FFmpeg helper to inherit Mira's capture entitlements."
+    description = "Signs the bundled FFmpeg helper with camera and microphone entitlements."
     val appEntitlements = layout.projectDirectory.file("desktop/macos/Mira.entitlements").asFile
     val helperEntitlements =
         layout.projectDirectory.file("desktop/macos/ffmpeg-helper.entitlements").asFile
@@ -231,6 +230,12 @@ val signBundledFfmpeg = tasks.register("signBundledFfmpeg") {
     onlyIf { isMac }
 
     doLast {
+        if (identity == "-") {
+            logger.warn(
+                "Mira is ad-hoc signed. macOS camera and microphone grants may be lost after " +
+                    "rebuilding. Use a consistent Developer ID signing identity to preserve app identity.",
+            )
+        }
         fun codesign(vararg args: String) {
             val process = ProcessBuilder(listOf("codesign") + args)
                 .redirectErrorStream(true)
@@ -258,6 +263,7 @@ val signBundledFfmpeg = tasks.register("signBundledFfmpeg") {
             codesign(
                 "--force", "--sign", identity, "--timestamp=none",
                 "--options", "runtime",
+                "--identifier", "com.joetr.mira.ffmpeg",
                 "--entitlements", helperEntitlements.absolutePath,
                 helper.absolutePath,
             )

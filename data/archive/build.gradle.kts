@@ -4,6 +4,12 @@ plugins {
 
 kotlin {
     sourceSets {
+        named("desktopTest") {
+            dependencies { implementation(libs.sqldelight.sqlite.driver) }
+        }
+        commonTest.dependencies {
+            implementation(libs.ktor.client.mock)
+        }
         commonMain {
             dependencies {
                 implementation(project(":core:platform"))

@@ -3,12 +3,13 @@
 <plist version="1.0">
 <dict>
     <!--
-      Mira opens the camera and microphone through a bundled FFmpeg subprocess. A child of a
-      hardened-runtime app is its own TCC subject unless it inherits, and an FFmpeg binary has no
-      Info.plist of its own to carry usage descriptions — so the request is denied with no prompt.
-      This entitlement makes it inherit Mira's, and Apple requires it to appear alone.
+      FFmpeg is a separate executable with hardened runtime enabled. It needs its own capture
+      capabilities even when macOS attributes the permission request to the responsible Mira app.
+      This app is not sandboxed; App Sandbox inheritance does not apply here.
     -->
-    <key>com.apple.security.cs.inherit</key>
+    <key>com.apple.security.device.camera</key>
+    <true/>
+    <key>com.apple.security.device.audio-input</key>
     <true/>
 </dict>
 </plist>

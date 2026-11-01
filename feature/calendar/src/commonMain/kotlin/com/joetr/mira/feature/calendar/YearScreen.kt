@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import com.joetr.mira.ui.sundayFirstColumn
 import com.joetr.mira.ui.theme.MiraSizes
 import com.joetr.mira.ui.theme.MiraSpacing
+import com.joetr.mira.ui.theme.MiraAccentCanvas
 import com.joetr.mira.ui.theme.MiraTheme
 import com.joetr.mira.ui.theme.busyThreshold
 import com.joetr.mira.ui.theme.heatmapStep
@@ -50,81 +51,83 @@ public fun YearScreen(
     onYearChange: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val colors = MiraTheme.colors
-    val byDate = remember(activity) { activity.associate { it.date to it.entryCount } }
-    val threshold = remember(activity) { busyThreshold(activity.map { it.entryCount }) }
-    val totalEntries = remember(activity) { activity.sumOf { it.entryCount } }
-    val daysWritten = remember(activity) { activity.count { it.entryCount > 0 } }
+    MiraAccentCanvas {
+        val colors = MiraTheme.colors
+        val byDate = remember(activity) { activity.associate { it.date to it.entryCount } }
+        val threshold = remember(activity) { busyThreshold(activity.map { it.entryCount }) }
+        val totalEntries = remember(activity) { activity.sumOf { it.entryCount } }
+        val daysWritten = remember(activity) { activity.count { it.entryCount > 0 } }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(colors.canvas)
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = MiraSpacing.gutter),
-    ) {
-        Spacer(Modifier.height(MiraSpacing.lg))
+        Column(
+            modifier = modifier
+                .fillMaxSize()
+                .background(colors.canvas)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = MiraSpacing.gutter),
+        ) {
+            Spacer(Modifier.height(MiraSpacing.lg))
 
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            CircleIconButton(MiraIcons.Back, "Back", onClick = onBack)
-            Spacer(Modifier.weight(1f))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                CircleIconButton(MiraIcons.Back, "Back", onClick = onBack)
+                Spacer(Modifier.weight(1f))
+                Text(
+                    text = (year - 1).toString(),
+                    style = MiraTheme.type.yearNav,
+                    color = colors.inkFaint,
+                    modifier = Modifier
+                        .clickable { onYearChange(year - 1) }
+                        .padding(MiraSpacing.sm),
+                )
+                Text(
+                    text = year.toString(),
+                    style = MiraTheme.type.monthTitle,
+                    color = colors.ink,
+                    modifier = Modifier.padding(horizontal = MiraSpacing.md),
+                )
+                Text(
+                    text = (year + 1).toString(),
+                    style = MiraTheme.type.yearNav,
+                    color = colors.inkFaint,
+                    modifier = Modifier
+                        .clickable { onYearChange(year + 1) }
+                        .padding(MiraSpacing.sm),
+                )
+                Spacer(Modifier.weight(1f))
+                Spacer(Modifier.size(MiraSizes.touchTarget))
+            }
+
+            Spacer(Modifier.height(MiraSpacing.sm))
+
             Text(
-                text = (year - 1).toString(),
-                style = MiraTheme.type.yearNav,
-                color = colors.inkFaint,
-                modifier = Modifier
-                    .clickable { onYearChange(year - 1) }
-                    .padding(MiraSpacing.sm),
+                text = "$daysWritten DAYS · $totalEntries ENTRIES",
+                style = MiraTheme.type.dayDate,
+                color = colors.inkMuted,
             )
-            Text(
-                text = year.toString(),
-                style = MiraTheme.type.monthTitle,
-                color = colors.ink,
-                modifier = Modifier.padding(horizontal = MiraSpacing.md),
-            )
-            Text(
-                text = (year + 1).toString(),
-                style = MiraTheme.type.yearNav,
-                color = colors.inkFaint,
-                modifier = Modifier
-                    .clickable { onYearChange(year + 1) }
-                    .padding(MiraSpacing.sm),
-            )
-            Spacer(Modifier.weight(1f))
-            Spacer(Modifier.size(MiraSizes.touchTarget))
-        }
 
-        Spacer(Modifier.height(MiraSpacing.sm))
+            Spacer(Modifier.height(MiraSpacing.sectionGap))
 
-        Text(
-            text = "$daysWritten DAYS · $totalEntries ENTRIES",
-            style = MiraTheme.type.dayDate,
-            color = colors.inkMuted,
-        )
-
-        Spacer(Modifier.height(MiraSpacing.sectionGap))
-
-        (1..12).chunked(3).forEach { row ->
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(MiraSpacing.lg),
-            ) {
-                row.forEach { monthNumber ->
-                    val month = MonthKey.of(year, monthNumber)
-                    Box(Modifier.weight(1f)) {
-                        MiniMonth(
-                            month = month,
-                            counts = byDate,
-                            busyThreshold = threshold,
-                            onClick = { onMonthClick(month) },
-                        )
+            (1..12).chunked(3).forEach { row ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(MiraSpacing.lg),
+                ) {
+                    row.forEach { monthNumber ->
+                        val month = MonthKey.of(year, monthNumber)
+                        Box(Modifier.weight(1f)) {
+                            MiniMonth(
+                                month = month,
+                                counts = byDate,
+                                busyThreshold = threshold,
+                                onClick = { onMonthClick(month) },
+                            )
+                        }
                     }
                 }
+                Spacer(Modifier.height(MiraSpacing.xxl))
             }
-            Spacer(Modifier.height(MiraSpacing.xxl))
-        }
 
-        Spacer(Modifier.height(MiraSpacing.giant))
+            Spacer(Modifier.height(MiraSpacing.giant))
+        }
     }
 }
 

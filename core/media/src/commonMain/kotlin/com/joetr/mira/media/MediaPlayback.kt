@@ -32,6 +32,9 @@ public data class PlaybackState(
     val durationMs: Long = 0,
     val ended: Boolean = false,
     val errorMessage: String? = null,
+    /** Encoded frame size after rotation metadata, when the platform reports it. */
+    val videoWidth: Int = 0,
+    val videoHeight: Int = 0,
 ) {
     /** 0..1, safe when the duration is not yet known. */
     public val progress: Float

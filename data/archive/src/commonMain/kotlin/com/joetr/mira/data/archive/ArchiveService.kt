@@ -5,8 +5,8 @@ import com.joetr.mira.data.entries.EntryRepository
 import com.joetr.mira.data.entries.media.MediaRepository
 import com.joetr.mira.db.MiraDatabase
 import com.joetr.mira.domain.Entry
-import com.joetr.mira.platform.currentTimeMillis
 import io.ktor.client.HttpClient
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -65,9 +65,15 @@ public class ArchiveService(
     }
 
     public suspend fun disconnect() {
-        write(KEY_TOKEN, "")
-        write(KEY_REPO, "")
-        _status.value = ArchiveStatus()
+        debounceJob?.cancel()
+        debounceJob = null
+        mutex.withLock {
+            write(KEY_TOKEN, "")
+            write(KEY_REPO, "")
+            write(KEY_BRANCH, "")
+            write(KEY_LAST_PUSH, "")
+            _status.value = ArchiveStatus()
+        }
     }
 
     /** Debounced background push. Called after local writes. */
@@ -77,42 +83,85 @@ public class ArchiveService(
         debounceJob?.cancel()
         debounceJob = debounceScope.launch {
             delay(PUSH_DEBOUNCE_MS)
-            pushNow(ownerIdOrNull() ?: return@launch, includeMedia = false)
+            pushNow(ownerIdOrNull() ?: return@launch, includeMedia = read("archive_include_media") == "true")
         }
     }
 
     public suspend fun pushNow(ownerId: String, includeMedia: Boolean): ArchiveResult {
-        val token = read(KEY_TOKEN) ?: return ArchiveResult.Failed("GitHub is not connected")
-        val slug = read(KEY_REPO) ?: return ArchiveResult.Failed("No archive repository")
-        val branch = read(KEY_BRANCH) ?: "main"
-        val owner = slug.substringBefore('/')
-        val repo = slug.substringAfter('/')
-        val since = read(KEY_LAST_PUSH)?.toLongOrNull() ?: 0L
-
         return mutex.withLock {
+            val token = read(KEY_TOKEN) ?: return@withLock ArchiveResult.Failed("GitHub is not connected")
+            val slug = read(KEY_REPO) ?: return@withLock ArchiveResult.Failed("No archive repository")
+            val branch = read(KEY_BRANCH) ?: "main"
+            val owner = slug.substringBefore('/')
+            val repo = slug.substringAfter('/')
+            val since = read(KEY_LAST_PUSH)?.toLongOrNull() ?: 0L
+
             _status.value = _status.value.copy(pushing = true, errorMessage = null)
 
-            val changed = entries
-                .timeline(ownerId, limit = MAX_PER_PUSH, offset = 0)
-                .filter { it.updatedAt > since }
-
-            if (changed.isEmpty()) {
+            val mediaKeys = mutableListOf<String>()
+            val noteVersions = mutableMapOf<String, String>()
+            val unavailableMedia = mutableListOf<String>()
+            var changed = emptyList<Entry>()
+            val result = try {
+                val all = mutableListOf<Entry>()
+                var offset = 0
+                do {
+                    val page = entries.timeline(ownerId, limit = MAX_PER_PUSH, offset = offset)
+                    all.addAll(page)
+                    offset += page.size
+                } while (page.size == MAX_PER_PUSH)
+                val mediaFiles = mutableMapOf<String, ByteArray>()
+                val archivedMediaPaths = mutableSetOf<String>()
+                val notesToPush = mutableListOf<Entry>()
+                for (entry in all) {
+                    for (attachment in entry.attachments) {
+                        val path = attachment.archiveMediaPath(entry)
+                        val key = "github_media:$ownerId:$slug:$branch:$path:${attachment.bytes}"
+                        if (read(key) == "true") {
+                            archivedMediaPaths.add(path)
+                            continue
+                        }
+                        if (!includeMedia) continue
+                        val bytes = media.bytesFor(attachment)
+                        if (bytes == null || bytes.isEmpty()) {
+                            unavailableMedia.add("${entry.localDate.value} (${attachment.id})")
+                            continue
+                        }
+                        mediaFiles[path] = bytes
+                        archivedMediaPaths.add(path)
+                        mediaKeys.add(key)
+                    }
+                    // Upgrade existing notes once, and rewrite them when media becomes available.
+                    val noteKey = "github_note_links:$ownerId:$slug:$branch:${entry.archivePath()}"
+                    val version = "1:" + entry.attachments.map { it.archiveMediaPath(entry) }
+                        .filter { it in archivedMediaPaths }.sorted().joinToString(",")
+                    if (entry.updatedAt > since ||
+                        (entry.attachments.isNotEmpty() && read(noteKey) != version)
+                    ) {
+                        notesToPush.add(entry)
+                        noteVersions[noteKey] = version
+                    }
+                }
+                changed = notesToPush
+                GitHubArchive(httpClient, token).push(
+                    target = ArchiveTarget(owner, repo, branch),
+                    entries = changed,
+                    mediaFiles = mediaFiles,
+                    archivedMediaPaths = archivedMediaPaths,
+                )
+            } catch (cancelled: CancellationException) {
                 _status.value = _status.value.copy(pushing = false)
-                return@withLock ArchiveResult.NothingToDo
+                throw cancelled
+            } catch (error: Exception) {
+                ArchiveResult.Failed(error.message ?: "Backup failed")
             }
-
-            val mediaFiles = if (includeMedia) collectMedia(changed) else emptyMap()
-
-            val archive = GitHubArchive(httpClient, token)
-            val result = archive.push(
-                target = ArchiveTarget(owner, repo, branch),
-                entries = changed,
-                mediaFiles = mediaFiles,
-            )
 
             when (result) {
                 is ArchiveResult.Pushed -> {
-                    val now = currentTimeMillis()
+                    // A note edited during the request must remain eligible for the next push.
+                    val now = changed.maxOfOrNull { it.updatedAt } ?: since
+                    mediaKeys.forEach { write(it, "true") }
+                    noteVersions.forEach { (key, version) -> write(key, version) }
                     write(KEY_LAST_PUSH, now.toString())
                     _status.value = _status.value.copy(
                         pushing = false,
@@ -128,25 +177,16 @@ public class ArchiveService(
                 ArchiveResult.NothingToDo ->
                     _status.value = _status.value.copy(pushing = false)
             }
-            result
-        }
-    }
-
-    /**
-     * Reads the bytes for every attachment on [changed].
-     *
-     * Only used when "Include media in backup" is on; the default archive carries links in
-     * frontmatter, which keeps pushes small and fast.
-     */
-    private suspend fun collectMedia(changed: List<Entry>): Map<String, ByteArray> {
-        val files = mutableMapOf<String, ByteArray>()
-        for (entry in changed) {
-            for (attachment in entry.attachments) {
-                val bytes = media.bytesFor(attachment) ?: continue
-                files[attachment.archiveMediaPath(entry)] = bytes
+            if (unavailableMedia.isNotEmpty() && result !is ArchiveResult.Failed) {
+                val message = "Backup incomplete. Could not read ${unavailableMedia.size} recording(s), " +
+                    "including ${unavailableMedia.first()}. The local file may be missing and no cloud copy " +
+                    "could be loaded. Available files were backed up; missing recordings will be retried."
+                _status.value = _status.value.copy(errorMessage = message)
+                ArchiveResult.Failed(message)
+            } else {
+                result
             }
         }
-        return files
     }
 
     private suspend fun ownerIdOrNull(): String? = read(KEY_OWNER)

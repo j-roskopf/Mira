@@ -128,6 +128,7 @@ public class EntryRepository(
                 deleted = if (entry.deleted) 1L else 0L,
                 pending_sync = 1L,
             )
+            entry.attachments.forEach { queries.assignBlobToEntry(entry.id, it.id) }
             queries.enqueue(entry.id, OutboxKind.UPSERT.wire, now)
         }
     }

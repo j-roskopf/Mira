@@ -34,6 +34,16 @@ class PlaybackCommandTest {
                 result.stdout.size > expected / 2,
             )
             assertTrue("PCM was silent", result.stdout.any { it != 0.toByte() })
+            // A continuous 440 Hz source should not acquire impulse-like jumps in the round trip.
+            val samples = java.nio.ByteBuffer.wrap(result.stdout).order(java.nio.ByteOrder.LITTLE_ENDIAN).asShortBuffer()
+            var previous = samples.get(0).toInt()
+            var largestJump = 0
+            for (index in PLAYBACK_CHANNELS until samples.limit() step PLAYBACK_CHANNELS) {
+                val sample = samples.get(index).toInt()
+                largestJump = maxOf(largestJump, kotlin.math.abs(sample - previous))
+                previous = sample
+            }
+            assertTrue("Audio round trip introduced a discontinuity: $largestJump", largestJump < 1_000)
         } finally {
             recorded.delete()
         }

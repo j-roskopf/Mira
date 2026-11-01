@@ -1,6 +1,7 @@
 package com.joetr.mira.data.archive
 
 import com.joetr.mira.domain.Entry
+import io.ktor.client.plugins.expectSuccess
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
 import io.ktor.client.request.header
@@ -12,6 +13,8 @@ import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.coroutines.CancellationException
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -60,10 +63,46 @@ public class GitHubArchive(
         }.getOrNull()
     }
 
+    /** Resolves a private, writable repository and its actual default branch. */
+    public suspend fun existingRepository(slug: String): ArchiveTarget {
+        require(Regex("[A-Za-z0-9-]+/[A-Za-z0-9_.-]+").matches(slug) &&
+            slug.substringAfter('/') !in listOf(".", "..")) {
+            "Enter the repository as owner/name."
+        }
+        val response = httpClient.get("$api/repos/$slug") {
+            githubHeaders()
+            expectSuccess = false
+        }
+        require(response.status.value == 200) {
+            "Could not access that repository. Check the owner/name and your GitHub access."
+        }
+        val fields = json.parseToJsonElement(response.bodyAsText()).jsonObject
+        require(fields["private"]?.jsonPrimitive?.booleanOrNull == true) {
+            "Choose a private repository to keep your journal private."
+        }
+        require(fields["archived"]?.jsonPrimitive?.booleanOrNull != true &&
+            fields["disabled"]?.jsonPrimitive?.booleanOrNull != true &&
+            fields["permissions"]?.jsonObject?.get("push")?.jsonPrimitive?.booleanOrNull == true) {
+            "Choose an active repository you have write access to."
+        }
+        val target = ArchiveTarget(
+            fields.getValue("owner").jsonObject.getValue("login").jsonPrimitive.content,
+            fields.getValue("name").jsonPrimitive.content,
+            fields.getValue("default_branch").jsonPrimitive.content,
+        )
+        require(refSha(target) != null) {
+            "The repository needs an initial commit. Add a README on GitHub, then try again."
+        }
+        return target
+    }
+
     /** Creates the archive repository, private by default. Journal data is not public. */
     public suspend fun createRepository(name: String, private: Boolean = true): ArchiveTarget? {
-        val body = runCatching {
-            httpClient.post("$api/user/repos") {
+        require(name.length in 1..100 && Regex("[A-Za-z0-9_.-]+").matches(name) && name !in listOf(".", "..")) {
+            "Use 1–100 letters, numbers, periods, hyphens, or underscores for the repository name."
+        }
+        val body = try {
+            val response = httpClient.post("$api/user/repos") {
                 githubHeaders()
                 setBody(
                     buildJsonObject {
@@ -73,8 +112,14 @@ public class GitHubArchive(
                         put("auto_init", JsonPrimitive(true))
                     }.toString(),
                 )
-            }.bodyAsText()
-        }.getOrNull() ?: return null
+            }
+            if (response.status.value != 201) return null
+            response.bodyAsText()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            return null
+        }
 
         val fields = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull()
             ?: return null
@@ -89,13 +134,14 @@ public class GitHubArchive(
      * Pushes [entries] as one commit.
      *
      * [mediaFiles] is populated only when "Include media in backup" is on, which commits the actual
-     * audio and video via LFS rather than only the links in frontmatter.
+     * audio and video as files rather than only the links in frontmatter.
      */
     public suspend fun push(
         target: ArchiveTarget,
         entries: List<Entry>,
         mediaFiles: Map<String, ByteArray> = emptyMap(),
         message: String? = null,
+        archivedMediaPaths: Set<String> = mediaFiles.keys,
     ): ArchiveResult {
         if (entries.isEmpty() && mediaFiles.isEmpty()) return ArchiveResult.NothingToDo
 
@@ -106,7 +152,7 @@ public class GitHubArchive(
 
             val treeEntries = buildJsonArray {
                 for (entry in entries) {
-                    val blobSha = createBlob(target, entry.toMarkdown())
+                    val blobSha = createBlob(target, entry.toMarkdown(archivedMediaPaths))
                         ?: return ArchiveResult.Failed("Could not write ${entry.id}")
                     add(treeEntry(entry.archivePath(), blobSha))
                 }

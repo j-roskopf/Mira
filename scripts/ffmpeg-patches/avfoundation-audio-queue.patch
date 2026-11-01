@@ -1,0 +1,82 @@
+--- a/libavdevice/avfoundation.m
++++ b/libavdevice/avfoundation.m
+@@ -132,6 +132,8 @@
+     AVCaptureAudioDataOutput *audio_output;
+     CMSampleBufferRef         current_frame;
+     CMSampleBufferRef         current_audio_frame;
++    CFMutableArrayRef         pending_audio_frames;
++    int                      audio_queue_overflow;
+ 
+     AVCaptureDevice          *observed_device;
+ #if !TARGET_OS_IPHONE && __MAC_OS_X_VERSION_MIN_REQUIRED >= 1070
+@@ -273,11 +275,18 @@
+ {
+     lock_frames(_context);
+ 
+-    if (_context->current_audio_frame != nil) {
+-        CFRelease(_context->current_audio_frame);
+-    }
+-
+-    _context->current_audio_frame = (CMSampleBufferRef)CFRetain(audioFrame);
++    // Audio is continuous: replacing an unread buffer loses samples and produces clicks.
++    // Keep up to ~2.7 seconds at the Mac microphone's 512 samples / 48 kHz cadence.
++    if (!_context->current_audio_frame) {
++        _context->current_audio_frame = (CMSampleBufferRef)CFRetain(audioFrame);
++    } else {
++        if (!_context->pending_audio_frames)
++            _context->pending_audio_frames = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
++        if (!_context->pending_audio_frames || CFArrayGetCount(_context->pending_audio_frames) >= 256)
++            _context->audio_queue_overflow = 1;
++        else
++            CFArrayAppendValue(_context->pending_audio_frames, audioFrame);
++    }
+ 
+     unlock_frames(_context);
+ 
+@@ -301,6 +310,11 @@
+     ctx->audio_output    = NULL;
+     ctx->avf_delegate    = NULL;
+     ctx->avf_audio_delegate = NULL;
++
++    if (ctx->current_audio_frame)
++        CFRelease(ctx->current_audio_frame);
++    if (ctx->pending_audio_frames)
++        CFRelease(ctx->pending_audio_frames);
+ 
+     av_freep(&ctx->url);
+     av_freep(&ctx->audio_buffer);
+@@ -757,6 +771,10 @@
+ 
+     CFRelease(ctx->current_audio_frame);
+     ctx->current_audio_frame = nil;
++    if (ctx->pending_audio_frames && CFArrayGetCount(ctx->pending_audio_frames)) {
++        ctx->current_audio_frame = (CMSampleBufferRef)CFRetain(CFArrayGetValueAtIndex(ctx->pending_audio_frames, 0));
++        CFArrayRemoveValueAtIndex(ctx->pending_audio_frames, 0);
++    }
+ 
+     unlock_frames(ctx);
+ 
+@@ -1125,6 +1143,12 @@
+         CMBlockBufferRef block_buffer;
+         lock_frames(ctx);
+ 
++        if (ctx->audio_queue_overflow) {
++            unlock_frames(ctx);
++            av_log(s, AV_LOG_ERROR, "Audio capture queue overflow; refusing to save missing samples.\n");
++            return AVERROR(EIO);
++        }
++
+         if (ctx->current_frame != nil) {
+             int status;
+             int length = 0;
+@@ -1251,6 +1275,10 @@
+ 
+             CFRelease(ctx->current_audio_frame);
+             ctx->current_audio_frame = nil;
++            if (ctx->pending_audio_frames && CFArrayGetCount(ctx->pending_audio_frames)) {
++                ctx->current_audio_frame = (CMSampleBufferRef)CFRetain(CFArrayGetValueAtIndex(ctx->pending_audio_frames, 0));
++                CFArrayRemoveValueAtIndex(ctx->pending_audio_frames, 0);
++            }
+         } else {
+             pkt->data = NULL;
+             unlock_frames(ctx);

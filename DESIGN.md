@@ -11,8 +11,8 @@ colour comes from Timepage. Everything about reading long-form text does not.
 
 ## 1. Brand world
 
-A near-black canvas. One accent colour that the user chooses, which then owns every active state in
-the app. Cards float on the canvas with no dividers and almost no elevation. Labels are tiny,
+A bold, full-bleed accent canvas for the month and year calendars. The user’s chosen colour
+owns these overview screens and every active state. Reading and editing surfaces use a neutral canvas. Cards float on the canvas with no dividers and almost no elevation. Labels are tiny,
 uppercase and widely tracked. Titles are heavy and quiet. The mark is a single-stroke butterfly with
 no colour of its own, so it sits on any theme.
 
@@ -54,7 +54,7 @@ canvas. `#F2F2F5` on `#0A0A0B` is ~18.5:1, far past AA, and reads calmer than `#
 ### Accents
 
 Ten curated themes. The accent owns: selected day fill, today ring, the record button, active tab,
-attachment dots, links, the heatmap ramp, and focus rings. Nothing else is coloured, ever.
+attachment dots, links, the heatmap ramp, and focus rings, plus the full month and year calendar backgrounds.
 
 | Name | Hex | OKLCH (L C H) |
 |---|---|---|
@@ -274,8 +274,9 @@ Storage (usage readout, cache cap, pinned years, orphan sweep), About (version, 
 
 The design is identical everywhere except where a platform forces a difference:
 
-- **Desktop** — content capped at 720dp and centred; the calendar and the day view sit side by side
-  above 1100dp, matching Timepage's iPad dual-panel. Keyboard: `⌘N` new entry, `⌘F` search,
+- **Desktop** — reading content capped at 720dp and centred. The home calendar expands to
+  1200dp, with taller week rows and 56dp day markers when its available width reaches 800dp.
+  Short windows scroll the calendar. Keyboard: `⌘N` new entry, `⌘F` search,
   `⌘[`/`⌘]` month paging.
 - **Web** — identical to desktop. No media kept locally, so attachment tiles always show the
   streaming state. Initial paint must not wait on the wasm database; the calendar chrome renders
@@ -295,3 +296,16 @@ The design is identical everywhere except where a platform forces a difference:
 - Toasts and snackbars. State changes are shown by the thing that changed.
 - Illustrated empty states.
 - Any colour that is not a neutral, the accent, or a step of the accent's ramp.
+
+### Calendar presentation and navigation
+
+Selecting any date opens a modal bottom sheet on every platform. The sheet loads that date’s
+entries, supports editing and adding entries for that date, and shows loading, retry and empty states.
+Closing it returns to the same calendar month. Editing returns to the sheet with refreshed entries.
+
+Compact navigation has four destinations flanking a raised circular create action cradled by a continuous
+upward curve in the bar. Only the active tab shows its label; the bar extends to the left, right and bottom edges, including behind the home indicator.
+Safe-area padding applies to the controls, not the bar background.
+The calendar omits its duplicate floating action on compact screens. Desktop
+sidebar and tablet rail backgrounds extend behind window chrome; their controls respect safe insets.
+Calendar colour extends across the available canvas, including beyond the content width cap.

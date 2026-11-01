@@ -40,6 +40,13 @@ tasks.register("generateMiraConfig") {
     // Invalidate when local.properties or gradle.properties changes.
     inputs.files(localPropertiesFile).optional().withPathSensitivity(PathSensitivity.RELATIVE)
     inputs.file(gradlePropertiesFile).withPathSensitivity(PathSensitivity.RELATIVE)
+    // A CI/environment client ID can change without either properties file changing.
+    inputs.property(
+        "githubOAuthClientId",
+        providers.gradleProperty("mira.github.oauthClientId")
+            .orElse(providers.environmentVariable("MIRA_GITHUB_OAUTH_CLIENT_ID"))
+            .orElse(""),
+    )
     outputs.dir(configOutput)
     doLast {
         fun readGoogleServiceInfoIosClientId(): String? {

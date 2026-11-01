@@ -31,6 +31,8 @@ import javax.sound.sampled.AudioFormat
 import javax.sound.sampled.AudioSystem
 import javax.sound.sampled.SourceDataLine
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.ensureActive
 
 public actual fun createMediaPlayerController(): MediaPlayerController =
     DesktopMediaPlayerController()
@@ -59,6 +61,7 @@ internal class DesktopMediaPlayerController : MediaPlayerController {
     private var tempFile: File? = null
     private var kind: CaptureKind = CaptureKind.AUDIO
 
+    private val audioLine = AtomicReference<SourceDataLine?>(null)
     private var audioProcess: Process? = null
     private var videoProcess: Process? = null
     private var audioJob: Job? = null
@@ -132,6 +135,9 @@ internal class DesktopMediaPlayerController : MediaPlayerController {
         videoProcess?.destroyForcibly()
         audioProcess = null
         videoProcess = null
+        audioLine.getAndSet(null)?.let { line ->
+            runCatching { line.stop(); line.flush(); line.close() }
+        }
     }
 
     /**
@@ -142,12 +148,11 @@ internal class DesktopMediaPlayerController : MediaPlayerController {
      */
     private suspend fun streamAudio(path: String, fromMs: Long) = withContext(Dispatchers.IO) {
         val binary = FfmpegBinary.path ?: return@withContext
-        val format = AudioFormat(44_100f, 16, 2, true, false)
+        val format = AudioFormat(PLAYBACK_SAMPLE_RATE.toFloat(), 16, PLAYBACK_CHANNELS, true, false)
         val line = runCatching {
             (AudioSystem.getLine(javax.sound.sampled.DataLine.Info(SourceDataLine::class.java, format)) as SourceDataLine)
                 .apply {
                     open(format, 64 * 1024)
-                    start()
                 }
         }.getOrNull() ?: return@withContext
 
@@ -163,20 +168,31 @@ internal class DesktopMediaPlayerController : MediaPlayerController {
         }
         audioProcess = process
 
-        val buffer = ByteArray(16 * 1024)
+        val diagnostics = scope.launch { process.errorStream.use { it.copyTo(java.io.OutputStream.nullOutputStream()) } }
         try {
-            while (isActive) {
-                val read = process.inputStream.read(buffer)
-                if (read <= 0) break
-                line.write(buffer, 0, read)
+            ensureActive()
+            audioLine.set(line)
+            var primed = false
+            copyPcmFrames(process.inputStream, format.frameSize, { isActive }) { buffer, offset, count ->
+                val written = line.write(buffer, offset, count)
+                // Queue audio before starting the device to avoid an empty-buffer underrun.
+                if (!primed && written > 0) {
+                    line.start()
+                    primed = true
+                }
+                written
             }
             if (isActive) {
                 line.drain()
                 _state.value = _state.value.copy(playing = false, ended = true)
             }
-        } catch (_: Throwable) {
-            // The stream closes on pause or seek; nothing to report.
+        } catch (failure: Exception) {
+            if (isActive) {
+                _state.value = _state.value.copy(playing = false, errorMessage = "Could not play this recording's audio")
+            }
         } finally {
+            audioLine.compareAndSet(line, null)
+            diagnostics.cancel()
             runCatching {
                 line.stop()
                 line.close()
@@ -394,3 +410,31 @@ internal fun buildProbeCommand(binary: String, path: String): List<String> =
 
 internal const val PLAYBACK_SAMPLE_RATE: Int = 44_100
 internal const val PLAYBACK_CHANNELS: Int = 2
+
+/** Pipe reads can split PCM samples. Preserve frame boundaries and retry partial device writes. */
+internal fun copyPcmFrames(
+    input: InputStream,
+    frameSize: Int,
+    active: () -> Boolean,
+    write: (ByteArray, Int, Int) -> Int,
+) {
+    require(frameSize > 0)
+    val buffer = ByteArray((16 * 1024 / frameSize).coerceAtLeast(1) * frameSize)
+    while (active()) {
+        var count = 0
+        while (count < buffer.size && active()) {
+            val read = input.read(buffer, count, buffer.size - count)
+            if (read < 0) break
+            if (read > 0) count += read
+        }
+        if (!active() || count == 0) return
+        check(count % frameSize == 0) { "Incomplete PCM frame" }
+        var offset = 0
+        while (offset < count && active()) {
+            val written = write(buffer, offset, count - offset)
+            if (!active()) return
+            check(written > 0 && written <= count - offset && written % frameSize == 0) { "Invalid PCM write" }
+            offset += written
+        }
+    }
+}

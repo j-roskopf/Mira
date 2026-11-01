@@ -132,7 +132,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/ffmpeg
-          key: ffmpeg-${{ matrix.target }}-${{ hashFiles('scripts/build-ffmpeg.sh') }}
+          key: ffmpeg-${{ matrix.target }}-${{ hashFiles('scripts/build-ffmpeg.sh', 'scripts/ffmpeg-patches/*.patch') }}
 
       - name: Install build dependencies (macOS)
         if: matrix.target == 'macos' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
@@ -888,6 +888,7 @@ jobs:
         env:
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
           FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+        working-directory: firebase
         run: |
           firebase deploy \
             --project "${FIREBASE_PROJECT_ID}" \

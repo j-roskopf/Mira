@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -15,6 +16,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import com.joetr.mira.domain.Entry
 import com.joetr.mira.domain.LocalDateKey
 import com.joetr.mira.ui.components.CircleIconButton
@@ -44,6 +46,10 @@ public fun DayScreen(
     onPreviousDay: () -> Unit,
     onNextDay: () -> Unit,
     modifier: Modifier = Modifier,
+    loading: Boolean = false,
+    error: String? = null,
+    onRetry: () -> Unit = {},
+    inSheet: Boolean = false,
 ) {
     val colors = MiraTheme.colors
 
@@ -57,7 +63,7 @@ public fun DayScreen(
                     .padding(horizontal = MiraSpacing.sm),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                CircleIconButton(MiraIcons.Back, "Back", onClick = onBack)
+                CircleIconButton(if (inSheet) MiraIcons.Close else MiraIcons.Back, if (inSheet) "Close day" else "Back", onClick = onBack)
                 Box(Modifier.weight(1f)) {
                     DayHeader(date, modifier = Modifier.sharedDayTitle(date.value))
                 }
@@ -71,7 +77,14 @@ public fun DayScreen(
 
             Spacer(Modifier.height(MiraSpacing.sectionGap))
 
-            if (entries.isEmpty()) {
+            if (loading || error != null) {
+                Column(Modifier.padding(horizontal = MiraSpacing.gutter)) {
+                    androidx.compose.material3.Text(error ?: "Loading entries…", color = colors.inkMuted)
+                    if (error != null) androidx.compose.material3.TextButton(onClick = onRetry) {
+                        androidx.compose.material3.Text("Try again")
+                    }
+                }
+            } else if (entries.isEmpty()) {
                 Column(Modifier.padding(horizontal = MiraSpacing.gutter)) {
                     SectionLabel("Entries")
                     EmptyState("Nothing yet.")
@@ -101,5 +114,44 @@ public fun DayScreen(
                 }
             }
         }
+    }
+}
+
+/** One shared modal presentation on phone, tablet, desktop and web. */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+public fun DayEntriesSheet(
+    date: LocalDateKey,
+    entries: List<Entry>,
+    onDismiss: () -> Unit,
+    onEntryClick: (Entry) -> Unit,
+    onCompose: () -> Unit,
+    modifier: Modifier = Modifier,
+    loading: Boolean = false,
+    error: String? = null,
+    onRetry: () -> Unit = {},
+) {
+    androidx.compose.material3.ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        modifier = modifier,
+        sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        sheetMaxWidth = 720.dp,
+        containerColor = MiraTheme.colors.canvas,
+        contentColor = MiraTheme.colors.ink,
+    ) {
+        DayScreen(
+            date = date,
+            entries = entries,
+            onBack = onDismiss,
+            onEntryClick = onEntryClick,
+            onCompose = onCompose,
+            onPreviousDay = {},
+            onNextDay = {},
+            modifier = Modifier.fillMaxWidth().fillMaxHeight(0.85f),
+            loading = loading,
+            error = error,
+            onRetry = onRetry,
+            inSheet = true,
+        )
     }
 }

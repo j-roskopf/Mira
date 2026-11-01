@@ -32,8 +32,8 @@ internal object FfmpegBinary {
 
     val path: String? by lazy {
         locate().also { resolved ->
-            // Which binary won matters: only the bundled one inherits Mira's camera entitlement,
-            // so a fallback to PATH explains an otherwise silent capture failure.
+            // Which binary won matters: the bundled helper is signed with capture entitlements,
+            // and a fallback to PATH may have different signing and permission behavior.
             println(
                 if (resolved == null) {
                     "Mira: no FFmpeg found; desktop capture and playback are unavailable"
@@ -108,8 +108,12 @@ internal fun parseSupportedPixelFormats(stderr: String): List<String> {
 
 internal const val PIXEL_FORMAT_ERROR: String = "not supported by the input device"
 
-internal fun videoInputArgs(pixelFormat: String? = null): List<String> = when (desktopOs) {
-    DesktopOs.MAC -> listOf(
+internal fun videoInputArgs(
+    pixelFormat: String? = null,
+    videoSize: CameraSize? = null,
+): List<String> = when (desktopOs) {
+    DesktopOs.MAC -> listOf("-thread_queue_size", "1024") +
+        (videoSize?.let { listOf("-video_size", "${it.width}x${it.height}") } ?: emptyList()) + listOf(
         "-f", "avfoundation",
         // Required: the default of 29.97 is rejected by the built-in camera.
         "-framerate", "30",
@@ -137,3 +141,25 @@ private fun defaultWindowsVideoDevice(): String =
 
 private fun defaultWindowsAudioDevice(): String =
     System.getProperty("mira.capture.audioDevice") ?: "Microphone"
+
+internal data class CameraSize(val width: Int, val height: Int)
+
+internal fun preferredCameraSize(settings: VideoCaptureSettings): CameraSize? {
+    val edge = settings.quality.shortEdge
+    return when (settings.aspectRatio) {
+        VideoAspectRatio.ORIGINAL -> null
+        VideoAspectRatio.PORTRAIT -> CameraSize(edge, edge * 16 / 9)
+        // Square output fits the full landscape feed rather than asking the camera to crop it.
+        VideoAspectRatio.LANDSCAPE, VideoAspectRatio.SQUARE -> CameraSize(edge * 16 / 9, edge)
+    }
+}
+
+internal fun fallbackCameraSize(stderr: String, preferred: CameraSize): CameraSize? {
+    val modes = Regex("""(\d+)x(\d+)@\[([\d.]+) ([\d.]+)]fps""")
+        .findAll(stderr).filter { it.groupValues[3].toDouble() <= 30 && it.groupValues[4].toDouble() >= 30 }
+        .map { CameraSize(it.groupValues[1].toInt(), it.groupValues[2].toInt()) }.distinct().toList()
+    val sameOrientation = modes.filter { (it.width >= it.height) == (preferred.width >= preferred.height) }
+    return (sameOrientation.ifEmpty { modes }).minByOrNull {
+        kotlin.math.abs(it.width.toLong() * it.height - preferred.width.toLong() * preferred.height)
+    }
+}

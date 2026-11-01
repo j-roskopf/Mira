@@ -13,6 +13,7 @@ import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -344,5 +345,30 @@ public fun MiraTheme(
         LocalContentColor provides colors.ink,
     ) {
         MaterialTheme(colorScheme = scheme, typography = material, content = content)
+    }
+}
+
+/** Full-bleed accent canvas for calendar surfaces, with an inverted activity ramp. */
+@Composable
+public fun MiraAccentCanvas(content: @Composable () -> Unit) {
+    val base = MiraTheme.colors
+    val colors = remember(base) {
+        val foreground = if (base.accent.luminance() > 0.179f) DarkTokens.canvas else Color.White
+        base.copy(
+            canvas = base.accent,
+            surface = androidx.compose.ui.graphics.lerp(base.accent, foreground, 0.1f),
+            surfaceRaised = androidx.compose.ui.graphics.lerp(base.accent, foreground, 0.15f),
+            ink = foreground,
+            inkMuted = foreground.copy(alpha = 0.85f),
+            inkFaint = foreground.copy(alpha = 0.8f),
+            accent = foreground,
+            onAccent = base.accent,
+            heatmap = (0..4).map {
+                androidx.compose.ui.graphics.lerp(base.accent, foreground, 0.18f + it * 0.205f)
+            },
+        )
+    }
+    CompositionLocalProvider(LocalMiraColors provides colors, LocalContentColor provides colors.ink) {
+        content()
     }
 }

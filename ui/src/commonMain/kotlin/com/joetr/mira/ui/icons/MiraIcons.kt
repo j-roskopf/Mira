@@ -568,6 +568,17 @@ public object MiraIcons {
         }
     }
 
+    public val Stop: MiraIconPainter = MiraIconPainter { scope, tint, _ ->
+        with(scope) {
+            drawRoundRect(
+                color = tint,
+                topLeft = Offset(size.width * 0.25f, size.height * 0.25f),
+                size = Size(size.width * 0.50f, size.height * 0.50f),
+                cornerRadius = CornerRadius(2f, 2f),
+            )
+        }
+    }
+
     public val Pause: MiraIconPainter = MiraIconPainter { scope, tint, stroke ->
         with(scope) {
             drawLine(tint, Offset(size.width * 0.38f, size.height * 0.24f), Offset(size.width * 0.38f, size.height * 0.76f), stroke.width * 1.4f, StrokeCap.Round)
@@ -644,6 +655,169 @@ public object MiraIcons {
                     size.width * 0.62f, size.height * 0.64f,
                 )
                 lineTo(size.width * 0.62f, size.height * 0.80f)
+            }
+            drawPath(path, tint, style = stroke)
+        }
+    }
+
+    public val Expand: MiraIconPainter = MiraIconPainter { scope, tint, stroke ->
+        with(scope) {
+            val corners = listOf(
+                Offset(size.width * 0.16f, size.height * 0.34f) to Offset(size.width * 0.16f, size.height * 0.16f),
+                Offset(size.width * 0.16f, size.height * 0.16f) to Offset(size.width * 0.34f, size.height * 0.16f),
+                Offset(size.width * 0.84f, size.height * 0.34f) to Offset(size.width * 0.84f, size.height * 0.16f),
+                Offset(size.width * 0.84f, size.height * 0.16f) to Offset(size.width * 0.66f, size.height * 0.16f),
+                Offset(size.width * 0.16f, size.height * 0.66f) to Offset(size.width * 0.16f, size.height * 0.84f),
+                Offset(size.width * 0.16f, size.height * 0.84f) to Offset(size.width * 0.34f, size.height * 0.84f),
+                Offset(size.width * 0.84f, size.height * 0.66f) to Offset(size.width * 0.84f, size.height * 0.84f),
+                Offset(size.width * 0.84f, size.height * 0.84f) to Offset(size.width * 0.66f, size.height * 0.84f),
+            )
+            corners.forEach { (start, end) ->
+                drawLine(tint, start, end, stroke.width, StrokeCap.Round)
+            }
+        }
+    }
+
+    public val AspectOriginal: MiraIconPainter = MiraIconPainter { scope, tint, stroke ->
+        with(scope) {
+            drawRoundRect(
+                color = tint,
+                topLeft = Offset(size.width * 0.14f, size.height * 0.22f),
+                size = Size(size.width * 0.72f, size.height * 0.56f),
+                cornerRadius = CornerRadius(3f, 3f),
+                style = stroke,
+            )
+        }
+    }
+
+    public val AspectLandscape: MiraIconPainter = MiraIconPainter { scope, tint, stroke ->
+        with(scope) {
+            drawRoundRect(
+                color = tint,
+                topLeft = Offset(size.width * 0.08f, size.height * 0.30f),
+                size = Size(size.width * 0.84f, size.height * 0.40f),
+                cornerRadius = CornerRadius(3f, 3f),
+                style = stroke,
+            )
+        }
+    }
+
+    public val AspectPortrait: MiraIconPainter = MiraIconPainter { scope, tint, stroke ->
+        with(scope) {
+            drawRoundRect(
+                color = tint,
+                topLeft = Offset(size.width * 0.30f, size.height * 0.08f),
+                size = Size(size.width * 0.40f, size.height * 0.84f),
+                cornerRadius = CornerRadius(3f, 3f),
+                style = stroke,
+            )
+        }
+    }
+
+    public val AspectSquare: MiraIconPainter = MiraIconPainter { scope, tint, stroke ->
+        with(scope) {
+            drawRoundRect(
+                color = tint,
+                topLeft = Offset(size.width * 0.22f, size.height * 0.22f),
+                size = Size(size.width * 0.56f, size.height * 0.56f),
+                cornerRadius = CornerRadius(3f, 3f),
+                style = stroke,
+            )
+        }
+    }
+
+    public val QualityStandard: MiraIconPainter = MiraIconPainter { scope, tint, stroke ->
+        with(scope) {
+            val bottom = size.height * 0.78f
+            drawRoundRect(
+                color = tint,
+                topLeft = Offset(size.width * 0.30f, bottom - size.height * 0.30f),
+                size = Size(size.width * 0.14f, size.height * 0.30f),
+                cornerRadius = CornerRadius(2f, 2f),
+                style = stroke,
+            )
+            drawRoundRect(
+                color = tint,
+                topLeft = Offset(size.width * 0.54f, bottom - size.height * 0.48f),
+                size = Size(size.width * 0.14f, size.height * 0.48f),
+                cornerRadius = CornerRadius(2f, 2f),
+                style = stroke,
+            )
+        }
+    }
+
+    public val QualityHigh: MiraIconPainter = MiraIconPainter { scope, tint, stroke ->
+        with(scope) {
+            val bottom = size.height * 0.78f
+            listOf(0.22f to 0.30f, 0.42f to 0.44f, 0.62f to 0.58f).forEach { (x, height) ->
+                drawRoundRect(
+                    color = tint,
+                    topLeft = Offset(size.width * x, bottom - size.height * height),
+                    size = Size(size.width * 0.14f, size.height * height),
+                    cornerRadius = CornerRadius(2f, 2f),
+                    style = stroke,
+                )
+            }
+        }
+    }
+
+    public val CameraFront: MiraIconPainter = MiraIconPainter { scope, tint, stroke ->
+        with(scope) {
+            drawRoundRect(
+                color = tint,
+                topLeft = Offset(size.width * 0.16f, size.height * 0.34f),
+                size = Size(size.width * 0.68f, size.height * 0.46f),
+                cornerRadius = CornerRadius(4f, 4f),
+                style = stroke,
+            )
+            drawRoundRect(
+                color = tint,
+                topLeft = Offset(size.width * 0.36f, size.height * 0.22f),
+                size = Size(size.width * 0.28f, size.height * 0.14f),
+                cornerRadius = CornerRadius(2f, 2f),
+                style = stroke,
+            )
+            drawCircle(
+                tint,
+                radius = size.minDimension * 0.075f,
+                center = Offset(size.width * 0.5f, size.height * 0.52f),
+                style = stroke,
+            )
+            val shoulders = Path().apply {
+                moveTo(size.width * 0.36f, size.height * 0.70f)
+                cubicTo(
+                    size.width * 0.40f, size.height * 0.60f,
+                    size.width * 0.60f, size.height * 0.60f,
+                    size.width * 0.64f, size.height * 0.70f,
+                )
+            }
+            drawPath(shoulders, tint, style = stroke)
+        }
+    }
+
+    public val FlipCamera: MiraIconPainter = MiraIconPainter { scope, tint, stroke ->
+        with(scope) {
+            val path = Path().apply {
+                moveTo(size.width * 0.20f, size.height * 0.50f)
+                cubicTo(
+                    size.width * 0.20f, size.height * 0.26f,
+                    size.width * 0.80f, size.height * 0.26f,
+                    size.width * 0.80f, size.height * 0.50f,
+                )
+                moveTo(size.width * 0.80f, size.height * 0.50f)
+                lineTo(size.width * 0.68f, size.height * 0.43f)
+                moveTo(size.width * 0.80f, size.height * 0.50f)
+                lineTo(size.width * 0.68f, size.height * 0.57f)
+                moveTo(size.width * 0.80f, size.height * 0.50f)
+                cubicTo(
+                    size.width * 0.80f, size.height * 0.74f,
+                    size.width * 0.20f, size.height * 0.74f,
+                    size.width * 0.20f, size.height * 0.50f,
+                )
+                moveTo(size.width * 0.20f, size.height * 0.50f)
+                lineTo(size.width * 0.32f, size.height * 0.43f)
+                moveTo(size.width * 0.20f, size.height * 0.50f)
+                lineTo(size.width * 0.32f, size.height * 0.57f)
             }
             drawPath(path, tint, style = stroke)
         }

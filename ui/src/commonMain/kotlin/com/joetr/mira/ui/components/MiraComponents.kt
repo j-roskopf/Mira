@@ -1,5 +1,9 @@
 package com.joetr.mira.ui.components
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.getValue
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -30,11 +34,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.joetr.mira.domain.Entry
 import com.joetr.mira.domain.LocalDateKey
@@ -112,6 +119,9 @@ public fun EntryCard(
                 )
                 Spacer(Modifier.weight(1f))
                 AttachmentDots(entry)
+                onClick?.let { edit ->
+                    CircleIconButton(MiraIcons.Edit, "Edit entry", onClick = edit)
+                }
             }
             if (entry.body.isNotBlank()) {
                 Spacer(Modifier.height(MiraSpacing.sm))
@@ -168,15 +178,22 @@ public fun HeatmapDay(
     isSelected: Boolean,
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
+    circleSize: Dp = MiraSizes.dayCircle,
 ) {
     val colors = MiraTheme.colors
     val fill = rampStep.takeIf { it >= 0 }?.let { colors.heatmap.getOrNull(it) }
-    val textColor = when {
+    val targetTextColor = when {
         isSelected -> colors.onAccent
-        fill != null && rampStep >= 3 -> colors.onAccent
-        fill != null -> colors.ink
+        fill != null -> if (fill.luminance() > 0.179f) Color(0xFF0A0A0B) else Color.White
         else -> colors.inkFaint
     }
+    val effects = if (MiraTheme.motionEnabled) MaterialTheme.motionScheme.fastEffectsSpec<Color>() else snap()
+    val textColor by animateColorAsState(targetTextColor, effects, label = "day-ink")
+    val background by animateColorAsState(
+        if (isSelected) colors.accent else fill ?: Color.Transparent,
+        effects,
+        label = "day-selection",
+    )
     Box(
         modifier = modifier
             .sizeIn(minWidth = MiraSizes.touchTarget, minHeight = MiraSizes.touchTarget)
@@ -185,14 +202,8 @@ public fun HeatmapDay(
     ) {
         Box(
             modifier = Modifier
-                .size(MiraSizes.dayCircle)
-                .let {
-                    when {
-                        isSelected -> it.background(colors.accent, CircleShape)
-                        fill != null -> it.background(fill, CircleShape)
-                        else -> it
-                    }
-                }
+                .size(circleSize)
+                .background(background, CircleShape)
                 .let { if (isToday && !isSelected) it.border(1.dp, colors.ink, CircleShape) else it },
             contentAlignment = Alignment.Center,
         ) {
@@ -256,6 +267,37 @@ public fun CircleIconButton(
 }
 
 /**
+ * The primary create action.
+ *
+ * A standard 56dp floating action button: one per screen at most, bottom right, filled with the
+ * accent so it never competes with the heatmap.
+ */
+@Composable
+public fun MiraFab(
+    icon: MiraIconPainter,
+    contentDescription: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = MiraTheme.colors
+    Box(
+        modifier = modifier
+            .size(56.dp)
+            .shadow(6.dp, CircleShape)
+            .background(colors.accent, CircleShape)
+            .clickable(onClickLabel = contentDescription, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        MiraIcon(
+            painter = icon,
+            tint = colors.onAccent,
+            size = 24.dp,
+            modifier = Modifier.semantics { this.contentDescription = contentDescription },
+        )
+    }
+}
+
+/**
  * The record button.
  *
  * While recording it pulses continuously — that pulse *is* the recording indicator, so there is no
@@ -289,11 +331,11 @@ public fun RecordButton(
             .size(64.dp)
             .scale(scale)
             .background(colors.accent, CircleShape)
-            .clickable(onClick = onClick),
+            .clickable(onClickLabel = if (recording) "Stop recording" else "Start recording", onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         MiraIcon(
-            painter = if (recording) MiraIcons.Pause else icon,
+            painter = if (recording) MiraIcons.Stop else icon,
             tint = colors.onAccent,
             size = 26.dp,
         )

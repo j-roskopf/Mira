@@ -17,7 +17,7 @@ import kotlinx.datetime.toLocalDateTime
  * disappears, the journal is a folder of Markdown.
  */
 @OptIn(ExperimentalTime::class)
-public fun Entry.toMarkdown(): String = buildString {
+public fun Entry.toMarkdown(archivedMediaPaths: Set<String> = emptySet()): String = buildString {
     appendLine("---")
     appendLine("id: $id")
     appendLine("date: ${localDate.value}")
@@ -47,6 +47,18 @@ public fun Entry.toMarkdown(): String = buildString {
     appendLine("---")
     appendLine()
     appendLine(body.trim())
+    val linked = attachments.filter { it.archiveMediaPath(this@toMarkdown) in archivedMediaPaths }
+    if (linked.isNotEmpty()) {
+        appendLine()
+        appendLine("## Recordings")
+        appendLine()
+        linked.forEachIndexed { index, attachment ->
+            val label = if (attachment.kind == AttachmentKind.VIDEO) "Watch video" else "Listen to audio"
+            // Notes live in entries/YYYY/MM; walk back to the repository root.
+            val path = "../../../${attachment.archiveMediaPath(this@toMarkdown)}"
+            appendLine("- [$label ${index + 1}]($path)")
+        }
+    }
 }
 
 /**

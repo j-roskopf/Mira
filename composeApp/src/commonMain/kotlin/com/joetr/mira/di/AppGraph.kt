@@ -176,6 +176,17 @@ public class AppGraph(
         return attachment
     }
 
+    /** Sync a saved entry in the app scope so leaving the editor cannot cancel the upload. */
+    public fun onEntrySaved(ownerId: String) {
+        scope.launch { syncService.syncNow() }
+        scope.launch {
+            if (archive.status.value.connected) {
+                archive.pushNow(ownerId, settings.observeIncludeMediaInArchive().first())
+            }
+        }
+        scope.launch { drainMediaUploads() }
+    }
+
     /** Called after any local write: entry sync is eager, the archive push is debounced. */
     public fun onLocalWrite() {
         syncService.onLocalWrite()

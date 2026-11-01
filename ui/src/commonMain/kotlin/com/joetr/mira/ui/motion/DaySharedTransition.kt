@@ -5,10 +5,8 @@ import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
-import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
@@ -33,9 +31,17 @@ private val sharedBoundsSpec = spring<Rect>(
  * Fade keeps outgoing content alive long enough for shared-element matching; opaque roots are what
  * stop a white flash between screens on desktop and web.
  */
-public fun navSharedElementTransitionSpec(): AnimatedContentTransitionScope<*>.() -> ContentTransform = {
-    (fadeIn(animationSpec = tween(220)) togetherWith fadeOut(animationSpec = tween(120)))
-        .using(SizeTransform(clip = false))
+@Composable
+public fun navSharedElementTransitionSpec(): AnimatedContentTransitionScope<*>.() -> ContentTransform {
+    val enabled = com.joetr.mira.ui.theme.MiraTheme.motionEnabled
+    val scheme = androidx.compose.material3.MaterialTheme.motionScheme
+    return {
+        if (!enabled) {
+            androidx.compose.animation.EnterTransition.None togetherWith androidx.compose.animation.ExitTransition.None
+        } else {
+            (fadeIn(scheme.defaultEffectsSpec()) togetherWith fadeOut(scheme.fastEffectsSpec())).using(null)
+        }
+    }
 }
 
 /**
@@ -47,7 +53,7 @@ public fun navSharedElementTransitionSpec(): AnimatedContentTransitionScope<*>.(
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 public fun Modifier.sharedDayCircle(date: String): Modifier {
-    if (LocalInspectionMode.current) return this
+    if (LocalInspectionMode.current || !com.joetr.mira.ui.theme.MiraTheme.motionEnabled) return this
     val sharedScope = LocalSharedTransitionScope.current ?: return this
     val animatedScope = LocalNavAnimatedVisibilityScope.current ?: return this
     return with(sharedScope) {
@@ -63,7 +69,7 @@ public fun Modifier.sharedDayCircle(date: String): Modifier {
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 public fun Modifier.sharedDayTitle(date: String): Modifier {
-    if (LocalInspectionMode.current) return this
+    if (LocalInspectionMode.current || !com.joetr.mira.ui.theme.MiraTheme.motionEnabled) return this
     val sharedScope = LocalSharedTransitionScope.current ?: return this
     val animatedScope = LocalNavAnimatedVisibilityScope.current ?: return this
     return with(sharedScope) {
@@ -79,7 +85,7 @@ public fun Modifier.sharedDayTitle(date: String): Modifier {
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
 public fun Modifier.sharedEntryCard(entryId: String): Modifier {
-    if (LocalInspectionMode.current) return this
+    if (LocalInspectionMode.current || !com.joetr.mira.ui.theme.MiraTheme.motionEnabled) return this
     val sharedScope = LocalSharedTransitionScope.current ?: return this
     val animatedScope = LocalNavAnimatedVisibilityScope.current ?: return this
     return with(sharedScope) {

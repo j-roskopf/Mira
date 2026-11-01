@@ -18,3 +18,10 @@ internal actual suspend fun readLocalFile(path: String): ByteArray? {
     }
     return bytes
 }
+
+internal actual suspend fun preserveLocalFile(path: String): String = path
+
+internal actual suspend fun localFileExists(path: String): Boolean =
+    platform.Foundation.NSFileManager.defaultManager.fileExistsAtPath(path)
+
+internal actual suspend fun deletePreservedFile(path: String) = Unit

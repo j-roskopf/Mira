@@ -1,11 +1,16 @@
 package com.joetr.mira.media
 
+import android.content.Context
+import android.graphics.Matrix
+import android.graphics.SurfaceTexture
+import android.media.MediaMetadataRetriever
 import android.media.MediaPlayer
-import android.view.SurfaceHolder
-import android.view.SurfaceView
+import android.view.Surface
+import android.view.TextureView
 import androidx.compose.foundation.background
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.viewinterop.AndroidView
@@ -22,6 +27,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.math.min
 
 public actual fun createMediaPlayerController(): MediaPlayerController =
     AndroidMediaPlayerController()
@@ -37,7 +43,7 @@ internal class AndroidMediaPlayerController : MediaPlayerController {
     private val _state = MutableStateFlow(PlaybackState())
     override val state: StateFlow<PlaybackState> = _state.asStateFlow()
 
-    internal val surfaceHolder = MutableStateFlow<SurfaceHolder?>(null)
+    private var surface: Surface? = null
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var player: MediaPlayer? = null
@@ -56,7 +62,7 @@ internal class AndroidMediaPlayerController : MediaPlayerController {
         val created = runCatching {
             MediaPlayer().apply {
                 setDataSource(path)
-                surfaceHolder.value?.let { setDisplay(it) }
+                surface?.let { setSurface(it) }
                 setOnCompletionListener {
                     _state.value = _state.value.copy(playing = false, ended = true)
                 }
@@ -74,7 +80,16 @@ internal class AndroidMediaPlayerController : MediaPlayerController {
         }
 
         player = created
-        _state.value = PlaybackState(durationMs = created.duration.toLong().coerceAtLeast(0))
+        val (videoWidth, videoHeight) = if (kind == CaptureKind.VIDEO) {
+            withContext(Dispatchers.IO) { videoDimensions(path) }
+        } else {
+            0 to 0
+        }
+        _state.value = PlaybackState(
+            durationMs = created.duration.toLong().coerceAtLeast(0),
+            videoWidth = videoWidth,
+            videoHeight = videoHeight,
+        )
         scope.launch { trackPosition() }
     }
 
@@ -119,6 +134,32 @@ internal class AndroidMediaPlayerController : MediaPlayerController {
         }
     }
 
+    /**
+     * Frame size with rotation metadata applied.
+     *
+     * MediaPlayer stretches its surface to fill the host view, so callers need the real aspect
+     * ratio or portrait clips come out squashed. Remote URLs may not resolve here; they fall back
+     * to the default tile ratio.
+     */
+    private fun videoDimensions(path: String): Pair<Int, Int> = runCatching {
+        val retriever = MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(path)
+            val width = retriever
+                .extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)
+                ?.toIntOrNull() ?: 0
+            val height = retriever
+                .extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)
+                ?.toIntOrNull() ?: 0
+            val rotation = retriever
+                .extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)
+                ?.toIntOrNull() ?: 0
+            if (rotation == 90 || rotation == 270) height to width else width to height
+        } finally {
+            retriever.release()
+        }
+    }.getOrDefault(0 to 0)
+
     private fun resolvePath(source: MediaSource): String? = when (source) {
         is MediaSource.LocalFile -> source.path.takeIf { File(it).exists() }
         is MediaSource.Remote -> source.url
@@ -136,9 +177,20 @@ internal class AndroidMediaPlayerController : MediaPlayerController {
         }
     }
 
-    internal fun attachSurface(holder: SurfaceHolder?) {
-        surfaceHolder.value = holder
-        player?.setDisplay(holder)
+    internal fun attachSurface(surface: Surface) {
+        this.surface = surface
+        player?.setSurface(surface)
+    }
+
+    /**
+     * Clears the surface only when the one going away is currently in use. Moving from the inline
+     * tile to the full-screen player composes the new surface before the old one is destroyed, and
+     * an unconditional clear would black out the new one.
+     */
+    internal fun detachSurface(surface: Surface) {
+        if (this.surface !== surface) return
+        this.surface = null
+        player?.setSurface(null)
     }
 }
 
@@ -148,34 +200,99 @@ public actual fun VideoSurface(
     modifier: Modifier,
 ) {
     val androidController = controller as? AndroidMediaPlayerController
+    val playback by (androidController?.state ?: MutableStateFlow(PlaybackState())).collectAsState()
 
     AndroidView(
         modifier = modifier.background(Color.Black),
         factory = { context ->
-            SurfaceView(context).apply {
-                holder.addCallback(
-                    object : SurfaceHolder.Callback {
-                        override fun surfaceCreated(holder: SurfaceHolder) {
-                            androidController?.attachSurface(holder)
-                        }
+            MiraVideoTextureView(context).apply {
+                surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                    override fun onSurfaceTextureAvailable(
+                        texture: SurfaceTexture,
+                        width: Int,
+                        height: Int,
+                    ) {
+                        val created = Surface(texture)
+                        surface = created
+                        androidController?.attachSurface(created)
+                    }
 
-                        override fun surfaceChanged(
-                            holder: SurfaceHolder,
-                            format: Int,
-                            width: Int,
-                            height: Int,
-                        ) = Unit
+                    override fun onSurfaceTextureSizeChanged(
+                        texture: SurfaceTexture,
+                        width: Int,
+                        height: Int,
+                    ) = Unit
 
-                        override fun surfaceDestroyed(holder: SurfaceHolder) {
-                            androidController?.attachSurface(null)
+                    override fun onSurfaceTextureDestroyed(texture: SurfaceTexture): Boolean {
+                        surface?.let {
+                            androidController?.detachSurface(it)
+                            it.release()
                         }
-                    },
-                )
+                        surface = null
+                        return true
+                    }
+
+                    override fun onSurfaceTextureUpdated(texture: SurfaceTexture) = Unit
+                }
             }
         },
+        update = { view ->
+            view.videoWidth = playback.videoWidth
+            view.videoHeight = playback.videoHeight
+        },
     )
+}
 
-    DisposableEffect(controller) {
-        onDispose { androidController?.attachSurface(null) }
+/**
+ * A `TextureView` that letterboxes the decoded video instead of stretching it.
+ *
+ * `SurfaceView` is a separate window: it ignores Compose sizing and clipping and stretched portrait
+ * clips into landscape tiles. TextureView is laid out like any other view, so it can be scaled to
+ * the aspect ratio MediaPlayer reports.
+ */
+private class MiraVideoTextureView(context: Context) : TextureView(context) {
+    init {
+        isOpaque = false
+    }
+
+    var videoWidth: Int = 0
+        set(value) {
+            if (field != value) {
+                field = value
+                applyFit()
+            }
+        }
+
+    var videoHeight: Int = 0
+        set(value) {
+            if (field != value) {
+                field = value
+                applyFit()
+            }
+        }
+
+    var surface: Surface? = null
+
+    override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
+        super.onSizeChanged(width, height, oldWidth, oldHeight)
+        applyFit()
+    }
+
+    private fun applyFit() {
+        if (videoWidth <= 0 || videoHeight <= 0 || width <= 0 || height <= 0) {
+            setTransform(Matrix())
+            return
+        }
+        val scale = min(width.toFloat() / videoWidth, height.toFloat() / videoHeight)
+        val dx = (width - videoWidth * scale) / 2f
+        val dy = (height - videoHeight * scale) / 2f
+        setTransform(
+            Matrix().apply {
+                // TextureView already stretches the buffer to the view bounds. Scale that
+                // view-sized texture to the fitted dimensions, not the original video pixels.
+                setScale(videoWidth * scale / width, videoHeight * scale / height)
+                postTranslate(dx, dy)
+            },
+        )
     }
 }

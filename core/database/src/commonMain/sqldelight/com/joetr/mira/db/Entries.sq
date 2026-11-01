@@ -196,3 +196,6 @@ DELETE FROM entries;
 
 deleteAllMediaBlobs:
 DELETE FROM media_blobs;
+
+assignBlobToEntry:
+UPDATE media_blobs SET entry_id = ? WHERE id = ?;
