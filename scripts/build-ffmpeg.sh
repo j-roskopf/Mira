@@ -172,7 +172,14 @@ fi
 
 # Reconfigure whenever the flag set changes; a stale config.h silently builds the old feature
 # set and the mismatch only shows up as a link error or a missing codec at runtime.
-FLAGS_FINGERPRINT="$(printf '%s\n' "${CONFIGURE_FLAGS[@]}" | shasum | cut -d' ' -f1)"
+if command -v shasum >/dev/null 2>&1; then
+  HASH=(shasum)
+elif command -v sha256sum >/dev/null 2>&1; then
+  HASH=(sha256sum)
+else
+  HASH=(openssl dgst -sha256)
+fi
+FLAGS_FINGERPRINT="$(printf '%s\n' "${CONFIGURE_FLAGS[@]}" | "${HASH[@]}" | cut -d' ' -f1)"
 if [[ ! -f config.h || "$(cat .mira-flags 2>/dev/null)" != "${FLAGS_FINGERPRINT}" ]]; then
   echo "==> Configuring (${TARGET})"
   make distclean >/dev/null 2>&1 || true

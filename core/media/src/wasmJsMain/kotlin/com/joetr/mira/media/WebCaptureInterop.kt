@@ -102,8 +102,8 @@ private fun transcodeJs(input: Int8Array, video: Boolean): Promise<ArrayBuffer?>
     """
     (async () => {
         if (!window.__miraFfmpeg) {
-            const mod = await import('https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/+esm');
-            const util = await import('https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/+esm');
+            const mod = await import(/* webpackIgnore: true */ 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/+esm');
+            const util = await import(/* webpackIgnore: true */ 'https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/+esm');
             const ffmpeg = new mod.FFmpeg();
             const base = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm';
             await ffmpeg.load({

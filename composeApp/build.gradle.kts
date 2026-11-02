@@ -131,6 +131,7 @@ kotlin {
             implementation(libs.sqldelight.web.worker.driver)
             implementation(npm("@cashapp/sqldelight-sqljs-worker", libs.versions.sqldelight.get()))
             implementation(npm("sql.js", "1.8.0"))
+            implementation(npm("heic2any", "0.0.4"))
             implementation(devNpm("copy-webpack-plugin", "9.1.0"))
         }
         val desktopTest by getting {
