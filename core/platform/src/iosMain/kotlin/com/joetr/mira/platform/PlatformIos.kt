@@ -103,13 +103,13 @@ public actual suspend fun resizeImage(bytes: ByteArray, maxLongEdge: Int, qualit
 }
 
 @OptIn(ExperimentalForeignApi::class)
-private fun ByteArray.toNSData(): NSData = memScoped {
+internal fun ByteArray.toNSData(): NSData = memScoped {
     if (isEmpty()) return@memScoped NSData()
     NSData.create(bytes = allocArrayOf(this@toNSData), length = size.toULong())
 }
 
 @OptIn(ExperimentalForeignApi::class)
-private fun NSData.toByteArray(): ByteArray {
+internal fun NSData.toByteArray(): ByteArray {
     val length = this.length.toInt()
     if (length == 0) return ByteArray(0)
     val out = ByteArray(length)

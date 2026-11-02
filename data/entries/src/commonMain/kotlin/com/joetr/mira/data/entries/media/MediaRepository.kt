@@ -163,6 +163,16 @@ public class MediaRepository(
         queries.totalBlobBytes().awaitAsOneOrNull() ?: 0L
     }
 
+    /** Deletes every locally cached or staged media file, including unattached captures. */
+    public suspend fun clearLocalMedia() {
+        io {
+            queries.selectAllBlobs().awaitAsList().forEach { blob ->
+                blob.path?.let { deletePreservedFile(it) }
+            }
+            queries.deleteAllMediaBlobs()
+        }
+    }
+
     /**
      * Deletes an entry's media from Storage and locally.
      *

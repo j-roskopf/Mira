@@ -51,6 +51,11 @@ public data class SettingsUiState(
     val updateAvailable: String?,
     val archivePushing: Boolean = false,
     val archiveError: String? = null,
+    val exporting: Boolean = false,
+    val importing: Boolean = false,
+    val deleting: Boolean = false,
+    val dataMessage: String? = null,
+    val dataMessageIsError: Boolean = false,
 )
 
 public data class SettingsActions(
@@ -69,6 +74,9 @@ public data class SettingsActions(
     val onDeleteOrphans: () -> Unit,
     val onFreeUpSpace: () -> Unit,
     val onCheckForUpdates: () -> Unit,
+    val onExportData: () -> Unit,
+    val onImportData: () -> Unit,
+    val onDeleteAllData: () -> Unit,
 )
 
 @Composable
@@ -103,7 +111,25 @@ public fun SettingsScreen(
                         PillButton("Sign out", onClick = actions.onSignOut, filled = false)
                     }
                 }
-                else -> {
+                is SessionState.Anonymous -> {
+                    Text(
+                        text = "Signed in anonymously",
+                        style = MiraTheme.type.uiBody,
+                        color = colors.ink,
+                    )
+                    Spacer(Modifier.height(MiraSpacing.md))
+                    Text(
+                        text = "Your entries already sync to the cloud, but this account has no " +
+                            "email or password — it only exists on this device. Sign in to reach " +
+                            "the same journal from another device, or to make sure you can get back " +
+                            "in if you lose this one.",
+                        style = MiraTheme.type.uiBody,
+                        color = colors.inkMuted,
+                    )
+                    Spacer(Modifier.height(MiraSpacing.md))
+                    PillButton("Sign in", onClick = actions.onSignIn)
+                }
+                is SessionState.LocalPending -> {
                     Text(
                         text = "Writing locally. Sign in to sync across your devices — " +
                             "everything written so far comes with you.",
@@ -256,6 +282,57 @@ public fun SettingsScreen(
                 Spacer(Modifier.height(MiraSpacing.sm))
                 Text("Nothing orphaned.", style = MiraTheme.type.meta, color = colors.inkMuted)
             }
+        }
+
+        Section("Data") {
+            Text(
+                text = "Export your whole journal — every entry and attachment — as a single " +
+                    "file you keep yourself. Importing restores a file like that into this " +
+                    "account, without overwriting anything newer already here.",
+                style = MiraTheme.type.uiBody,
+                color = colors.inkMuted,
+            )
+            Spacer(Modifier.height(MiraSpacing.md))
+            Row(horizontalArrangement = Arrangement.spacedBy(MiraSpacing.sm)) {
+                PillButton(
+                    text = if (state.exporting) "Exporting…" else "Export data",
+                    onClick = actions.onExportData,
+                    filled = false,
+                    enabled = !state.exporting && !state.importing,
+                )
+                PillButton(
+                    text = if (state.importing) "Importing…" else "Import data",
+                    onClick = actions.onImportData,
+                    filled = false,
+                    enabled = !state.exporting && !state.importing,
+                )
+            }
+            state.dataMessage?.let {
+                Spacer(Modifier.height(MiraSpacing.sm))
+                Text(
+                    text = it,
+                    style = MiraTheme.type.meta,
+                    color = if (state.dataMessageIsError) colors.error else colors.inkMuted,
+                )
+            }
+
+            Spacer(Modifier.height(MiraSpacing.xl))
+            SectionLabel("Delete all data")
+            Spacer(Modifier.height(MiraSpacing.sm))
+            Text(
+                text = "Permanently deletes every entry and attachment from this device and the " +
+                    "cloud. Your account and preferences stay, and a connected GitHub archive " +
+                    "keeps its own history. This cannot be undone.",
+                style = MiraTheme.type.meta,
+                color = colors.inkMuted,
+            )
+            Spacer(Modifier.height(MiraSpacing.md))
+            PillButton(
+                text = if (state.deleting) "Deleting…" else "Delete all data",
+                onClick = actions.onDeleteAllData,
+                filled = false,
+                enabled = !state.deleting && !state.exporting && !state.importing,
+            )
         }
 
         Section("About") {

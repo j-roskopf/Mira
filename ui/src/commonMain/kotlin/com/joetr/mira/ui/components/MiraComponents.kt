@@ -168,7 +168,9 @@ public fun AttachmentDots(entry: Entry, modifier: Modifier = Modifier) {
  * One day in the calendar heatmap.
  *
  * [rampStep] of -1 means no entries, and draws no circle at all — only the numeral, faintly. That
- * absence is what makes a month you journalled read as a constellation instead of a grid.
+ * absence is what makes a month you journalled read as a constellation instead of a grid. A tiny
+ * dot below the numeral marks every written day, so a single-entry day stays legible even where its
+ * ramp step sits close to the canvas colour.
  */
 @Composable
 public fun HeatmapDay(
@@ -212,6 +214,15 @@ public fun HeatmapDay(
                 style = MiraTheme.type.dayNumeral,
                 color = textColor,
             )
+            if (fill != null) {
+                Box(
+                    Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 4.dp)
+                        .size(3.dp)
+                        .background(textColor, CircleShape),
+                )
+            }
         }
     }
 }
