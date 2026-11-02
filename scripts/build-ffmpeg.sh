@@ -149,10 +149,11 @@ CONFIGURE_FLAGS=(
   --enable-bsf=aac_adtstoasc
 )
 
-# MinGW links the runtime (libgcc, libwinpthread) dynamically by default, which leaves the
-# shipped ffmpeg.exe unable to start on a machine without MSYS2 installed. Link it fully
-# static so the single-file artifact is self-contained.
-if [[ "${TARGET}" == "windows" ]]; then
+# MinGW links the runtime (libgcc, libwinpthread) dynamically by default, and on Linux the
+# package's libx264 is only available as a shared object. Either way the single-file artifact
+# would fail to start on a machine without the matching libraries installed, so link the whole
+# executable statically.
+if [[ "${TARGET}" == "windows" || "${TARGET}" == "linux" ]]; then
   CONFIGURE_FLAGS+=(--extra-ldflags=-static)
 fi
 

@@ -144,8 +144,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y nasm yasm libx264-dev libv4l-dev libasound2-dev pkg-config
 
+      # Always set up MSYS2: the Verify step below runs on cache hits too, and `msys2 {0}`
+      # is only available once this action has run.
       - name: Install build dependencies (Windows)
-        if: matrix.target == 'windows' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        if: matrix.target == 'windows'
         uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
