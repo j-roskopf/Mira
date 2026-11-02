@@ -273,7 +273,11 @@ private fun Screen(
             onMonthChange = { onReplaceTop(CalendarKey(it.value)) },
             onDayClick = { date ->
                 onSelectDate(date)
-                onNavigate(DayKey(date.value))
+                if ((activity[date] ?: 0) == 0) {
+                    onNavigate(ComposeKey(date = date.value))
+                } else {
+                    onNavigate(DayKey(date.value))
+                }
             },
             onYearClick = { onNavigate(YearKey(it)) },
             onSettingsClick = { onNavigate(SettingsKey) },
@@ -394,6 +398,24 @@ private fun Screen(
                             entryError = "Could not save the recording. Please try recording again."
                         } finally {
                             stagingRecording = false
+                        }
+                    }
+                },
+                onMediaPicked = { results ->
+                    if (results.isNotEmpty()) {
+                        stagingRecording = true
+                        scope.launch {
+                            try {
+                                results.forEach { result ->
+                                    attachments = attachments + graph.attachFrom(result, key.entryId)
+                                }
+                            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                                throw cancelled
+                            } catch (_: Exception) {
+                                entryError = "Could not attach that media. Please try again."
+                            } finally {
+                                stagingRecording = false
+                            }
                         }
                     }
                 },

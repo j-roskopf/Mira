@@ -83,7 +83,11 @@ internal val AttachmentKind.wire: String
     get() = when (this) {
         AttachmentKind.AUDIO -> "audio"
         AttachmentKind.VIDEO -> "video"
+        AttachmentKind.IMAGE -> "image"
     }
 
-internal fun attachmentKindFromWire(raw: String): AttachmentKind =
-    if (raw.equals("video", ignoreCase = true)) AttachmentKind.VIDEO else AttachmentKind.AUDIO
+internal fun attachmentKindFromWire(raw: String): AttachmentKind = when {
+    raw.equals("video", ignoreCase = true) -> AttachmentKind.VIDEO
+    raw.equals("image", ignoreCase = true) -> AttachmentKind.IMAGE
+    else -> AttachmentKind.AUDIO
+}

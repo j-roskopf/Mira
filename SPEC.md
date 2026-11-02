@@ -199,8 +199,10 @@ server-side, there are no Cloud Functions, and media recorded anywhere plays eve
 cached by `actions/cache` keyed on FFmpeg version + configure line, and bundled by `jpackage` — the
 same pattern Phoebe uses for projectM. Target ~10–20 MB per installer against ~150 MB for JavaCV.
 
-Live preview is one process with the `tee` muxer: the file output plus an MJPEG stream on stdout,
-decoded into Compose frames. One camera handle, no second process.
+Framing uses a small MJPEG-only process that opens when the capture page mounts, so the preview is
+live before the shutter. Recording replaces it with one `tee` process: the file output plus an MJPEG
+stream on stdout, decoded into Compose frames. A photo is a single tap that snapshots the framing
+frame; only one process ever holds the camera.
 
 **Capture limits:** video 1080p / ~4 Mbps / H.264; audio 64 kbps mono AAC; 10 minutes maximum with
 a soft warning at 5.

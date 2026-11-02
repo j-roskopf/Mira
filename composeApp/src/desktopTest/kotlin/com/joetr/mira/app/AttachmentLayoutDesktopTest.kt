@@ -46,7 +46,7 @@ class AttachmentLayoutDesktopTest {
                         onRemoveAttachment = { removed ->
                             attachments.value = attachments.value.filterNot { it.id == removed.id }
                         },
-                        onBodyChange = {}, onDateClick = {}, onCaptureFinished = {},
+                        onBodyChange = {}, onDateClick = {}, onCaptureFinished = {}, onMediaPicked = {},
                         onSave = {}, onCancel = {},
                     )
                 }

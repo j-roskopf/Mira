@@ -53,7 +53,11 @@ public fun Entry.toMarkdown(archivedMediaPaths: Set<String> = emptySet()): Strin
         appendLine("## Recordings")
         appendLine()
         linked.forEachIndexed { index, attachment ->
-            val label = if (attachment.kind == AttachmentKind.VIDEO) "Watch video" else "Listen to audio"
+            val label = when (attachment.kind) {
+                AttachmentKind.VIDEO -> "Watch video"
+                AttachmentKind.IMAGE -> "View photo"
+                AttachmentKind.AUDIO -> "Listen to audio"
+            }
             // Notes live in entries/YYYY/MM; walk back to the repository root.
             val path = "../../../${attachment.archiveMediaPath(this@toMarkdown)}"
             appendLine("- [$label ${index + 1}]($path)")
@@ -91,6 +95,7 @@ public fun Attachment.archiveMediaPath(entry: Entry): String {
     val extension = when (kind) {
         AttachmentKind.VIDEO -> "mp4"
         AttachmentKind.AUDIO -> "m4a"
+        AttachmentKind.IMAGE -> "jpg"
     }
     return "media/$year/$month/${entry.id}/$id.$extension"
 }

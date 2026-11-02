@@ -34,7 +34,7 @@ class EntryEditingDesktopTest {
                     onRemoveAttachment = {},
                     onBodyChange = { body.value = it },
                     onDateClick = {},
-                    onCaptureFinished = {},
+                    onCaptureFinished = {}, onMediaPicked = {},
                     onSave = { saved = body.value },
                     onCancel = {},
                     onDelete = {},

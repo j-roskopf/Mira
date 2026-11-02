@@ -103,7 +103,11 @@ public fun ExportEntry.toEntry(ownerId: String): Entry = Entry(
 
 public fun ExportAttachment.toAttachment(): Attachment = Attachment(
     id = id,
-    kind = if (kind.equals("video", ignoreCase = true)) AttachmentKind.VIDEO else AttachmentKind.AUDIO,
+    kind = when {
+        kind.equals("video", ignoreCase = true) -> AttachmentKind.VIDEO
+        kind.equals("image", ignoreCase = true) -> AttachmentKind.IMAGE
+        else -> AttachmentKind.AUDIO
+    },
     storagePath = "",
     mime = mime,
     bytes = bytes,

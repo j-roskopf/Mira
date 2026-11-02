@@ -1,5 +1,6 @@
 package com.joetr.mira.feature.compose
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.verticalScroll
@@ -19,11 +20,13 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.key
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -32,7 +35,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.dp
@@ -44,6 +50,8 @@ import com.joetr.mira.media.CaptureKind
 import com.joetr.mira.media.MediaSource
 import com.joetr.mira.media.VideoSurface
 import com.joetr.mira.media.createMediaPlayerController
+import com.joetr.mira.media.decodePhoto
+import com.joetr.mira.media.readBytesForDisplay
 import com.joetr.mira.ui.components.AttachmentPlaybackState
 import com.joetr.mira.ui.components.AudioAttachmentRow
 import com.joetr.mira.ui.components.CircleIconButton
@@ -167,8 +175,15 @@ internal fun AttachmentSection(
                 key(attachment.id) {
                     AttachmentEntry(
                         attachment = attachment,
-                        label = "${if (attachment.kind == AttachmentKind.VIDEO) "Video" else "Voice note"} ${index + 1}",
+                        label = "${
+                            when (attachment.kind) {
+                                AttachmentKind.VIDEO -> "Video"
+                                AttachmentKind.IMAGE -> "Photo"
+                                AttachmentKind.AUDIO -> "Voice note"
+                            }
+                        } ${index + 1}",
                         state = stateFor(attachment),
+                        sourceFor = sourceFor,
                         started = activeId == attachment.id && expandedId != attachment.id,
                         onPlayPause = { toggle(attachment) },
                         onSeek = { fraction -> seek(attachment, fraction) },
@@ -216,6 +231,7 @@ private fun AttachmentEntry(
     label: String,
     state: AttachmentPlaybackState,
     started: Boolean,
+    sourceFor: suspend (Attachment) -> MediaSource?,
     onPlayPause: () -> Unit,
     onSeek: (Float) -> Unit,
     onRemove: () -> Unit,
@@ -244,13 +260,19 @@ private fun AttachmentEntry(
                 )
             } else {
                 MiraIcon(
-                    if (attachment.kind == AttachmentKind.VIDEO) MiraIcons.Video else MiraIcons.Microphone,
+                    when (attachment.kind) {
+                        AttachmentKind.VIDEO -> MiraIcons.Video
+                        AttachmentKind.IMAGE -> MiraIcons.Photo
+                        AttachmentKind.AUDIO -> MiraIcons.Microphone
+                    },
                     tint = colors.inkMuted,
                     size = 18.dp,
                 )
             }
             Text(label, style = MiraTheme.type.uiBody, color = colors.ink, modifier = Modifier.weight(1f))
-            Text(formatDuration(attachment.durationMs), style = MiraTheme.type.meta, color = colors.inkMuted)
+            if (attachment.kind != AttachmentKind.IMAGE) {
+                Text(formatDuration(attachment.durationMs), style = MiraTheme.type.meta, color = colors.inkMuted)
+            }
             CircleIconButton(
                 icon = MiraIcons.Trash,
                 contentDescription = "Remove $label",
@@ -273,6 +295,98 @@ private fun AttachmentEntry(
                 onExpand = onExpand,
                 surface = surface,
                 modifier = Modifier.widthIn(max = 360.dp).fillMaxWidth(),
+            )
+            AttachmentKind.IMAGE -> ImageAttachmentTile(
+                attachment = attachment,
+                sourceFor = sourceFor,
+                modifier = Modifier.widthIn(max = 360.dp).fillMaxWidth(),
+            )
+        }
+    }
+}
+
+/**
+ * A photo attachment: a static thumbnail, no scrubber — tap it to view full screen.
+ *
+ * Decoded through [decodePhoto] rather than a network image loader, since the
+ * bytes already come from [sourceFor] exactly the way audio and video playback already resolve
+ * them; a [MediaSource.Remote] (not yet cached locally) shows the same "unavailable" message
+ * playback already shows in that case, rather than fetching over the network here too.
+ */
+@Composable
+private fun ImageAttachmentTile(
+    attachment: Attachment,
+    sourceFor: suspend (Attachment) -> MediaSource?,
+    modifier: Modifier = Modifier,
+) {
+    val colors = MiraTheme.colors
+    var bitmap by remember(attachment.id) { mutableStateOf<ImageBitmap?>(null) }
+    var failed by remember(attachment.id) { mutableStateOf(false) }
+    var expanded by remember(attachment.id) { mutableStateOf(false) }
+
+    LaunchedEffect(attachment.id) {
+        bitmap = null
+        failed = false
+        val bytes = runCatching { sourceFor(attachment)?.readBytesForDisplay() }.getOrNull()
+        bitmap = bytes?.let { decodePhoto(it) }
+        failed = bitmap == null
+    }
+
+    Box(
+        modifier = modifier
+            .aspectRatio(4f / 3f)
+            .clip(RoundedCornerShape(MiraRadii.media))
+            .background(colors.surfaceSunken)
+            .clickable(enabled = bitmap != null, onClickLabel = "View photo") { expanded = true },
+        contentAlignment = Alignment.Center,
+    ) {
+        val current = bitmap
+        when {
+            current != null -> Image(
+                bitmap = current,
+                contentDescription = "Photo attachment",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+            )
+            failed -> Text(
+                "This photo is unavailable. Its local file may be missing and no cloud copy could be loaded.",
+                style = MiraTheme.type.meta,
+                color = colors.inkMuted,
+                modifier = Modifier.padding(MiraSpacing.md),
+            )
+            else -> CircularProgressIndicator(color = colors.accent)
+        }
+    }
+
+    if (expanded && bitmap != null) {
+        FullScreenImage(bitmap = bitmap!!, onDismiss = { expanded = false })
+    }
+}
+
+@Composable
+private fun FullScreenImage(bitmap: ImageBitmap, onDismiss: () -> Unit) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Box(
+            Modifier.fillMaxSize().background(Color.Black),
+            contentAlignment = Alignment.Center,
+        ) {
+            Image(
+                bitmap = bitmap,
+                contentDescription = "Photo attachment",
+                modifier = Modifier.fillMaxSize().clickable(onClickLabel = "Close photo", onClick = onDismiss),
+                contentScale = ContentScale.Fit,
+            )
+            CircleIconButton(
+                icon = MiraIcons.Close,
+                contentDescription = "Close photo",
+                onClick = onDismiss,
+                tint = Color.White,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(MiraSpacing.lg),
             )
         }
     }

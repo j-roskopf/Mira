@@ -35,7 +35,7 @@ class CalendarMotionDesktopTest {
                     com.joetr.mira.feature.compose.ComposeEntryScreen(
                         date = LocalDateKey("2026-10-31"), initialBody = "", recorder = recorder,
                         attachments = emptyList(), sourceFor = { null }, onRemoveAttachment = {},
-                        onBodyChange = {}, onDateClick = {}, onCaptureFinished = {},
+                        onBodyChange = {}, onDateClick = {}, onCaptureFinished = {}, onMediaPicked = {},
                         onSave = {}, onCancel = {},
                     )
                 }

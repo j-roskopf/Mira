@@ -3,14 +3,18 @@ package com.joetr.mira.media
 import android.Manifest
 import android.media.MediaRecorder
 import android.os.Build
+import android.util.Size
 import android.view.Surface
 import android.view.View
 import androidx.camera.core.AspectRatio
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
 import androidx.camera.core.UseCase
 import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.FallbackStrategy
 import androidx.camera.video.FileOutputOptions
@@ -76,6 +80,7 @@ internal class AndroidMediaRecorderController : MediaRecorderController {
     override val supportsCameraFacing: Boolean = true
 
     private val videoCapture = MutableStateFlow<VideoCapture<Recorder>?>(null)
+    @Volatile private var imageCaptureUseCase: ImageCapture? = null
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val setupMutex = Mutex()
@@ -118,6 +123,12 @@ internal class AndroidMediaRecorderController : MediaRecorderController {
         currentKind = kind
         _state.value = RecordingState.Preparing
         val context = AndroidContextHolder.application
+
+        if (kind == CaptureKind.PHOTO) {
+            capturePhoto(context)
+            return
+        }
+
         val extension = if (kind == CaptureKind.VIDEO) "mp4" else "m4a"
         val file = File(context.cacheDir, "mira-capture-${System.currentTimeMillis()}.$extension")
         outputFile = file
@@ -194,7 +205,56 @@ internal class AndroidMediaRecorderController : MediaRecorderController {
         }
     }
 
+    /** A still photo finishes entirely inside [start] — there is nothing for [stop] to do. */
+    private suspend fun capturePhoto(context: android.content.Context) {
+        ensureCapturePermissions(CaptureKind.PHOTO)?.let { denied ->
+            _state.value = RecordingState.Failed(denied)
+            return
+        }
+        val file = File(context.cacheDir, "mira-capture-${System.currentTimeMillis()}.jpg")
+        outputFile = file
+
+        val saved = setupMutex.withLock {
+            if (!bindCameraLocked(record = false)) return@withLock false
+            val capture = imageCaptureUseCase ?: return@withLock false
+            val options = ImageCapture.OutputFileOptions.Builder(file).build()
+            val result = CompletableDeferred<Boolean>()
+            capture.takePicture(
+                options,
+                ContextCompat.getMainExecutor(context),
+                object : ImageCapture.OnImageSavedCallback {
+                    override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                        result.complete(true)
+                    }
+
+                    override fun onError(exception: ImageCaptureException) {
+                        result.complete(false)
+                    }
+                },
+            )
+            runCatching { result.await() }.getOrDefault(false)
+        }
+
+        if (!saved || !file.exists() || file.length() == 0L) {
+            outputFile = null
+            _state.value = RecordingState.Failed("Could not take a photo. Please try again.")
+            return
+        }
+        outputFile = null
+        _state.value = RecordingState.Finished(
+            CaptureResult(
+                kind = CaptureKind.PHOTO,
+                path = file.absolutePath,
+                bytes = null,
+                mime = "image/jpeg",
+                sizeBytes = file.length(),
+                durationMs = 0,
+            ),
+        )
+    }
+
     override suspend fun stop() {
+        if (currentKind == CaptureKind.PHOTO) return
         val elapsed = System.currentTimeMillis() - startedAt
         val finalize = finalizeSignal
         finalizeSignal = null
@@ -261,6 +321,7 @@ internal class AndroidMediaRecorderController : MediaRecorderController {
         }
         previewUseCase = null
         videoCapture.value = null
+        imageCaptureUseCase = null
         scope.cancel()
         runCatching { cameraProvider?.unbindAll() }
         cameraProvider = null
@@ -347,6 +408,7 @@ internal class AndroidMediaRecorderController : MediaRecorderController {
                 withContext(Dispatchers.Main) {
                     previewUseCase?.targetRotation = rotation
                     videoCapture.value?.targetRotation = rotation
+                    imageCaptureUseCase?.targetRotation = rotation
                 }
             }
         }
@@ -370,11 +432,13 @@ internal class AndroidMediaRecorderController : MediaRecorderController {
         }
         previewUseCase = null
         videoCapture.value = null
+        imageCaptureUseCase = null
     }
 
     /**
      * Binds the camera use cases. [record] adds the `VideoCapture` alongside the preview; without
-     * it the camera still streams for framing but no recording is prepared.
+     * it the camera still streams for framing (and gets an `ImageCapture` use case so a still photo
+     * can be taken) but no video recording is prepared.
      */
     private suspend fun bindCameraLocked(record: Boolean): Boolean {
         val activity = AndroidContextHolder.activity as? LifecycleOwner ?: return false
@@ -393,6 +457,24 @@ internal class AndroidMediaRecorderController : MediaRecorderController {
         }.build()
         val useCases = mutableListOf<UseCase>(preview)
         val capture = if (record) buildVideoCapture().also { useCases.add(it) } else null
+        val stillCapture = if (!record) {
+            val shortEdge = videoSettings.quality.shortEdge
+            ImageCapture.Builder()
+                .setResolutionSelector(
+                    ResolutionSelector.Builder()
+                        .setResolutionStrategy(
+                            ResolutionStrategy(
+                                Size(shortEdge * 4 / 3, shortEdge),
+                                ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER,
+                            ),
+                        )
+                        .build(),
+                )
+                .build()
+                .also { useCases.add(it) }
+        } else {
+            null
+        }
         val selector = when (videoSettings.facing) {
             CameraFacing.BACK -> CameraSelector.DEFAULT_BACK_CAMERA
             CameraFacing.FRONT -> CameraSelector.DEFAULT_FRONT_CAMERA
@@ -405,10 +487,12 @@ internal class AndroidMediaRecorderController : MediaRecorderController {
                 // bind, and applying it afterwards can leave a new use case with the old buffer.
                 preview.targetRotation = rotation
                 capture?.targetRotation = rotation
+                stillCapture?.targetRotation = rotation
                 provider.unbindAll()
                 provider.bindToLifecycle(activity, selector, *useCases.toTypedArray())
                 previewUseCase = preview
                 videoCapture.value = capture
+                imageCaptureUseCase = stillCapture
                 activePreview?.let { preview.setSurfaceProvider(it.surfaceProvider) }
             }.isSuccess
         }
@@ -450,15 +534,15 @@ internal class AndroidMediaRecorderController : MediaRecorderController {
      */
     private suspend fun ensureCapturePermissions(kind: CaptureKind): String? {
         val permissions = buildList {
-            add(Manifest.permission.RECORD_AUDIO)
-            if (kind == CaptureKind.VIDEO) add(Manifest.permission.CAMERA)
+            if (kind != CaptureKind.PHOTO) add(Manifest.permission.RECORD_AUDIO)
+            if (kind == CaptureKind.VIDEO || kind == CaptureKind.PHOTO) add(Manifest.permission.CAMERA)
         }
         val granted = requestAndroidPermissions(permissions)
         if (granted.values.all { it }) return null
-        return if (kind == CaptureKind.VIDEO) {
-            "Camera and microphone access are needed to record video. Allow them in Settings."
-        } else {
-            "Microphone access is needed to record audio. Allow it in Settings."
+        return when (kind) {
+            CaptureKind.VIDEO -> "Camera and microphone access are needed to record video. Allow them in Settings."
+            CaptureKind.PHOTO -> "Camera access is needed to take a photo. Allow it in Settings."
+            CaptureKind.AUDIO -> "Microphone access is needed to record audio. Allow it in Settings."
         }
     }
 }
@@ -473,12 +557,15 @@ private fun VideoAspectRatio.cameraXAspectRatio(): Int = when (this) {
 public actual fun CameraPreview(
     controller: MediaRecorderController,
     modifier: Modifier,
+    settings: VideoCaptureSettings,
 ) {
     val androidController = controller as? AndroidMediaRecorderController
     val context = LocalContext.current
     val view = remember {
         PreviewView(context).apply {
-            scaleType = PreviewView.ScaleType.FIT_CENTER
+            // The capture page is full screen, so fill it with the camera feed instead of
+            // letterboxing — black bars made the preview look cropped inside the editor.
+            scaleType = PreviewView.ScaleType.FILL_CENTER
             // TextureView follows Compose clipping and rotation; SurfaceView can look frozen or
             // ignore transforms when the device turns.
             implementationMode = PreviewView.ImplementationMode.COMPATIBLE

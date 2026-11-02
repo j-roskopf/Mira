@@ -267,6 +267,7 @@ public fun AttachmentChip(attachment: Attachment, modifier: Modifier = Modifier)
             painter = when (attachment.kind) {
                 AttachmentKind.AUDIO -> MiraIcons.Microphone
                 AttachmentKind.VIDEO -> MiraIcons.Video
+                AttachmentKind.IMAGE -> MiraIcons.Photo
             },
             tint = colors.inkMuted,
             size = 14.dp,

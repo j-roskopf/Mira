@@ -152,4 +152,66 @@ class DesktopRecorderStartupTest {
             assertEquals(1, fixture.launches.get())
         }
     }
+
+    @Test
+    fun changingTheShapeRestartsTheFramingPreview() = runBlocking {
+        assumeTrue(File("/bin/sh").canExecute())
+        val directory = kotlin.io.path.createTempDirectory("mira-preview-shape").toFile()
+        val frame = File(directory, "frame.jpg").apply {
+            ImageIO.write(BufferedImage(8, 8, BufferedImage.TYPE_INT_RGB), "jpg", this)
+        }
+        val seen = java.util.Collections.synchronizedList(mutableListOf<VideoCaptureSettings>())
+        val controller = DesktopMediaRecorderController(
+            previewCommandFactory = { settings ->
+                seen.add(settings)
+                listOf(
+                    "/bin/sh", "-c",
+                    "cat \"\$1\"; while true; do sleep 0.1; done",
+                    "preview", frame.absolutePath,
+                )
+            },
+        )
+        try {
+            controller.startPreview()
+            assertTrue(controller.previewFrame.value != null)
+            controller.configureVideo(VideoCaptureSettings(aspectRatio = VideoAspectRatio.SQUARE))
+            withTimeout(5_000) { while (seen.size < 2) delay(10) }
+            assertEquals(VideoAspectRatio.SQUARE, seen.last().aspectRatio)
+        } finally {
+            controller.release()
+            directory.deleteRecursively()
+        }
+    }
+
+    /** End-to-end: the frame handed to the UI itself must become square, not just the command. */
+    @Test
+    fun changingTheShapeUpdatesTheFramingFrame() = runBlocking {
+        assumeTrue("FFmpeg is not available", FfmpegBinary.path != null)
+        val controller = DesktopMediaRecorderController(
+            previewCommandFactory = { settings ->
+                buildPreviewCommand(
+                    binary = FfmpegBinary.path!!,
+                    inputArgs = listOf("-f", "lavfi", "-i", "testsrc=size=1280x720:rate=30"),
+                    videoSettings = settings,
+                )
+            },
+        )
+        try {
+            controller.startPreview()
+            val wide = controller.previewFrame.value
+            assertTrue("no framing frame", wide != null)
+            assertEquals(640, wide!!.width)
+            assertEquals(360, wide.height)
+
+            controller.configureVideo(VideoCaptureSettings(aspectRatio = VideoAspectRatio.SQUARE))
+            withTimeout(10_000) {
+                while (controller.previewFrame.value?.let { it.width == it.height } != true) delay(20)
+            }
+            val square = controller.previewFrame.value!!
+            assertEquals(640, square.width)
+            assertEquals(640, square.height)
+        } finally {
+            controller.release()
+        }
+    }
 }

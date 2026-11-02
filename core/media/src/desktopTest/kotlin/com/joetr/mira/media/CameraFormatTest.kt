@@ -40,4 +40,11 @@ class CameraFormatTest {
         val arguments = videoInputArgs(videoSize = CameraSize(1920, 1080))
         assertEquals("1920x1080", arguments[arguments.indexOf("-video_size") + 1])
     }
+
+    @Test
+    fun framingPreviewNeverOpensTheMicrophone() {
+        if (desktopOs != DesktopOs.MAC) return
+        val arguments = videoOnlyInputArgs()
+        assertEquals("0", arguments[arguments.indexOf("-i") + 1])
+    }
 }
