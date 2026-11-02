@@ -12,7 +12,7 @@ service firebase.storage {
         && (
           request.resource.contentType.matches('audio/.*')
           || request.resource.contentType.matches('video/.*')
-          || request.resource.contentType.matches('image/jpeg')
+          || request.resource.contentType.matches('image/.*')
         );
       allow delete: if request.auth != null && request.auth.uid == uid;
     }

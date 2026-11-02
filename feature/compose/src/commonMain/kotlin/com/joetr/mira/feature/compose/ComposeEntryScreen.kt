@@ -11,12 +11,18 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.PlainTooltip
@@ -69,6 +75,7 @@ import com.joetr.mira.ui.formatDuration
 import com.joetr.mira.ui.icons.MiraIcon
 import com.joetr.mira.ui.icons.MiraIconPainter
 import com.joetr.mira.ui.icons.MiraIcons
+import com.joetr.mira.ui.theme.MiraRadii
 import com.joetr.mira.ui.theme.MiraSpacing
 import com.joetr.mira.ui.theme.MiraTheme
 import kotlinx.coroutines.launch
@@ -109,6 +116,8 @@ public fun ComposeEntryScreen(
     var cameraOpen by remember {
         mutableStateOf(initialCapture == CaptureKind.VIDEO || initialCapture == CaptureKind.PHOTO)
     }
+    // Existing attachments start tucked away; a newly captured or picked one opens the shelf.
+    var attachmentsExpanded by remember { mutableStateOf(false) }
     var videoSettings by remember { mutableStateOf(VideoCaptureSettings()) }
     val configurableVideo = recorder.supportsVideoSettings
 
@@ -128,6 +137,7 @@ public fun ComposeEntryScreen(
 
     LaunchedEffect(state) {
         val finished = state as? RecordingState.Finished ?: return@LaunchedEffect
+        attachmentsExpanded = true
         onCaptureFinished(finished.result)
         activeCapture = null
         cameraOpen = false
@@ -185,67 +195,71 @@ public fun ComposeEntryScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
-            .background(colors.surface)
-            .padding(horizontal = MiraSpacing.gutter),
+            .background(colors.surface),
     ) {
-        Spacer(Modifier.height(MiraSpacing.lg))
+        EditorTopBar(
+            date = date,
+            saving = saving,
+            editing = onDelete != null,
+            canSave = !saving && state != RecordingState.Finalizing &&
+                (body.isNotBlank() || attachments.isNotEmpty()),
+            onCancel = onCancel,
+            onDateClick = onDateClick,
+            onDelete = onDelete,
+            onSave = onSave,
+        )
 
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            CircleIconButton(MiraIcons.Close, "Cancel", onClick = onCancel)
-            Spacer(Modifier.weight(1f))
-            Text(
-                text = date.displayDate().uppercase(),
-                style = MiraTheme.type.dayDate,
-                color = colors.inkMuted,
-                modifier = Modifier
-                    .clickable(onClick = onDateClick)
-                    .padding(MiraSpacing.sm),
-            )
-            // Only an entry that already exists can be deleted.
-            onDelete?.let { delete ->
-                CircleIconButton(MiraIcons.Trash, "Delete entry", onClick = delete)
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = MiraSpacing.gutter),
+        ) {
+            Spacer(Modifier.height(MiraSpacing.md))
+
+            errorMessage?.let {
+                Text(it, style = MiraTheme.type.uiBody, color = colors.error)
+                Spacer(Modifier.height(MiraSpacing.md))
             }
-            Spacer(Modifier.weight(1f))
-            PillButton(
-                text = if (saving) "Saving…" else if (onDelete != null) "Save changes" else "Save",
-                onClick = onSave,
-                enabled = !saving && state != RecordingState.Finalizing && (body.isNotBlank() || attachments.isNotEmpty()),
-            )
-        }
 
-        Spacer(Modifier.height(MiraSpacing.xl))
-
-        errorMessage?.let {
-            Text(it, style = MiraTheme.type.uiBody, color = colors.ink)
-            Spacer(Modifier.height(MiraSpacing.sm))
-        }
-
-        Box(Modifier.weight(1f)) {
-            if (body.isEmpty()) {
-                Text("Write…", style = MiraTheme.type.entryBody, color = colors.inkFaint)
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 220.dp),
+            ) {
+                if (body.isEmpty()) {
+                    Text("Write…", style = MiraTheme.type.entryBody, color = colors.inkFaint)
+                }
+                BasicTextField(
+                    value = body,
+                    onValueChange = onBodyChange,
+                    textStyle = MiraTheme.type.entryBody.copy(color = colors.ink),
+                    cursorBrush = SolidColor(colors.accent),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusRequester(focusRequester),
+                    interactionSource = remember { MutableInteractionSource() },
+                )
             }
-            BasicTextField(
-                value = body,
-                onValueChange = onBodyChange,
-                textStyle = MiraTheme.type.entryBody.copy(color = colors.ink),
-                cursorBrush = SolidColor(colors.accent),
-                modifier = Modifier
-                    .fillMaxSize()
-                    .focusRequester(focusRequester),
-                interactionSource = remember { MutableInteractionSource() },
-            )
+
+            Spacer(Modifier.height(MiraSpacing.huge))
         }
 
+        // The attachment shelf is chrome, not page content: collapsed it is a single row directly
+        // above the capture dock; expanded it grows upward from there.
         if (attachments.isNotEmpty()) {
-            Spacer(Modifier.height(MiraSpacing.xl))
             AttachmentSection(
                 attachments = attachments,
                 sourceFor = sourceFor,
                 onRemove = onRemoveAttachment,
+                expanded = attachmentsExpanded,
+                onExpandedChange = { attachmentsExpanded = it },
+                modifier = Modifier.padding(horizontal = MiraSpacing.gutter),
             )
         }
 
-        CaptureBar(
+        CaptureDock(
             state = state,
             activeCapture = activeCapture,
             onStart = { kind -> beginCapture(kind) },
@@ -254,10 +268,14 @@ public fun ComposeEntryScreen(
                 recorder.cancel()
                 activeCapture = null
             },
-            onAttachFromLibrary = { scope.launch { onMediaPicked(pickMedia()) } },
+            onAttachFromLibrary = {
+                scope.launch {
+                    val picked = pickMedia()
+                    if (picked.isNotEmpty()) attachmentsExpanded = true
+                    onMediaPicked(picked)
+                }
+            },
         )
-
-        Spacer(Modifier.height(MiraSpacing.xxl))
     }
 
     val captureKind = activeCapture
@@ -276,6 +294,55 @@ public fun ComposeEntryScreen(
             recordingState = state,
             onShutter = { shutter() },
             onDismiss = { closeCamera() },
+        )
+    }
+}
+
+/**
+ * Quiet chrome for the editor: close and delete on the left, the date in the middle, Save on the
+ * right. The date is the only element that reads as a label, so the eye lands on the page, not
+ * the toolbar.
+ */
+@Composable
+private fun EditorTopBar(
+    date: LocalDateKey,
+    saving: Boolean,
+    editing: Boolean,
+    canSave: Boolean,
+    onCancel: () -> Unit,
+    onDateClick: () -> Unit,
+    onDelete: (() -> Unit)?,
+    onSave: () -> Unit,
+) {
+    val colors = MiraTheme.colors
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = MiraSpacing.sm, vertical = MiraSpacing.sm),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        CircleIconButton(MiraIcons.Close, "Cancel", onClick = onCancel)
+        onDelete?.let { delete ->
+            Spacer(Modifier.width(MiraSpacing.xs))
+            CircleIconButton(MiraIcons.Trash, "Delete entry", onClick = delete)
+        }
+
+        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+            Text(
+                text = date.displayDate().uppercase(),
+                style = MiraTheme.type.dayDate,
+                color = colors.inkMuted,
+                maxLines = 1,
+                modifier = Modifier
+                    .clickable(onClick = onDateClick)
+                    .padding(horizontal = MiraSpacing.sm, vertical = MiraSpacing.md),
+            )
+        }
+
+        PillButton(
+            text = if (saving) "Saving…" else if (editing) "Save changes" else "Save",
+            onClick = onSave,
+            enabled = canSave,
         )
     }
 }
@@ -547,8 +614,15 @@ private val VideoAspectRatio.explanation: String
         VideoAspectRatio.SQUARE -> "Square 1:1 — equal width and height"
     }
 
+/**
+ * The capture dock: one calm row of labelled actions while idle, replaced in place by the
+ * recording transport once capture starts.
+ *
+ * Labels matter here. Four anonymous glyphs at the bottom of an editor ask the user to decode
+ * them; a quiet label under each icon does not add noise and removes the guesswork.
+ */
 @Composable
-private fun CaptureBar(
+private fun CaptureDock(
     state: RecordingState,
     activeCapture: CaptureKind?,
     onStart: (CaptureKind) -> Unit,
@@ -558,9 +632,20 @@ private fun CaptureBar(
 ) {
     val colors = MiraTheme.colors
     val recording = state as? RecordingState.Recording
+    val busy = state == RecordingState.Preparing || state == RecordingState.Finalizing
 
-    Column(Modifier.fillMaxWidth()) {
-        if (state == RecordingState.Preparing || state == RecordingState.Finalizing) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                colors.surfaceRaised,
+                RoundedCornerShape(topStart = MiraRadii.sheet, topEnd = MiraRadii.sheet),
+            )
+            .padding(horizontal = MiraSpacing.gutter)
+            .padding(top = MiraSpacing.md, bottom = MiraSpacing.xxl),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        if (busy) {
             Text(
                 text = if (state == RecordingState.Finalizing) "Finishing recording…"
                     else when (activeCapture) {
@@ -598,64 +683,95 @@ private fun CaptureBar(
             Spacer(Modifier.height(MiraSpacing.sm))
         }
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (recording != null || activeCapture == CaptureKind.AUDIO) {
-                // The discard button must not shift the record button off centre.
-                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    CircleIconButton(
-                        icon = MiraIcons.Close,
-                        contentDescription = "Discard recording",
-                        onClick = onCancelCapture,
-                        modifier = Modifier.align(Alignment.CenterStart),
-                    )
-                    if (state == RecordingState.Preparing || state == RecordingState.Finalizing) {
-                        CircularProgressIndicator(color = colors.accent, modifier = Modifier.size(64.dp))
-                    } else RecordButton(
-                        recording = recording != null,
-                        onClick = {
-                            if (recording != null) onStop() else activeCapture?.let(onStart)
-                        },
-                        icon = when (activeCapture) {
-                            CaptureKind.VIDEO -> MiraIcons.Video
-                            CaptureKind.PHOTO -> MiraIcons.Camera
-                            else -> MiraIcons.Microphone
-                        },
-                    )
-                }
-            } else {
-                Row(horizontalArrangement = Arrangement.spacedBy(MiraSpacing.xxl)) {
-                    if (supportsCapture(CaptureKind.AUDIO)) {
-                        CircleIconButton(
-                            icon = MiraIcons.Microphone,
-                            contentDescription = "Record audio",
-                            onClick = { onStart(CaptureKind.AUDIO) },
-                        )
-                    }
-                    if (supportsCapture(CaptureKind.VIDEO)) {
-                        CircleIconButton(
-                            icon = MiraIcons.Video,
-                            contentDescription = "Record video",
-                            onClick = { onStart(CaptureKind.VIDEO) },
-                        )
-                    }
-                    if (supportsCapture(CaptureKind.PHOTO)) {
-                        CircleIconButton(
-                            icon = MiraIcons.Camera,
-                            contentDescription = "Take photo",
-                            onClick = { onStart(CaptureKind.PHOTO) },
-                        )
-                    }
-                    CircleIconButton(
-                        icon = MiraIcons.Photo,
-                        contentDescription = "Attach from library",
-                        onClick = onAttachFromLibrary,
+        if (recording != null || activeCapture == CaptureKind.AUDIO) {
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                CircleIconButton(
+                    icon = MiraIcons.Close,
+                    contentDescription = "Discard recording",
+                    onClick = onCancelCapture,
+                    modifier = Modifier.align(Alignment.CenterStart),
+                )
+                if (busy) {
+                    CircularProgressIndicator(color = colors.accent, modifier = Modifier.size(64.dp))
+                } else RecordButton(
+                    recording = recording != null,
+                    onClick = {
+                        if (recording != null) onStop() else activeCapture?.let(onStart)
+                    },
+                    icon = when (activeCapture) {
+                        CaptureKind.VIDEO -> MiraIcons.Video
+                        CaptureKind.PHOTO -> MiraIcons.Camera
+                        else -> MiraIcons.Microphone
+                    },
+                )
+            }
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (supportsCapture(CaptureKind.AUDIO)) {
+                    CaptureAction(
+                        icon = MiraIcons.Microphone,
+                        label = "Voice",
+                        contentDescription = "Record audio",
+                        onClick = { onStart(CaptureKind.AUDIO) },
                     )
                 }
+                if (supportsCapture(CaptureKind.VIDEO)) {
+                    CaptureAction(
+                        icon = MiraIcons.Video,
+                        label = "Video",
+                        contentDescription = "Record video",
+                        onClick = { onStart(CaptureKind.VIDEO) },
+                    )
+                }
+                if (supportsCapture(CaptureKind.PHOTO)) {
+                    CaptureAction(
+                        icon = MiraIcons.Camera,
+                        label = "Photo",
+                        contentDescription = "Take photo",
+                        onClick = { onStart(CaptureKind.PHOTO) },
+                    )
+                }
+                CaptureAction(
+                    icon = MiraIcons.Photo,
+                    label = "Library",
+                    contentDescription = "Attach from library",
+                    onClick = onAttachFromLibrary,
+                )
             }
         }
+    }
+}
+
+@Composable
+private fun CaptureAction(
+    icon: MiraIconPainter,
+    label: String,
+    contentDescription: String,
+    onClick: () -> Unit,
+) {
+    val colors = MiraTheme.colors
+    Column(
+        modifier = Modifier
+            .widthIn(min = 64.dp)
+            .clip(RoundedCornerShape(MiraRadii.control))
+            .clickable(onClickLabel = contentDescription, onClick = onClick)
+            .semantics { this.contentDescription = contentDescription }
+            .padding(vertical = MiraSpacing.xs),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                .background(colors.surface, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            MiraIcon(painter = icon, tint = colors.inkMuted, size = 20.dp)
+        }
+        Spacer(Modifier.height(MiraSpacing.sm))
+        Text(label.uppercase(), style = MiraTheme.type.sectionLabel, color = colors.inkMuted)
     }
 }

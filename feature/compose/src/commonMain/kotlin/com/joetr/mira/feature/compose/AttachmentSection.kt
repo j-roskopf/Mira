@@ -1,8 +1,17 @@
 package com.joetr.mira.feature.compose
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,21 +23,21 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
-import androidx.compose.runtime.key
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -36,11 +45,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -55,18 +67,19 @@ import com.joetr.mira.media.readBytesForDisplay
 import com.joetr.mira.ui.components.AttachmentPlaybackState
 import com.joetr.mira.ui.components.AudioAttachmentRow
 import com.joetr.mira.ui.components.CircleIconButton
-import com.joetr.mira.ui.formatDuration
 import com.joetr.mira.ui.components.SectionLabel
 import com.joetr.mira.ui.components.VideoAttachmentTile
+import com.joetr.mira.ui.formatDuration
 import com.joetr.mira.ui.icons.MiraIcon
 import com.joetr.mira.ui.icons.MiraIcons
+import com.joetr.mira.ui.theme.MiraMotion
 import com.joetr.mira.ui.theme.MiraRadii
 import com.joetr.mira.ui.theme.MiraSpacing
 import com.joetr.mira.ui.theme.MiraTheme
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.CancellationException
 
 /**
  * Playable attachments on an entry.
@@ -74,16 +87,28 @@ import kotlinx.coroutines.CancellationException
  * One controller is shared across the list, so starting a second recording stops the first —
  * nobody wants two voice notes talking over each other, and it keeps exactly one decode pipeline
  * alive at a time, which matters most on desktop where each one is an FFmpeg subprocess.
+ *
+ * The section is a plain column in the editor's scroll, not its own scroll well. Attachments are
+ * part of the page: they should read as a continuation of the entry, and no item should ever be
+ * clipped behind a capture bar.
  */
 @Composable
 internal fun AttachmentSection(
     attachments: List<Attachment>,
     sourceFor: suspend (Attachment) -> MediaSource?,
     onRemove: (Attachment) -> Unit,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     if (attachments.isEmpty()) return
 
+    val colors = MiraTheme.colors
+    // Keep the shelf from swallowing the writing area on a short window; it scrolls internally
+    // once it reaches this height.
+    val listHeight = with(LocalDensity.current) {
+        (LocalWindowInfo.current.containerSize.height * 0.4f).toDp()
+    }
     val scope = rememberCoroutineScope()
     val controller = remember { createMediaPlayerController() }
     var activeId by remember { mutableStateOf<String?>(null) }
@@ -159,51 +184,103 @@ internal fun AttachmentSection(
         onRemove(attachment)
     }
 
-    // Bound the collection, not each item, so every recording stays reachable without
-    // displacing the editor and capture controls. Use the same layout at every window width.
-    val listHeight = with(LocalDensity.current) {
-        (LocalWindowInfo.current.containerSize.height * 0.4f).toDp()
-    }
+    val chevronRotation by animateFloatAsState(
+        targetValue = if (expanded) 270f else 90f,
+        animationSpec = if (MiraTheme.motionEnabled) tween(MiraMotion.QUICK_MS) else snap(),
+        label = "attachments-chevron",
+    )
+
     Column(modifier.fillMaxWidth()) {
-        SectionLabel("Attachments · ${attachments.size}")
-        Spacer(Modifier.height(MiraSpacing.md))
-        Column(
-            modifier = Modifier.fillMaxWidth()
-                .heightIn(max = listHeight)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(MiraSpacing.md),
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 44.dp)
+                .clip(RoundedCornerShape(MiraRadii.control))
+                .clickable(
+                    onClickLabel = if (expanded) "Collapse attachments" else "Expand attachments",
+                ) { onExpandedChange(!expanded) }
+                .semantics {
+                    contentDescription = if (expanded) "Collapse attachments" else "Expand attachments"
+                },
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            attachments.forEachIndexed { index, attachment ->
-                key(attachment.id) {
-                    AttachmentEntry(
-                        attachment = attachment,
-                        label = "${
-                            when (attachment.kind) {
-                                AttachmentKind.VIDEO -> "Video"
-                                AttachmentKind.IMAGE -> "Photo"
-                                AttachmentKind.AUDIO -> "Voice note"
-                            }
-                        } ${index + 1}",
-                        state = stateFor(attachment),
-                        sourceFor = sourceFor,
-                        started = activeId == attachment.id && expandedId != attachment.id,
-                        onPlayPause = { toggle(attachment) },
-                        onSeek = { fraction -> seek(attachment, fraction) },
-                        onRemove = { remove(attachment) },
-                        onExpand = {
-                            if (activeId != attachment.id) toggle(attachment)
-                            expandedId = attachment.id
-                        },
-                        surface = { surfaceModifier -> VideoSurface(controller, surfaceModifier) },
-                    )
+            SectionLabel("Attachments · ${attachments.size}")
+            Spacer(Modifier.weight(1f))
+            if (!expanded) {
+                Text(
+                    text = attachmentSummary(attachments),
+                    style = MiraTheme.type.meta,
+                    color = colors.inkMuted,
+                    maxLines = 1,
+                )
+                Spacer(Modifier.width(MiraSpacing.sm))
+            }
+            MiraIcon(
+                painter = MiraIcons.Chevron,
+                tint = colors.inkMuted,
+                size = 16.dp,
+                modifier = Modifier.rotate(chevronRotation),
+            )
+        }
+
+        AnimatedVisibility(
+            visible = expanded,
+            enter = if (MiraTheme.motionEnabled) {
+                expandVertically(animationSpec = tween(MiraMotion.STANDARD_MS)) +
+                    fadeIn(animationSpec = tween(MiraMotion.QUICK_MS))
+            } else {
+                expandVertically(animationSpec = snap()) + fadeIn(animationSpec = snap())
+            },
+            exit = if (MiraTheme.motionEnabled) {
+                shrinkVertically(animationSpec = tween(MiraMotion.STANDARD_MS)) +
+                    fadeOut(animationSpec = tween(MiraMotion.QUICK_MS))
+            } else {
+                shrinkVertically(animationSpec = snap()) + fadeOut(animationSpec = snap())
+            },
+        ) {
+            Column {
+                Spacer(Modifier.height(MiraSpacing.md))
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = listHeight)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(MiraSpacing.md),
+                ) {
+                    attachments.forEachIndexed { index, attachment ->
+                        key(attachment.id) {
+                            AttachmentEntry(
+                                attachment = attachment,
+                                label = "${
+                                    when (attachment.kind) {
+                                        AttachmentKind.VIDEO -> "Video"
+                                        AttachmentKind.IMAGE -> "Photo"
+                                        AttachmentKind.AUDIO -> "Voice note"
+                                    }
+                                } ${index + 1}",
+                                state = stateFor(attachment),
+                                sourceFor = sourceFor,
+                                started = activeId == attachment.id && expandedId != attachment.id,
+                                onPlayPause = { toggle(attachment) },
+                                onSeek = { fraction -> seek(attachment, fraction) },
+                                onRemove = { remove(attachment) },
+                                onExpand = {
+                                    if (activeId != attachment.id) toggle(attachment)
+                                    expandedId = attachment.id
+                                },
+                                surface = { surfaceModifier -> VideoSurface(controller, surfaceModifier) },
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(MiraSpacing.sm))
                 }
             }
         }
     }
 
-    val expanded = attachments.firstOrNull { it.id == expandedId }
-    if (expanded != null && expanded.kind == AttachmentKind.VIDEO) {
-        val isActive = activeId == expanded.id
+    val expandedVideo = attachments.firstOrNull { it.id == expandedId }
+    if (expandedVideo != null && expandedVideo.kind == AttachmentKind.VIDEO) {
+        val isActive = activeId == expandedVideo.id
         val state = if (isActive) {
             AttachmentPlaybackState(
                 playing = playback.playing,
@@ -215,17 +292,27 @@ internal fun AttachmentSection(
                 videoHeight = playback.videoHeight,
             )
         } else {
-            AttachmentPlaybackState(durationMs = expanded.durationMs)
+            AttachmentPlaybackState(durationMs = expandedVideo.durationMs)
         }
         FullScreenVideo(
-            attachment = expanded,
+            attachment = expandedVideo,
             state = state,
             onDismiss = { expandedId = null },
-            onPlayPause = { toggle(expanded) },
+            onPlayPause = { toggle(expandedVideo) },
             surface = { surfaceModifier -> VideoSurface(controller, surfaceModifier) },
         )
     }
 }
+
+/** A one-line inventory for the collapsed shelf: `1 video · 2 voice notes`. */
+private fun attachmentSummary(attachments: List<Attachment>): String = buildList {
+    val videos = attachments.count { it.kind == AttachmentKind.VIDEO }
+    val photos = attachments.count { it.kind == AttachmentKind.IMAGE }
+    val audio = attachments.count { it.kind == AttachmentKind.AUDIO }
+    if (videos > 0) add(if (videos == 1) "1 video" else "$videos videos")
+    if (photos > 0) add(if (photos == 1) "1 photo" else "$photos photos")
+    if (audio > 0) add(if (audio == 1) "1 voice note" else "$audio voice notes")
+}.joinToString(" · ")
 
 @Composable
 private fun AttachmentEntry(
@@ -241,54 +328,24 @@ private fun AttachmentEntry(
     surface: @Composable (Modifier) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val colors = MiraTheme.colors
-    Column(
-        modifier = modifier.fillMaxWidth()
-            .background(colors.surfaceRaised, RoundedCornerShape(MiraRadii.card))
-            .padding(MiraSpacing.md),
-        verticalArrangement = Arrangement.spacedBy(MiraSpacing.sm),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(MiraSpacing.sm),
+    when (attachment.kind) {
+        AttachmentKind.AUDIO -> AudioAttachmentRow(
+            attachment = attachment,
+            state = state,
+            label = label,
+            onPlayPause = onPlayPause,
+            onSeek = onSeek,
+            onRemove = onRemove,
+            modifier = modifier,
+        )
+
+        AttachmentKind.VIDEO -> MediaAttachment(
+            attachment = attachment,
+            label = label,
+            onRemove = onRemove,
+            modifier = modifier,
         ) {
-            if (attachment.kind == AttachmentKind.VIDEO && !started) {
-                CircleIconButton(
-                    icon = MiraIcons.Play,
-                    contentDescription = "Play $label",
-                    onClick = onPlayPause,
-                    tint = colors.accent,
-                )
-            } else {
-                MiraIcon(
-                    when (attachment.kind) {
-                        AttachmentKind.VIDEO -> MiraIcons.Video
-                        AttachmentKind.IMAGE -> MiraIcons.Photo
-                        AttachmentKind.AUDIO -> MiraIcons.Microphone
-                    },
-                    tint = colors.inkMuted,
-                    size = 18.dp,
-                )
-            }
-            Text(label, style = MiraTheme.type.uiBody, color = colors.ink, modifier = Modifier.weight(1f))
-            if (attachment.kind != AttachmentKind.IMAGE) {
-                Text(formatDuration(attachment.durationMs), style = MiraTheme.type.meta, color = colors.inkMuted)
-            }
-            CircleIconButton(
-                icon = MiraIcons.Trash,
-                contentDescription = "Remove $label",
-                onClick = onRemove,
-            )
-        }
-        when (attachment.kind) {
-            AttachmentKind.AUDIO -> AudioAttachmentRow(
-                attachment = attachment,
-                state = state,
-                onPlayPause = onPlayPause,
-                onSeek = onSeek,
-            )
-            AttachmentKind.VIDEO -> if (started) VideoAttachmentTile(
+            VideoAttachmentTile(
                 attachment = attachment,
                 state = state,
                 started = started,
@@ -296,14 +353,77 @@ private fun AttachmentEntry(
                 onSeek = onSeek,
                 onExpand = onExpand,
                 surface = surface,
-                modifier = Modifier.widthIn(max = 360.dp).fillMaxWidth(),
-            )
-            AttachmentKind.IMAGE -> ImageAttachmentTile(
-                attachment = attachment,
-                sourceFor = sourceFor,
-                modifier = Modifier.widthIn(max = 360.dp).fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth(),
             )
         }
+
+        AttachmentKind.IMAGE -> MediaAttachment(
+            attachment = attachment,
+            label = label,
+            onRemove = onRemove,
+            modifier = modifier,
+        ) {
+            ImageAttachmentTile(
+                attachment = attachment,
+                sourceFor = sourceFor,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    }
+}
+
+/**
+ * A media attachment is its tile plus one quiet caption line. No outer card: the tile is already
+ * the surface, and wrapping it again was most of what made a page of attachments feel heavy.
+ */
+@Composable
+private fun MediaAttachment(
+    attachment: Attachment,
+    label: String,
+    onRemove: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    val colors = MiraTheme.colors
+    Column(modifier.widthIn(max = 440.dp).fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(MiraSpacing.sm),
+        ) {
+            MiraIcon(
+                painter = when (attachment.kind) {
+                    AttachmentKind.VIDEO -> MiraIcons.Video
+                    AttachmentKind.IMAGE -> MiraIcons.Photo
+                    AttachmentKind.AUDIO -> MiraIcons.Microphone
+                },
+                tint = colors.inkMuted,
+                size = 16.dp,
+            )
+            Text(
+                text = label,
+                style = MiraTheme.type.uiBody,
+                color = colors.ink,
+                modifier = Modifier.weight(1f),
+            )
+            if (attachment.kind == AttachmentKind.VIDEO) {
+                Text(
+                    text = formatDuration(attachment.durationMs),
+                    style = MiraTheme.type.meta,
+                    color = colors.inkMuted,
+                )
+            }
+            if (!attachment.isUploaded) {
+                MiraIcon(MiraIcons.CloudPending, tint = colors.accent, size = 16.dp)
+            }
+            CircleIconButton(
+                icon = MiraIcons.Trash,
+                contentDescription = "Remove $label",
+                onClick = onRemove,
+            )
+        }
+        Spacer(Modifier.height(MiraSpacing.sm))
+        content()
     }
 }
 
@@ -327,8 +447,8 @@ private fun ImageAttachmentTile(
 ) {
     val colors = MiraTheme.colors
     val density = LocalDensity.current
-    // Tile is capped at 360.dp wide; decode just enough pixels for that box at the current density.
-    val thumbMaxPx = with(density) { 360.dp.roundToPx() }.coerceAtLeast(1)
+    // Tile is capped at 440.dp wide; decode just enough pixels for that box at the current density.
+    val thumbMaxPx = with(density) { 440.dp.roundToPx() }.coerceAtLeast(1)
     val window = LocalWindowInfo.current.containerSize
     val fullMaxPx = maxOf(window.width, window.height, thumbMaxPx).coerceAtMost(2048)
 
@@ -373,13 +493,14 @@ private fun ImageAttachmentTile(
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
             )
-            failed -> Text(
-                "This photo is unavailable. Its local file may be missing and no cloud copy could be loaded.",
-                style = MiraTheme.type.meta,
-                color = colors.inkMuted,
-                modifier = Modifier.padding(MiraSpacing.md),
-            )
-            else -> CircularProgressIndicator(color = colors.accent)
+            failed -> Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(MiraSpacing.xs),
+            ) {
+                MiraIcon(MiraIcons.Photo, tint = colors.inkFaint, size = 22.dp)
+                Text("Photo unavailable", style = MiraTheme.type.meta, color = colors.inkMuted)
+            }
+            else -> CircularProgressIndicator(color = colors.accent, modifier = Modifier.size(24.dp))
         }
     }
 
