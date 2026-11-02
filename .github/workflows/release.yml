@@ -408,9 +408,6 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
-      id-token: write
-    env:
-      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
 
     steps:
       - name: Checkout
@@ -461,27 +458,6 @@ jobs:
           Copy-Item $msi.FullName "release-artifacts/Mira-${env:VERSION}.msi"
         env:
           VERSION: ${{ needs.version.outputs.version }}
-
-      - name: Azure login
-        if: env.AZURE_CLIENT_ID != ''
-        uses: azure/login@v3
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          allow-no-subscriptions: true
-
-      - name: Sign the Windows installer
-        if: env.AZURE_CLIENT_ID != ''
-        uses: azure/artifact-signing-action@v1
-        with:
-          endpoint: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
-          trusted-signing-account-name: ${{ secrets.AZURE_SIGNING_ACCOUNT_NAME }}
-          certificate-profile-name: ${{ secrets.AZURE_SIGNING_CERTIFICATE_PROFILE_NAME }}
-          files-folder: release-artifacts
-          files-folder-filter: msi
-          file-digest: SHA256
-          timestamp-rfc3161: http://timestamp.acs.microsoft.com
-          timestamp-digest: SHA256
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4

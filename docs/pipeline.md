@@ -1,9 +1,9 @@
 # Release pipeline
 
-Mira ships to no app store. Every artifact is built, signed, and attached to a GitHub release, and
-the apps update themselves from those releases. The pipeline is Phoebe's and Basil's, merged:
-Basil's structure and Firebase/web deploy, Phoebe's Azure Trusted Signing for Windows and its
-macOS notarization retry logic, plus a new FFmpeg build stage.
+Mira ships to no app store. Every artifact is built and attached to a GitHub release, and the apps
+update themselves from those releases. Android, iOS, and macOS artifacts are signed; Windows signing
+is currently disabled. The pipeline is Phoebe's and Basil's, merged: Basil's structure and
+Firebase/web deploy, Phoebe's macOS signing setup, plus a new FFmpeg build stage.
 
 ---
 
@@ -67,16 +67,13 @@ Builds `.deb` via `jpackage` and a Flatpak bundle, with the FFmpeg binary bundle
 
 ### `windows`
 
-Builds the MSI, then signs with **Azure Trusted Signing** (`azure/login@v3` →
-`azure/artifact-signing-action@v1`). Unsigned MSIs trip SmartScreen, which for a self-updating app
-means every update looks like malware.
+Builds the MSI and attaches it unsigned. Signing is not configured yet, so Windows SmartScreen will
+warn on install and after updates.
 
 ### `macos`
 
-Imports the Developer ID certificate into a temporary keychain, builds the DMG, signs, then
-notarizes with `xcrun notarytool submit --wait` and staples. **Two attempts**, dumping
-`notarytool log` on failure — Apple's notary service fails transiently often enough that a single
-attempt makes releases flaky.
+Imports the Developer ID certificate into a temporary keychain, builds the DMG, signs it, then
+notarizes with `xcrun notarytool submit --wait` and staples the ticket.
 
 ### `ios`
 
@@ -132,14 +129,6 @@ appends the IPA afterwards.
 | `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` / `APPLE_TEAM_ID` | Notarization |
 | `GOOGLE_SERVICE_INFO_PLIST_B64` | Firebase iOS config |
 
-### Windows
-| Secret | Notes |
-|---|---|
-| `AZURE_CLIENT_ID` / `AZURE_TENANT_ID` | OIDC federated credential — no client secret |
-| `AZURE_SIGNING_ENDPOINT` | e.g. `https://eus.codesigning.azure.net` |
-| `AZURE_SIGNING_ACCOUNT_NAME` | |
-| `AZURE_SIGNING_CERTIFICATE_PROFILE_NAME` | |
-
 ### Firebase / app config
 | Secret | Notes |
 |---|---|
@@ -178,6 +167,6 @@ and Storage rules only.
 ## First release
 
 Before any feature work, run the pipeline end to end on an essentially empty app. Every signing path
-— Android keystore, Apple notarization, Azure Trusted Signing, Pages + custom domain — fails in its
-own particular way the first time, and each one is far cheaper to diagnose against a hello-world
-build than against a half-finished app four months in.
+— Android keystore, Apple notarization, Pages + custom domain — fails in its own particular way the
+first time, and each one is far cheaper to diagnose against a hello-world build than against a
+half-finished app four months in.
