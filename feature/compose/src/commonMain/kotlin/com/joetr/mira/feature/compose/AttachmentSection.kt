@@ -63,7 +63,9 @@ import com.joetr.mira.ui.icons.MiraIcons
 import com.joetr.mira.ui.theme.MiraRadii
 import com.joetr.mira.ui.theme.MiraSpacing
 import com.joetr.mira.ui.theme.MiraTheme
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
 
 /**
@@ -312,6 +314,10 @@ private fun AttachmentEntry(
  * bytes already come from [sourceFor] exactly the way audio and video playback already resolve
  * them; a [MediaSource.Remote] (not yet cached locally) shows the same "unavailable" message
  * playback already shows in that case, rather than fetching over the network here too.
+ *
+ * Thumbnails are decoded to the on-screen tile size (and full-screen to the window) on a
+ * background dispatcher — phone JPEGs are often 12 MP, and keeping those bitmaps in the
+ * composition made Android entry open and attachment scrolling unusable.
  */
 @Composable
 private fun ImageAttachmentTile(
@@ -320,16 +326,35 @@ private fun ImageAttachmentTile(
     modifier: Modifier = Modifier,
 ) {
     val colors = MiraTheme.colors
-    var bitmap by remember(attachment.id) { mutableStateOf<ImageBitmap?>(null) }
+    val density = LocalDensity.current
+    // Tile is capped at 360.dp wide; decode just enough pixels for that box at the current density.
+    val thumbMaxPx = with(density) { 360.dp.roundToPx() }.coerceAtLeast(1)
+    val window = LocalWindowInfo.current.containerSize
+    val fullMaxPx = maxOf(window.width, window.height, thumbMaxPx).coerceAtMost(2048)
+
+    var thumb by remember(attachment.id) { mutableStateOf<ImageBitmap?>(null) }
+    var full by remember(attachment.id) { mutableStateOf<ImageBitmap?>(null) }
     var failed by remember(attachment.id) { mutableStateOf(false) }
     var expanded by remember(attachment.id) { mutableStateOf(false) }
 
-    LaunchedEffect(attachment.id) {
-        bitmap = null
+    LaunchedEffect(attachment.id, thumbMaxPx) {
+        thumb = null
+        full = null
         failed = false
-        val bytes = runCatching { sourceFor(attachment)?.readBytesForDisplay() }.getOrNull()
-        bitmap = bytes?.let { decodePhoto(it) }
-        failed = bitmap == null
+        val decoded = withContext(Dispatchers.Default) {
+            val bytes = runCatching { sourceFor(attachment)?.readBytesForDisplay() }.getOrNull()
+            bytes?.let { decodePhoto(it, thumbMaxPx) }
+        }
+        thumb = decoded
+        failed = decoded == null
+    }
+
+    LaunchedEffect(expanded, attachment.id, fullMaxPx) {
+        if (!expanded || full != null) return@LaunchedEffect
+        full = withContext(Dispatchers.Default) {
+            val bytes = runCatching { sourceFor(attachment)?.readBytesForDisplay() }.getOrNull()
+            bytes?.let { decodePhoto(it, fullMaxPx) }
+        } ?: thumb
     }
 
     Box(
@@ -337,10 +362,10 @@ private fun ImageAttachmentTile(
             .aspectRatio(4f / 3f)
             .clip(RoundedCornerShape(MiraRadii.media))
             .background(colors.surfaceSunken)
-            .clickable(enabled = bitmap != null, onClickLabel = "View photo") { expanded = true },
+            .clickable(enabled = thumb != null, onClickLabel = "View photo") { expanded = true },
         contentAlignment = Alignment.Center,
     ) {
-        val current = bitmap
+        val current = thumb
         when {
             current != null -> Image(
                 bitmap = current,
@@ -358,8 +383,11 @@ private fun ImageAttachmentTile(
         }
     }
 
-    if (expanded && bitmap != null) {
-        FullScreenImage(bitmap = bitmap!!, onDismiss = { expanded = false })
+    if (expanded) {
+        val shown = full ?: thumb
+        if (shown != null) {
+            FullScreenImage(bitmap = shown, onDismiss = { expanded = false })
+        }
     }
 }
 
