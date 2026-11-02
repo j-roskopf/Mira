@@ -283,13 +283,17 @@ val signBundledFfmpeg = tasks.register("signBundledFfmpeg") {
     }
 }
 
-listOf(
-    "createDistributable",
-    "createReleaseDistributable",
-    "packageDmg",
-    "packageReleaseDmg",
-).forEach { name ->
-    tasks.matching { it.name == name }.configureEach { finalizedBy(signBundledFfmpeg) }
+// Sign immediately after the app bundle is assembled, then only package the DMG once that has
+// happened. Using finalizedBy on packageDmg alone signs the app after the DMG has already been
+// written, so the DMG ships the unsigned FFmpeg and notarization rejects the whole archive.
+val distributableTasks = tasks.matching {
+    it.name == "createDistributable" || it.name == "createReleaseDistributable"
+}
+distributableTasks.configureEach { finalizedBy(signBundledFfmpeg) }
+signBundledFfmpeg.configure { mustRunAfter(distributableTasks) }
+
+listOf("packageDmg", "packageReleaseDmg").forEach { name ->
+    tasks.matching { it.name == name }.configureEach { dependsOn(signBundledFfmpeg) }
 }
 
 roborazzi {
