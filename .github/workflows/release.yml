@@ -164,12 +164,21 @@ jobs:
         shell: bash
         run: ./scripts/build-ffmpeg.sh ${{ matrix.target }}
 
-      - name: Verify the binary runs
+      - name: Verify the binary runs (Windows)
+        if: matrix.target == 'windows'
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          binary="build/ffmpeg/ffmpeg.exe"
+          "${binary}" -hide_banner -version | head -1
+          ls -lh "${binary}"
+
+      - name: Verify the binary runs (macOS and Linux)
+        if: matrix.target != 'windows'
         shell: bash
         run: |
           set -euo pipefail
           binary="build/ffmpeg/ffmpeg"
-          [[ "${{ matrix.target }}" == "windows" ]] && binary="build/ffmpeg/ffmpeg.exe"
           "${binary}" -hide_banner -version | head -1
           ls -lh "${binary}"
 
