@@ -609,11 +609,23 @@ jobs:
             exit 1
           fi
           codesign --force --timestamp --sign "${MACOS_DEVELOPER_IDENTITY}" "${dmg}"
-          xcrun notarytool submit "${dmg}" \
+          submission_log="$(mktemp)"
+          if ! xcrun notarytool submit "${dmg}" \
             --apple-id "${APPLE_ID}" \
             --password "${APPLE_APP_SPECIFIC_PASSWORD}" \
             --team-id "${APPLE_TEAM_ID}" \
-            --wait
+            --wait | tee "${submission_log}"; then
+            echo "::warning::notarytool submit exited non-zero"
+          fi
+          if ! grep -q "status: Accepted" "${submission_log}"; then
+            submission_id="$(sed -n 's/^  id: //p' "${submission_log}" | head -1)"
+            echo "::error::Notarization did not return Accepted; fetching the Apple log for ${submission_id}"
+            xcrun notarytool log "${submission_id}" \
+              --apple-id "${APPLE_ID}" \
+              --password "${APPLE_APP_SPECIFIC_PASSWORD}" \
+              --team-id "${APPLE_TEAM_ID}" || true
+            exit 1
+          fi
           xcrun stapler staple "${dmg}"
           xcrun stapler validate "${dmg}"
 

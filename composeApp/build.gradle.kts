@@ -225,8 +225,11 @@ val signBundledFfmpeg = tasks.register("signBundledFfmpeg") {
     val helperEntitlements =
         layout.projectDirectory.file("desktop/macos/ffmpeg-helper.entitlements").asFile
     val binariesDir = layout.buildDirectory.dir("compose/binaries").get().asFile
-    val identity = providers.gradleProperty("compose.desktop.mac.signing.identity").orNull ?: "-"
-    val isMac = System.getProperty("os.name").orEmpty().startsWith("Mac")
+        val identity = providers.gradleProperty("compose.desktop.mac.signing.identity").orNull ?: "-"
+        val isMac = System.getProperty("os.name").orEmpty().startsWith("Mac")
+        // Notarization rejects any signature without a secure timestamp, so ad-hoc builds skip it
+        // and real Developer ID builds must request one.
+        val timestampOption = if (identity == "-") "--timestamp=none" else "--timestamp"
 
     onlyIf { isMac }
 
@@ -262,7 +265,7 @@ val signBundledFfmpeg = tasks.register("signBundledFfmpeg") {
             check(helper.setExecutable(true, false)) { "could not make $helper executable" }
 
             codesign(
-                "--force", "--sign", identity, "--timestamp=none",
+                "--force", "--sign", identity, timestampOption,
                 "--options", "runtime",
                 "--identifier", "com.joetr.mira.ffmpeg",
                 "--entitlements", helperEntitlements.absolutePath,
@@ -270,7 +273,7 @@ val signBundledFfmpeg = tasks.register("signBundledFfmpeg") {
             )
             // Re-seal the bundle: changing a nested binary invalidates the outer signature.
             codesign(
-                "--force", "--sign", identity, "--timestamp=none",
+                "--force", "--sign", identity, timestampOption,
                 "--options", "runtime",
                 "--entitlements", appEntitlements.absolutePath,
                 app.absolutePath,
