@@ -34,6 +34,7 @@ import com.joetr.mira.ui.formatBytes
 import com.joetr.mira.ui.theme.MiraAccent
 import com.joetr.mira.ui.theme.MiraSpacing
 import com.joetr.mira.ui.theme.MiraTheme
+import com.joetr.mira.updates.AppUpdateState
 
 public data class SettingsUiState(
     val session: SessionState,
@@ -48,7 +49,7 @@ public data class SettingsUiState(
     val mediaCacheCapBytes: Long,
     val orphanCount: Int?,
     val version: String,
-    val updateAvailable: String?,
+    val updateState: AppUpdateState = AppUpdateState.Idle,
     val archivePushing: Boolean = false,
     val archiveError: String? = null,
     val exporting: Boolean = false,
@@ -74,6 +75,7 @@ public data class SettingsActions(
     val onDeleteOrphans: () -> Unit,
     val onFreeUpSpace: () -> Unit,
     val onCheckForUpdates: () -> Unit,
+    val onInstallUpdate: () -> Unit,
     val onExportData: () -> Unit,
     val onImportData: () -> Unit,
     val onDeleteAllData: () -> Unit,
@@ -337,16 +339,55 @@ public fun SettingsScreen(
 
         Section("About") {
             Text("Mira ${state.version}", style = MiraTheme.type.uiBody, color = colors.ink)
-            Spacer(Modifier.height(MiraSpacing.md))
-            state.updateAvailable?.let { version ->
-                Text(
-                    text = "Version $version is available.",
-                    style = MiraTheme.type.meta,
-                    color = colors.accent,
-                )
-                Spacer(Modifier.height(MiraSpacing.sm))
+            val updateState = state.updateState
+            val status = when (updateState) {
+                AppUpdateState.Idle -> null
+                AppUpdateState.Checking -> "Checking GitHub releases…"
+                AppUpdateState.Current -> "Mira is up to date."
+                is AppUpdateState.Available -> "Version ${updateState.update.versionName} is available."
+                is AppUpdateState.Installing -> updateState.message
+                is AppUpdateState.Failed -> updateState.message
             }
-            PillButton("Check for updates", onClick = actions.onCheckForUpdates, filled = false)
+            if (status != null) {
+                Spacer(Modifier.height(MiraSpacing.md))
+                Text(
+                    text = status,
+                    style = MiraTheme.type.meta,
+                    color = when (updateState) {
+                        is AppUpdateState.Failed -> colors.error
+                        is AppUpdateState.Available -> colors.accent
+                        else -> colors.inkMuted
+                    },
+                )
+                val progress = (updateState as? AppUpdateState.Installing)?.progress
+                if (progress != null) {
+                    Spacer(Modifier.height(MiraSpacing.sm))
+                    androidx.compose.material3.LinearProgressIndicator(
+                        progress = { progress.coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth(),
+                        color = colors.accent,
+                        trackColor = colors.surfaceRaised,
+                    )
+                }
+            }
+            Spacer(Modifier.height(MiraSpacing.md))
+            val canInstall = updateState is AppUpdateState.Available ||
+                (updateState as? AppUpdateState.Failed)?.lastKnownUpdate != null
+            val label = when {
+                updateState is AppUpdateState.Checking -> "Checking…"
+                updateState is AppUpdateState.Installing -> "Updating…"
+                updateState is AppUpdateState.Available ->
+                    "Update to ${updateState.update.versionName}"
+                canInstall -> "Retry update"
+                else -> "Check for updates"
+            }
+            PillButton(
+                text = label,
+                onClick = if (canInstall) actions.onInstallUpdate else actions.onCheckForUpdates,
+                filled = canInstall,
+                enabled = updateState !is AppUpdateState.Checking &&
+                    updateState !is AppUpdateState.Installing,
+            )
         }
 
         Spacer(Modifier.height(MiraSpacing.giant))

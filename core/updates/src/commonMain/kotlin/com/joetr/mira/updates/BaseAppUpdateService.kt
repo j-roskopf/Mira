@@ -69,6 +69,15 @@ internal abstract class BaseAppUpdateService(
                         progress = progress,
                     )
                 }
+            }.onSuccess { result ->
+                onMessage(result.message)
+                mutableState.value = when (result) {
+                    is UpdateInstallResult.Started ->
+                        AppUpdateState.Installing(update, result.message)
+                    is UpdateInstallResult.OpenedReleasePage,
+                    is UpdateInstallResult.RequiresUserAction,
+                    -> AppUpdateState.Available(update)
+                }
             }.onFailure { error ->
                 val message = error.message ?: "Couldn't install the update."
                 onMessage(message)
@@ -99,5 +108,5 @@ internal abstract class BaseAppUpdateService(
     protected abstract suspend fun performInstall(
         update: AvailableUpdate,
         onProgress: (message: String, progress: Float?) -> Unit,
-    )
+    ): UpdateInstallResult
 }

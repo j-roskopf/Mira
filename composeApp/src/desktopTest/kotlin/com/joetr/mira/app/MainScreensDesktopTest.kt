@@ -284,7 +284,6 @@ private fun SettingsSample() {
             mediaCacheCapBytes = 5L * 1024 * 1024 * 1024,
             orphanCount = null,
             version = "2026.1030.2200",
-            updateAvailable = null,
         ),
         actions = SettingsActions(
             onBack = {},
@@ -302,6 +301,7 @@ private fun SettingsSample() {
             onDeleteOrphans = {},
             onFreeUpSpace = {},
             onCheckForUpdates = {},
+            onInstallUpdate = {},
             onExportData = {},
             onImportData = {},
             onDeleteAllData = {},

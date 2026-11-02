@@ -12,10 +12,13 @@ internal class IosAppUpdateService(
     override suspend fun performInstall(
         update: AvailableUpdate,
         onProgress: (message: String, progress: Float?) -> Unit,
-    ) {
+    ): UpdateInstallResult {
         onProgress("Opening Mira ${update.versionName} download page...", 1f)
         openUrl(update.releasePageUrl)
-        mutableState.value = AppUpdateState.Available(update)
+        return UpdateInstallResult.OpenedReleasePage(
+            "Mira opened the latest release page. iOS needs a supported distribution channel " +
+                "to install updates.",
+        )
     }
 }
 

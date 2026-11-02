@@ -26,8 +26,8 @@ internal class DesktopAppUpdateService(
     override suspend fun performInstall(
         update: AvailableUpdate,
         onProgress: (message: String, progress: Float?) -> Unit,
-    ) = withContext(Dispatchers.IO) {
-        val asset = update.asset ?: error("No download asset found for current platform.")
+    ): UpdateInstallResult = withContext(Dispatchers.IO) {
+        val asset = update.asset ?: return@withContext openReleasePage()
         val downloaded = download(asset, onProgress)
 
         onProgress("Verifying update...", 1f)
@@ -36,8 +36,9 @@ internal class DesktopAppUpdateService(
         onProgress("Ready to install Mira ${update.versionName}.", 1f)
         val confirmed = requestInstallConfirmation(update)
         if (!confirmed) {
-            mutableState.value = AppUpdateState.Available(update)
-            return@withContext
+            return@withContext UpdateInstallResult.RequiresUserAction(
+                "Update downloaded. Install it again when you're ready to close Mira.",
+            )
         }
 
         onProgress("Starting installer...", 1f)
@@ -106,7 +107,7 @@ internal class DesktopAppUpdateService(
         check(actual == expected) { "Downloaded update failed SHA-256 verification." }
     }
 
-    private fun launchInstallerAndExit(file: File) {
+    private fun launchInstallerAndExit(file: File): UpdateInstallResult {
         val relaunchCommand = ProcessHandle.current().info().command().orElse(null)?.takeIf { it.isNotBlank() }
         val platform = currentUpdatePlatform()
 
@@ -120,11 +121,19 @@ internal class DesktopAppUpdateService(
             UpdatePlatform.MacOs -> {
                 val helper = helperFile("mira-update.sh")
                 helper.writeText(
-                    macDmgInstallerHelperScript(
-                        dmgPath = file.absolutePath,
-                        targetAppBundle = currentMacAppBundle(),
-                        parentProcessId = ProcessHandle.current().pid(),
-                    ),
+                    if (file.extension.equals("pkg", ignoreCase = true)) {
+                        macPkgInstallerHelperScript(
+                            pkgPath = file.absolutePath,
+                            bundleId = MacBundleId,
+                            appName = MacAppName,
+                        )
+                    } else {
+                        macDmgInstallerHelperScript(
+                            dmgPath = file.absolutePath,
+                            targetAppBundle = currentMacAppBundle(),
+                            parentProcessId = ProcessHandle.current().pid(),
+                        )
+                    },
                 )
                 helper.setExecutable(true)
                 macInstallerProcessBuilder(helper.absolutePath).start()
@@ -138,13 +147,17 @@ internal class DesktopAppUpdateService(
                 launchLinuxInstaller(file, flatpak = true, relaunchCommand = "flatpak run com.joetr.mira")
                 exitProcess(0)
             }
-            else -> {
-                val desktop = if (java.awt.Desktop.isDesktopSupported()) java.awt.Desktop.getDesktop() else null
-                if (desktop != null && desktop.isSupported(java.awt.Desktop.Action.BROWSE)) {
-                    desktop.browse(URI("https://github.com/$githubOwner/$githubRepo/releases/latest"))
-                }
-            }
+            else -> return openReleasePage()
         }
+    }
+
+    private fun openReleasePage(): UpdateInstallResult {
+        val url = "https://github.com/$githubOwner/$githubRepo/releases/latest"
+        val desktop = if (java.awt.Desktop.isDesktopSupported()) java.awt.Desktop.getDesktop() else null
+        if (desktop != null && desktop.isSupported(java.awt.Desktop.Action.BROWSE)) {
+            desktop.browse(URI(url))
+        }
+        return UpdateInstallResult.OpenedReleasePage("Mira opened the latest release page.")
     }
 
     private fun helperFile(name: String): File =
@@ -344,6 +357,21 @@ internal fun macDmgOpenHelperScript(dmgPath: String): String =
         sleep 1
         exec /usr/bin/open -W ${dmgPath.shellQuote()}
     """.trimIndent() + "\n"
+
+internal fun macPkgInstallerHelperScript(
+    pkgPath: String,
+    bundleId: String = MacBundleId,
+    appName: String = MacAppName,
+): String =
+    """
+        #!/bin/sh
+        sleep 1
+        /usr/bin/open -W ${pkgPath.shellQuote()}
+        /usr/bin/open -b ${bundleId.shellQuote()} || /usr/bin/open -a ${appName.shellQuote()}
+    """.trimIndent() + "\n"
+
+internal const val MacBundleId: String = "com.joetr.mira"
+internal const val MacAppName: String = "Mira"
 
 internal fun macAppBundleForPath(path: String?): String? {
     if (path == null) return null

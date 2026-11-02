@@ -157,10 +157,13 @@ and Storage rules only.
 
 | Platform | Behaviour |
 |---|---|
-| Android | Downloads the APK, launches the package installer |
-| Desktop | Downloads the installer for the current OS, launches it, exits |
-| iOS | Cannot self-install — deep-links to the release page |
-| Web | Service worker detects a new build and prompts to reload |
+| Android | Verifies the APK's SHA-256, asks the user to allow installs from unknown apps when needed, installs through `PackageInstaller` (with a `FileProvider` fallback), then relaunches. |
+| Desktop | Downloads, verifies, and runs the platform installer, then exits so the installer can replace it. Windows uses MSI; macOS handles DMG and PKG; Linux uses deb or a Flatpak bundle (escaping the sandbox when inside Flatpak). |
+| iOS | Cannot self-install — deep-links to the release page. |
+| Web | Checks GitHub releases on startup and in Settings, then confirms and reloads with a cache-busting version query. |
+
+Every platform downloads the same signed, versioned artifact that the release job published, so no
+separate update feed has to be maintained.
 
 ---
 

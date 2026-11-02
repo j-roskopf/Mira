@@ -42,6 +42,20 @@ public data class ReleaseAsset(
     val sha256Digest: String?,
 )
 
+/** The outcome of an install attempt, used to keep the shared UI state accurate. */
+public sealed interface UpdateInstallResult {
+    public val message: String
+
+    /** The platform installer was handed off; the app may close or relaunch. */
+    public data class Started(override val message: String) : UpdateInstallResult
+
+    /** The user was sent to the release page because this platform cannot self-install. */
+    public data class OpenedReleasePage(override val message: String) : UpdateInstallResult
+
+    /** The user needs to grant a permission or finish an installer step before retrying. */
+    public data class RequiresUserAction(override val message: String) : UpdateInstallResult
+}
+
 public enum class UpdatePlatform {
     Android,
     Ios,

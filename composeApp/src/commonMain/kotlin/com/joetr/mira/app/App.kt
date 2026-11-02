@@ -73,6 +73,7 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
     val accentName by graph.settings.observeAccent().collectAsState("EMBER")
     val session by graph.session.observeSession()
         .collectAsState(SessionState.LocalPending(""))
+    val pendingUpdateInstallConfirmation by graph.updates.pendingInstallConfirmation.collectAsState()
 
     val systemDark = isSystemInDarkTheme()
     val dark = when (themeMode) {
@@ -227,6 +228,17 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
                     },
                     onEntryClick = { backStack.add(ComposeKey(entryId = it.id, date = date.value)) },
                     onCompose = { backStack.add(ComposeKey(date = date.value)) },
+                )
+            }
+            pendingUpdateInstallConfirmation?.let { update ->
+                MiraConfirmDialog(
+                    onDismissRequest = { graph.updates.respondToInstallConfirmation(false) },
+                    title = "Install Mira ${update.versionName}?",
+                    message = "The update is downloaded and verified. Mira will close and open " +
+                        "the installer; it relaunches when the platform allows it.",
+                    confirmText = "Close and install",
+                    dismissText = "Not now",
+                    onConfirm = { graph.updates.respondToInstallConfirmation(true) },
                 )
             }
         }
