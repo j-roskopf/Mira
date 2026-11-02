@@ -77,4 +77,5 @@ jobs:
             -destination 'generic/platform=iOS Simulator' \
             -configuration Debug \
             CODE_SIGNING_ALLOWED=NO \
+            ARCHS=arm64 \
             build
