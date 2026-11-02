@@ -14,7 +14,9 @@ import com.joetr.mira.domain.Attachment
 import com.joetr.mira.domain.AttachmentKind
 import com.joetr.mira.domain.LocalDateKey
 import com.joetr.mira.feature.compose.ComposeEntryScreen
+import com.joetr.mira.media.CaptureKind
 import com.joetr.mira.media.createMediaRecorderController
+import com.joetr.mira.media.supportsCapture
 import com.joetr.mira.ui.theme.MiraTheme
 import io.github.takahirom.roborazzi.captureRoboImage
 import org.junit.Assert.assertEquals
@@ -49,13 +51,15 @@ class AttachmentLayoutDesktopTest {
                     )
                 }
             }
+            // Capture controls only exist when FFmpeg is bundled; CI runs without it.
+            val captureSupported = supportsCapture(CaptureKind.AUDIO)
             onNodeWithText("Video 1").assertIsDisplayed()
             onNodeWithText("Save").assertIsDisplayed()
-            onNodeWithContentDescription("Record audio").assertIsDisplayed()
+            if (captureSupported) onNodeWithContentDescription("Record audio").assertIsDisplayed()
             onRoot().captureRoboImage("src/desktopTest/resources/roborazzi/Attachments_${width}.png")
             onNodeWithContentDescription("Remove Voice note 3").performScrollTo().assertIsDisplayed().performClick()
             runOnIdle { assertEquals(listOf("video", "audio"), attachments.value.map { it.id }) }
             onNodeWithContentDescription("Remove Voice note 2").performScrollTo().assertIsDisplayed()
-            onNodeWithContentDescription("Record audio").assertIsDisplayed()
+            if (captureSupported) onNodeWithContentDescription("Record audio").assertIsDisplayed()
         }
 }
