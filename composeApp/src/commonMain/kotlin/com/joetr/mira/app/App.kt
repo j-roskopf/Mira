@@ -19,6 +19,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Modifier
 import androidx.navigationevent.NavigationEventInfo
@@ -131,6 +132,10 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
                     editorSurface = screenKey is ComposeKey,
                     onCompose = { backStack.add(ComposeKey(date = clock.today().value)) },
                     onNavigate = { destination ->
+                        // Returning to the calendar always lands on today, even from another month.
+                        if (destination == TopLevelDestination.Calendar) {
+                            selectedDate = clock.today()
+                        }
                         backStack.clear()
                         backStack.add(destination.rootKey())
                     },
@@ -158,7 +163,13 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
                         ) {
                             MiraContentWidth(
                                 Modifier.fillMaxSize(),
-                                maxWidth = if (key is CalendarKey) 1200.dp else 720.dp,
+                                maxWidth = when (key) {
+                                    is CalendarKey -> 1200.dp
+                                    // A full-bleed screen, not a reading page — it shouldn't be
+                                    // squeezed into the text measure the way entry content is.
+                                    is AuthKey -> Dp.Infinity
+                                    else -> 720.dp
+                                },
                             ) {
                             Screen(
                                 key = key,
@@ -439,11 +450,18 @@ private fun Screen(
             )
         }
 
-        is SettingsKey -> SettingsRoute(graph = graph, ownerId = ownerId, onBack = onBack)
+        is SettingsKey -> SettingsRoute(
+            graph = graph,
+            ownerId = ownerId,
+            onBack = onBack,
+            onSignIn = { onNavigate(AuthKey) },
+            onDataDeleted = onRefresh,
+        )
 
         is AuthKey -> AuthScreen(
             viewModel = graph.authViewModel,
             onDone = onBack,
+            onBack = onBack,
         )
 
         else -> Unit

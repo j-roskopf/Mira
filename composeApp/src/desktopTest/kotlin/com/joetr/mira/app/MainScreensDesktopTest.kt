@@ -302,6 +302,9 @@ private fun SettingsSample() {
             onDeleteOrphans = {},
             onFreeUpSpace = {},
             onCheckForUpdates = {},
+            onExportData = {},
+            onImportData = {},
+            onDeleteAllData = {},
         ),
     )
 }

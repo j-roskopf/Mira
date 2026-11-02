@@ -1,6 +1,7 @@
 package com.joetr.mira.di
 
 import com.joetr.mira.data.archive.ArchiveService
+import com.joetr.mira.data.archive.ExportService
 import com.joetr.mira.data.archive.GitHubDeviceFlow
 import com.joetr.mira.data.auth.DefaultSessionRepository
 import com.joetr.mira.data.auth.createFirebaseSessionStore
@@ -22,6 +23,7 @@ import com.joetr.mira.media.CaptureResult
 import com.joetr.mira.network.MiraFirebase
 import com.joetr.mira.network.createMiraHttpClient
 import com.joetr.mira.platform.AppLifecycleObserver
+import com.joetr.mira.platform.MiraBuildInfo
 import com.joetr.mira.platform.MiraConfig
 import com.joetr.mira.platform.isUnmeteredNetwork
 import com.joetr.mira.platform.currentTimeMillis
@@ -70,6 +72,12 @@ public class AppGraph(
         media = media,
         httpClient = httpClient,
         scope = scope,
+    )
+
+    public val exportService: ExportService = ExportService(
+        entries = entries,
+        media = media,
+        appVersion = MiraBuildInfo.versionName,
     )
 
     public val settings: DefaultUserSettingsRepository =
@@ -176,8 +184,36 @@ public class AppGraph(
         return attachment
     }
 
+    /**
+     * Permanently deletes every entry and attachment for [ownerId].
+     *
+     * Entries are tombstoned and queued so other devices delete them on the next sync; media is
+     * removed from Storage eagerly and from the local cache. Account, preferences and any connected
+     * GitHub archive are left alone — the archive is a separate copy the user chose to keep.
+     */
+    public suspend fun deleteAllData(ownerId: String) {
+        val journal = entries.entriesForOwner(ownerId)
+        for (entry in journal) {
+            media.deleteMediaFor(entry.id, entry.attachments)
+            entries.delete(entry.id)
+        }
+        media.clearLocalMedia()
+        syncService.syncNow(forcePull = true)
+    }
+
     /** Sync a saved entry in the app scope so leaving the editor cannot cancel the upload. */
     public fun onEntrySaved(ownerId: String) {
+        scope.launch { syncService.syncNow() }
+        scope.launch {
+            if (archive.status.value.connected) {
+                archive.pushNow(ownerId, settings.observeIncludeMediaInArchive().first())
+            }
+        }
+        scope.launch { drainMediaUploads() }
+    }
+
+    /** Syncs and backs up everything an import just restored, in the app scope. */
+    public fun onImportFinished(ownerId: String) {
         scope.launch { syncService.syncNow() }
         scope.launch {
             if (archive.status.value.connected) {

@@ -74,7 +74,8 @@ jobs:
         run: |
           xcodebuild -project iosApp/iosApp.xcodeproj \
             -scheme iosApp \
-            -destination 'platform=iOS Simulator,name=iPhone 17' \
+            -destination 'generic/platform=iOS Simulator' \
             -configuration Debug \
             CODE_SIGNING_ALLOWED=NO \
+            ARCHS=arm64 \
             build

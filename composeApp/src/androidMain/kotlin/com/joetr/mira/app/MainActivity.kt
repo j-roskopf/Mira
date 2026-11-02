@@ -12,6 +12,7 @@ import androidx.activity.enableEdgeToEdge
 import com.joetr.mira.di.createMiraAppGraph
 import com.joetr.mira.platform.AndroidContextHolder
 import com.joetr.mira.platform.ShareIntentHolder
+import com.joetr.mira.platform.dispatchAndroidActivityResult
 import com.joetr.mira.platform.dispatchAndroidPermissionResult
 import com.joetr.mira.platform.registerLifecycleObserver
 import kotlinx.coroutines.runBlocking
@@ -44,6 +45,11 @@ public class MainActivity : ComponentActivity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         dispatchAndroidPermissionResult(requestCode, permissions, grantResults)
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        dispatchAndroidActivityResult(requestCode, resultCode, data)
     }
 
     override fun onNewIntent(intent: Intent) {

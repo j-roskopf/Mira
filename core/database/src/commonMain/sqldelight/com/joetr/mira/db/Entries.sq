@@ -132,6 +132,9 @@ SELECT * FROM media_blobs WHERE id = ?;
 selectBlobsForEntry:
 SELECT * FROM media_blobs WHERE entry_id = ?;
 
+selectAllBlobs:
+SELECT * FROM media_blobs;
+
 markBlobUploaded:
 UPDATE media_blobs SET uploaded = 1 WHERE id = ?;
 

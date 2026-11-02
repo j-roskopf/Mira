@@ -25,6 +25,7 @@ import androidx.compose.ui.Modifier
 import com.joetr.mira.data.archive.DeviceFlowResult
 import com.joetr.mira.data.archive.GitHubAuthorizationException
 import com.joetr.mira.data.archive.GitHubArchive
+import com.joetr.mira.data.archive.ImportFailedException
 import com.joetr.mira.di.AppGraph
 import com.joetr.mira.domain.SessionState
 import com.joetr.mira.updates.AppUpdateState
@@ -34,7 +35,10 @@ import com.joetr.mira.feature.settings.SettingsActions
 import com.joetr.mira.feature.settings.SettingsScreen
 import com.joetr.mira.feature.settings.SettingsUiState
 import com.joetr.mira.platform.MiraBuildInfo
+import com.joetr.mira.platform.exportFile
+import com.joetr.mira.platform.importFile
 import com.joetr.mira.platform.openUrl
+import com.joetr.mira.ui.components.MiraConfirmDialog
 import com.joetr.mira.ui.theme.MiraAccent
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -45,6 +49,8 @@ internal fun SettingsRoute(
     graph: AppGraph,
     ownerId: String,
     onBack: () -> Unit,
+    onSignIn: () -> Unit,
+    onDataDeleted: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
@@ -69,6 +75,12 @@ internal fun SettingsRoute(
     var createRepository by remember { mutableStateOf(true) }
     var repositoryName by remember { mutableStateOf("mira-journal") }
     var existingRepository by remember { mutableStateOf("") }
+    var exporting by remember { mutableStateOf(false) }
+    var importing by remember { mutableStateOf(false) }
+    var deleting by remember { mutableStateOf(false) }
+    var confirmDeleteAll by remember { mutableStateOf(false) }
+    var dataMessage by remember { mutableStateOf<String?>(null) }
+    var dataMessageIsError by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) { localBytes = graph.media.localBytesUsed() }
 
@@ -94,10 +106,15 @@ internal fun SettingsRoute(
             orphanCount = orphanCount,
             version = MiraBuildInfo.versionName,
             updateAvailable = availableVersion,
+            exporting = exporting,
+            importing = importing,
+            deleting = deleting,
+            dataMessage = dataMessage,
+            dataMessageIsError = dataMessageIsError,
         ),
         actions = SettingsActions(
             onBack = onBack,
-            onSignIn = onBack,
+            onSignIn = onSignIn,
             onSignOut = { scope.launch { graph.session.signOut() } },
             onThemeChange = { scope.launch { graph.settings.setThemeMode(it) } },
             onAccentChange = { scope.launch { graph.settings.setAccent(it.name) } },
@@ -168,8 +185,105 @@ internal fun SettingsRoute(
                 }
             },
             onCheckForUpdates = { scope.launch { graph.updates.checkForUpdates() } },
+            onExportData = {
+                if (!exporting && !importing) {
+                    exporting = true
+                    dataMessage = null
+                    scope.launch {
+                        try {
+                            val bytes = graph.exportService.export(ownerId)
+                            val saved = exportFile("mira-export.zip", "application/zip", bytes)
+                            if (saved) {
+                                dataMessageIsError = false
+                                dataMessage = "Journal exported."
+                            }
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (_: Exception) {
+                            dataMessageIsError = true
+                            dataMessage = "Could not export your journal. Check your connection and try again."
+                        } finally {
+                            exporting = false
+                        }
+                    }
+                }
+            },
+            onImportData = {
+                if (!exporting && !importing) {
+                    importing = true
+                    dataMessage = null
+                    scope.launch {
+                        try {
+                            val bytes = importFile(setOf("zip"))
+                            if (bytes != null) {
+                                val result = graph.exportService.import(ownerId, bytes)
+                                graph.onImportFinished(ownerId)
+                                dataMessageIsError = false
+                                dataMessage = buildString {
+                                    append("Imported ${result.entriesRestored} ")
+                                    append(if (result.entriesRestored == 1) "entry" else "entries")
+                                    append(".")
+                                    if (result.entriesSkipped > 0) {
+                                        append(" Skipped ${result.entriesSkipped} already up to date.")
+                                    }
+                                }
+                            }
+                        } catch (cancelled: CancellationException) {
+                            throw cancelled
+                        } catch (error: ImportFailedException) {
+                            dataMessageIsError = true
+                            dataMessage = error.message ?: "Could not import this file."
+                        } catch (_: Exception) {
+                            dataMessageIsError = true
+                            dataMessage = "Could not import this file. Check your connection and try again."
+                        } finally {
+                            importing = false
+                        }
+                    }
+                }
+            },
+            onDeleteAllData = {
+                if (!deleting && !exporting && !importing) {
+                    confirmDeleteAll = true
+                }
+            },
         ),
     )
+
+    if (confirmDeleteAll) {
+        MiraConfirmDialog(
+            onDismissRequest = { if (!deleting) confirmDeleteAll = false },
+            title = "Delete all data?",
+            message = "Every entry and attachment will be permanently deleted from this device " +
+                "and the cloud. Your account and preferences stay, and a connected GitHub " +
+                "archive keeps its own history. This cannot be undone.",
+            confirmText = "Delete everything",
+            destructive = true,
+            onConfirm = {
+                confirmDeleteAll = false
+                deleting = true
+                dataMessage = null
+                scope.launch {
+                    try {
+                        graph.deleteAllData(ownerId)
+                        onDataDeleted()
+                        localBytes = graph.media.localBytesUsed()
+                        orphanCount = null
+                        orphans = emptyList()
+                        dataMessageIsError = false
+                        dataMessage = "All journal data deleted."
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        dataMessageIsError = true
+                        dataMessage = "Could not delete all data. Check your connection and try again."
+                    } finally {
+                        deleting = false
+                    }
+                }
+            },
+        )
+    }
 
     if (connectionDialog) {
         val dismiss = {

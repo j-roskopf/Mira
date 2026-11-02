@@ -42,13 +42,14 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.joetr.mira.domain.SessionRepository
+import com.joetr.mira.ui.components.CircleIconButton
 import com.joetr.mira.ui.components.MiraConfirmDialog
 import com.joetr.mira.ui.icons.MiraAppMark
 import com.joetr.mira.ui.icons.GoogleMark
+import com.joetr.mira.ui.icons.MiraIcons
 import com.joetr.mira.ui.theme.MiraSpacing
 import dev.zacsweers.metro.Inject
 import kotlinx.coroutines.launch
@@ -82,6 +83,7 @@ public class AuthViewModel(
 public fun AuthScreen(
     viewModel: AuthViewModel,
     onDone: () -> Unit,
+    onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var email by remember { mutableStateOf("") }
@@ -142,95 +144,106 @@ public fun AuthScreen(
         )
     }
 
-    AuthScreenTemplate(modifier = modifier) {
-        AuthSheet(
-            title = mode.title,
-            subtitle = mode.subtitle,
-        ) {
-            AuthUnderlineTextField(
-                value = email,
-                onValueChange = { email = it; error = null },
-                placeholder = "Email address",
-            )
+    Box(modifier.fillMaxSize()) {
+        AuthScreenTemplate {
+            AuthSheet(
+                title = mode.title,
+                subtitle = mode.subtitle,
+            ) {
+                AuthUnderlineTextField(
+                    value = email,
+                    onValueChange = { email = it; error = null },
+                    placeholder = "Email address",
+                )
 
-            when (mode) {
-                AuthMode.SIGN_IN, AuthMode.SIGN_UP -> {
-                    AuthUnderlineTextField(
-                        value = password,
-                        onValueChange = { password = it; error = null },
-                        placeholder = "Password",
-                        visualTransformation = PasswordVisualTransformation(),
-                        modifier = Modifier.padding(top = MiraSpacing.md),
+                when (mode) {
+                    AuthMode.SIGN_IN, AuthMode.SIGN_UP -> {
+                        AuthUnderlineTextField(
+                            value = password,
+                            onValueChange = { password = it; error = null },
+                            placeholder = "Password",
+                            visualTransformation = PasswordVisualTransformation(),
+                            modifier = Modifier.padding(top = MiraSpacing.md),
+                        )
+                    }
+
+                    AuthMode.RESET -> Unit
+                }
+
+                if (mode == AuthMode.SIGN_IN) {
+                    TextButton(
+                        onClick = { show(AuthMode.RESET) },
+                        modifier = Modifier.align(Alignment.End),
+                    ) {
+                        Text("Forgot password?")
+                    }
+                }
+
+                error?.let {
+                    Text(
+                        text = it,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(top = MiraSpacing.xs),
                     )
                 }
 
-                AuthMode.RESET -> Unit
-            }
-
-            if (mode == AuthMode.SIGN_IN) {
-                TextButton(
-                    onClick = { show(AuthMode.RESET) },
-                    modifier = Modifier.align(Alignment.End),
-                ) {
-                    Text("Forgot password?")
-                }
-            }
-
-            error?.let {
-                Text(
-                    text = it,
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(top = MiraSpacing.xs),
-                )
-            }
-
-            AuthPrimaryButton(
-                text = mode.primaryLabel(isLoading),
-                enabled = !isLoading,
-                onClick = {
-                    when (mode) {
-                        AuthMode.SIGN_IN -> launchAuth {
-                            viewModel.signIn(email, password)
-                            finishAuth()
-                        }
-
-                        AuthMode.SIGN_UP -> launchAuth {
-                            viewModel.signUp(email, password)
-                            finishAuth()
-                        }
-
-                        AuthMode.RESET -> launchAuth {
-                            viewModel.resetPassword(email)
-                            mode = AuthMode.SIGN_IN
-                            error = "Check your email for a reset link."
-                        }
-                    }
-                },
-                modifier = Modifier.padding(top = MiraSpacing.lg),
-            )
-
-            if (mode == AuthMode.SIGN_IN || mode == AuthMode.SIGN_UP) {
-                AuthDivider(modifier = Modifier.padding(top = MiraSpacing.lg))
-                GoogleButton(
+                AuthPrimaryButton(
+                    text = mode.primaryLabel(isLoading),
                     enabled = !isLoading,
                     onClick = {
-                        launchAuth {
-                            viewModel.signInGoogle()
-                            finishAuth()
+                        when (mode) {
+                            AuthMode.SIGN_IN -> launchAuth {
+                                viewModel.signIn(email, password)
+                                finishAuth()
+                            }
+
+                            AuthMode.SIGN_UP -> launchAuth {
+                                viewModel.signUp(email, password)
+                                finishAuth()
+                            }
+
+                            AuthMode.RESET -> launchAuth {
+                                viewModel.resetPassword(email)
+                                mode = AuthMode.SIGN_IN
+                                error = "Check your email for a reset link."
+                            }
                         }
                     },
                     modifier = Modifier.padding(top = MiraSpacing.lg),
                 )
-            }
 
-            AuthModeFooter(
-                mode = mode,
-                onShowSignIn = { show(AuthMode.SIGN_IN) },
-                onShowSignUp = { show(AuthMode.SIGN_UP) },
-                modifier = Modifier.padding(top = MiraSpacing.lg),
-            )
+                if (mode == AuthMode.SIGN_IN || mode == AuthMode.SIGN_UP) {
+                    AuthDivider(modifier = Modifier.padding(top = MiraSpacing.lg))
+                    GoogleButton(
+                        enabled = !isLoading,
+                        onClick = {
+                            launchAuth {
+                                viewModel.signInGoogle()
+                                finishAuth()
+                            }
+                        },
+                        modifier = Modifier.padding(top = MiraSpacing.lg),
+                    )
+                }
+
+                AuthModeFooter(
+                    mode = mode,
+                    onShowSignIn = { show(AuthMode.SIGN_IN) },
+                    onShowSignUp = { show(AuthMode.SIGN_UP) },
+                    modifier = Modifier.padding(top = MiraSpacing.lg),
+                )
+            }
         }
+
+        CircleIconButton(
+            icon = MiraIcons.Back,
+            contentDescription = "Back",
+            onClick = onBack,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(MiraSpacing.lg),
+        )
     }
 }
 
@@ -269,8 +282,7 @@ private fun AuthMobileTemplate(
         Box(
             Modifier
                 .fillMaxWidth()
-                .height(heroHeight)
-                .background(primary.copy(alpha = 0.10f)),
+                .height(heroHeight),
             contentAlignment = Alignment.Center,
         ) {
             AuthBrandMark(primary = primary, markSize = 104.dp, circleSize = 148.dp)
@@ -298,31 +310,10 @@ private fun AuthDesktopTemplate(
         Box(
             Modifier
                 .weight(0.46f)
-                .fillMaxHeight()
-                .background(primary.copy(alpha = 0.10f)),
+                .fillMaxHeight(),
             contentAlignment = Alignment.Center,
         ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.padding(horizontal = MiraSpacing.xxxl),
-            ) {
-                AuthBrandMark(primary = primary, markSize = 124.dp, circleSize = 180.dp)
-                Spacer(Modifier.height(MiraSpacing.xxl))
-                Text(
-                    text = "Mira",
-                    style = MaterialTheme.typography.displayLarge,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    textAlign = TextAlign.Center,
-                )
-                Spacer(Modifier.height(MiraSpacing.sm))
-                Text(
-                    text = "Every day, kept.",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.widthIn(max = 360.dp),
-                )
-            }
+            AuthBrandMark(primary = primary, markSize = 124.dp, circleSize = 180.dp)
         }
 
         Box(

@@ -87,6 +87,11 @@ public class EntryRepository(
         queries.selectEarliestEntryDate(ownerId).awaitAsOneOrNull()?.MIN?.let { LocalDateKey(it) }
     }
 
+    /** Every live entry for [ownerId]. Used when the whole journal is being deleted. */
+    public suspend fun entriesForOwner(ownerId: String): List<Entry> = io {
+        queries.selectAllEntries(ownerId).awaitAsList().map { it.toEntry() }
+    }
+
     /** Creates a new entry on [date], defaulting to today. */
     public suspend fun create(
         ownerId: String,
@@ -131,6 +136,35 @@ public class EntryRepository(
             entry.attachments.forEach { queries.assignBlobToEntry(entry.id, it.id) }
             queries.enqueue(entry.id, OutboxKind.UPSERT.wire, now)
         }
+    }
+
+    /**
+     * Writes [entry] only if it's new locally or newer than what's stored — the same
+     * last-write-wins rule sync uses for a remote row, applied to an imported one. This is what
+     * keeps importing an old backup from clobbering edits made since it was taken.
+     *
+     * Unlike [save], the imported [Entry.updatedAt] is kept rather than stamped with "now": a
+     * restored entry must carry its original age so the next real sync can compare it correctly.
+     */
+    public suspend fun restore(entry: Entry): Boolean = io {
+        val existing = queries.selectEntry(entry.id).awaitAsOneOrNull()
+        if (existing != null && existing.updated_at >= entry.updatedAt) return@io false
+        queries.upsertEntry(
+            id = entry.id,
+            owner_id = entry.ownerId,
+            local_date = entry.localDate.value,
+            created_at = entry.createdAt,
+            created_tz = entry.createdTz,
+            updated_at = entry.updatedAt,
+            body = entry.body,
+            attachments = encodeAttachments(entry.attachments),
+            tags = encodeTags(entry.tags),
+            deleted = if (entry.deleted) 1L else 0L,
+            pending_sync = 1L,
+        )
+        entry.attachments.forEach { queries.assignBlobToEntry(entry.id, it.id) }
+        queries.enqueue(entry.id, OutboxKind.UPSERT.wire, currentTimeMillis())
+        true
     }
 
     /** Moves an entry to another day. A plain edit — you will want to write up yesterday tonight. */

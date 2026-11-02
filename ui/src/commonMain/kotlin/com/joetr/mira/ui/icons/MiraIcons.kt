@@ -12,8 +12,6 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
@@ -47,71 +45,14 @@ public fun GoogleMark(
 
 
 
-/** The Mira leaf used in the launcher icon and brand moments. */
+/** The Mira butterfly — the same mark used for the launcher icon — for brand moments in-app. */
 @Composable
 public fun MiraAppMark(
     modifier: Modifier = Modifier,
     tint: Color,
     size: Dp = 112.dp,
 ) {
-    Canvas(
-        modifier
-            .size(size)
-            .semantics { contentDescription = "Mira" },
-    ) {
-        val canvasSize = this.size
-        val leaf = Path().apply {
-            moveTo(canvasSize.width * 0.16f, canvasSize.height * 0.82f)
-            cubicTo(
-                canvasSize.width * 0.05f, canvasSize.height * 0.56f,
-                canvasSize.width * 0.24f, canvasSize.height * 0.20f,
-                canvasSize.width * 0.82f, canvasSize.height * 0.10f,
-            )
-            cubicTo(
-                canvasSize.width * 0.78f, canvasSize.height * 0.46f,
-                canvasSize.width * 0.61f, canvasSize.height * 0.79f,
-                canvasSize.width * 0.30f, canvasSize.height * 0.88f,
-            )
-            cubicTo(
-                canvasSize.width * 0.23f, canvasSize.height * 0.90f,
-                canvasSize.width * 0.18f, canvasSize.height * 0.87f,
-                canvasSize.width * 0.16f, canvasSize.height * 0.82f,
-            )
-            close()
-        }
-        drawPath(leaf, tint)
-
-        val vein = tint.copy(alpha = 0.42f)
-        val stem = tint.copy(alpha = 0.75f)
-        drawLine(
-            color = stem,
-            start = Offset(canvasSize.width * 0.18f, canvasSize.height * 0.98f),
-            end = Offset(canvasSize.width * 0.60f, canvasSize.height * 0.30f),
-            strokeWidth = canvasSize.minDimension * 0.045f,
-            cap = StrokeCap.Round,
-        )
-        drawLine(
-            color = vein,
-            start = Offset(canvasSize.width * 0.42f, canvasSize.height * 0.59f),
-            end = Offset(canvasSize.width * 0.69f, canvasSize.height * 0.42f),
-            strokeWidth = canvasSize.minDimension * 0.025f,
-            cap = StrokeCap.Round,
-        )
-        drawLine(
-            color = vein,
-            start = Offset(canvasSize.width * 0.31f, canvasSize.height * 0.76f),
-            end = Offset(canvasSize.width * 0.55f, canvasSize.height * 0.72f),
-            strokeWidth = canvasSize.minDimension * 0.025f,
-            cap = StrokeCap.Round,
-        )
-        drawLine(
-            color = vein,
-            start = Offset(canvasSize.width * 0.47f, canvasSize.height * 0.51f),
-            end = Offset(canvasSize.width * 0.43f, canvasSize.height * 0.34f),
-            strokeWidth = canvasSize.minDimension * 0.025f,
-            cap = StrokeCap.Round,
-        )
-    }
+    mira.ui.generated.resources.MiraMarkAsset(modifier = modifier, tint = tint, size = size)
 }
 
 public fun interface MiraIconPainter {
