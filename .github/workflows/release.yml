@@ -154,9 +154,14 @@ jobs:
             base-devel mingw-w64-x86_64-toolchain mingw-w64-x86_64-nasm
             mingw-w64-x86_64-x264 make diffutils curl tar
 
-      - name: Build FFmpeg
-        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
-        shell: ${{ matrix.target == 'windows' && 'msys2 {0}' || 'bash' }}
+      - name: Build FFmpeg (Windows)
+        if: matrix.target == 'windows' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        shell: msys2 {0}
+        run: ./scripts/build-ffmpeg.sh ${{ matrix.target }}
+
+      - name: Build FFmpeg (macOS and Linux)
+        if: matrix.target != 'windows' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        shell: bash
         run: ./scripts/build-ffmpeg.sh ${{ matrix.target }}
 
       - name: Verify the binary runs
