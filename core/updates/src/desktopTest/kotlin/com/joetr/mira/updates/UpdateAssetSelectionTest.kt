@@ -45,4 +45,26 @@ class UpdateAssetSelectionTest {
         assertTrue(script.contains("/usr/bin/hdiutil attach \"${'$'}dmg_path\""))
         assertTrue(script.contains("/usr/bin/open \"${'$'}target_app\""))
     }
+
+    @Test
+    fun macPkgInstallerOpensPkgAndRelaunchesAfterItCloses() {
+        val script = macPkgInstallerHelperScript(
+            pkgPath = "/Users/ada/Downloads/Mira-1.2.3.pkg",
+        )
+
+        assertTrue(script.contains("/usr/bin/open -W '/Users/ada/Downloads/Mira-1.2.3.pkg'"))
+        assertTrue(script.contains("/usr/bin/open -b 'com.joetr.mira' || /usr/bin/open -a 'Mira'"))
+    }
+
+    @Test
+    fun selectsPkgWhenNoDmgIsPublished() {
+        val asset = selectUpdateAsset(
+            UpdatePlatform.MacOs,
+            listOf(
+                GitHubAssetDto("Mira-1.2.3.pkg", "https://example.test/Mira.pkg", state = "uploaded"),
+            ),
+        )
+
+        assertEquals("Mira-1.2.3.pkg", asset?.name)
+    }
 }

@@ -28,7 +28,6 @@ import com.joetr.mira.data.archive.GitHubArchive
 import com.joetr.mira.data.archive.ImportFailedException
 import com.joetr.mira.di.AppGraph
 import com.joetr.mira.domain.SessionState
-import com.joetr.mira.updates.AppUpdateState
 import com.joetr.mira.domain.SyncState
 import com.joetr.mira.domain.ThemeMode
 import com.joetr.mira.feature.settings.SettingsActions
@@ -85,8 +84,6 @@ internal fun SettingsRoute(
     LaunchedEffect(Unit) { localBytes = graph.media.localBytesUsed() }
 
     val updateState by graph.updates.state.collectAsState()
-    val availableVersion =
-        (updateState as? AppUpdateState.Available)?.update?.versionName
 
     SettingsScreen(
         modifier = modifier,
@@ -105,7 +102,7 @@ internal fun SettingsRoute(
             mediaCacheCapBytes = cacheCap,
             orphanCount = orphanCount,
             version = MiraBuildInfo.versionName,
-            updateAvailable = availableVersion,
+            updateState = updateState,
             exporting = exporting,
             importing = importing,
             deleting = deleting,
@@ -185,6 +182,7 @@ internal fun SettingsRoute(
                 }
             },
             onCheckForUpdates = { scope.launch { graph.updates.checkForUpdates() } },
+            onInstallUpdate = { scope.launch { graph.updates.installAvailableUpdate() } },
             onExportData = {
                 if (!exporting && !importing) {
                     exporting = true
