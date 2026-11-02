@@ -30,6 +30,7 @@ public data class Entry(
 ) {
     public val hasAudio: Boolean get() = attachments.any { it.kind == AttachmentKind.AUDIO }
     public val hasVideo: Boolean get() = attachments.any { it.kind == AttachmentKind.VIDEO }
+    public val hasImage: Boolean get() = attachments.any { it.kind == AttachmentKind.IMAGE }
     public val hasMedia: Boolean get() = attachments.isNotEmpty()
 
     /** True while any attachment is still only on this device. */
@@ -44,13 +45,16 @@ public data class Entry(
         }
         val audio = attachments.count { it.kind == AttachmentKind.AUDIO }
         val video = attachments.count { it.kind == AttachmentKind.VIDEO }
-        return when {
-            video > 0 && audio > 0 -> "Video and audio"
-            video == 1 -> "Video"
-            video > 1 -> "$video videos"
-            audio == 1 -> "Voice note"
-            audio > 1 -> "$audio voice notes"
-            else -> ""
+        val image = attachments.count { it.kind == AttachmentKind.IMAGE }
+        val parts = buildList {
+            if (video == 1) add("Video") else if (video > 1) add("$video videos")
+            if (image == 1) add("Photo") else if (image > 1) add("$image photos")
+            if (audio == 1) add("Voice note") else if (audio > 1) add("$audio voice notes")
+        }
+        return when (parts.size) {
+            0 -> ""
+            1 -> parts.single()
+            else -> parts.dropLast(1).joinToString(", ") + " and " + parts.last()
         }
     }
 }
@@ -62,6 +66,9 @@ public enum class AttachmentKind {
 
     @SerialName("video")
     VIDEO,
+
+    @SerialName("image")
+    IMAGE,
 }
 
 /**

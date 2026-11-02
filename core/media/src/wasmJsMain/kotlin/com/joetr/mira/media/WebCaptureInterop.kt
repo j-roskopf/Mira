@@ -79,6 +79,66 @@ internal suspend fun stopWebRecording(handle: JsAny): ByteArray? {
     return buffer.toByteArray()
 }
 
+/**
+ * Opens the camera (no microphone, no recorder) and shows the same live `<video>` preview element
+ * a recording uses, so a photo can be framed before it is taken.
+ */
+private fun startWebPhotoPreviewJs(): Promise<JsAny?> = js(
+    """
+    (async () => {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { width: { ideal: 1920 }, height: { ideal: 1080 } },
+        });
+        const previewEl = document.createElement('video');
+        previewEl.id = 'mira-capture-preview';
+        previewEl.autoplay = true;
+        previewEl.muted = true;
+        previewEl.playsInline = true;
+        previewEl.srcObject = stream;
+        previewEl.style.position = 'fixed';
+        previewEl.style.pointerEvents = 'none';
+        previewEl.style.objectFit = 'cover';
+        previewEl.style.zIndex = '1';
+        document.body.appendChild(previewEl);
+        return { stream: stream, preview: previewEl };
+    })()
+    """,
+)
+
+internal suspend fun startWebPhotoPreview(): JsAny? =
+    runCatching { startWebPhotoPreviewJs().await<JsAny?>() }.getOrNull()
+
+/** Snapshots the live preview's current frame to a JPEG, then releases the camera. */
+private fun capturePhotoFromPreviewJs(handle: JsAny): Promise<ArrayBuffer?> = js(
+    """
+    (async () => {
+        const video = handle.preview;
+        if (!video) return null;
+        if (video.videoWidth === 0) {
+            await new Promise((resolve) => {
+                const check = () => { if (video.videoWidth > 0) resolve(); else requestAnimationFrame(check); };
+                check();
+            });
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+        handle.stream.getTracks().forEach((t) => t.stop());
+        video.remove();
+        const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.92));
+        if (!blob) return null;
+        return await blob.arrayBuffer();
+    })()
+    """,
+)
+
+internal suspend fun capturePhotoFromPreview(handle: JsAny): ByteArray? {
+    val buffer = runCatching { capturePhotoFromPreviewJs(handle).await<ArrayBuffer?>() }.getOrNull()
+        ?: return null
+    return buffer.toByteArray()
+}
+
 internal fun cancelWebRecording(handle: JsAny) {
     js(
         """

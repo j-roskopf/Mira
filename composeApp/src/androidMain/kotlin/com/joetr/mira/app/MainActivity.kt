@@ -10,6 +10,7 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import com.joetr.mira.di.createMiraAppGraph
+import com.joetr.mira.media.dispatchAndroidMediaPickerResult
 import com.joetr.mira.platform.AndroidContextHolder
 import com.joetr.mira.platform.ShareIntentHolder
 import com.joetr.mira.platform.dispatchAndroidActivityResult
@@ -50,6 +51,7 @@ public class MainActivity : ComponentActivity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         dispatchAndroidActivityResult(requestCode, resultCode, data)
+        dispatchAndroidMediaPickerResult(requestCode, resultCode, data)
     }
 
     override fun onNewIntent(intent: Intent) {

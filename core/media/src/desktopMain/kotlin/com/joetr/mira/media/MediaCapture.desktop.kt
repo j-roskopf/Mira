@@ -5,8 +5,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -25,6 +28,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -45,11 +49,13 @@ public actual fun createMediaRecorderController(): MediaRecorderController =
  */
 internal class DesktopMediaRecorderController(
     private val startupTimeoutMs: Long = 120_000L,
+    private val previewCommandFactory: ((VideoCaptureSettings) -> List<String>)? = null,
     private val commandFactory: ((CaptureKind, File, String?) -> List<String>)? = null,
 ) : MediaRecorderController {
 
     private companion object {
         const val MAX_STDERR_LINES = 40
+        const val PHOTO_TIMEOUT_MS = 5_000L
         val PROGRESS_LINE = Regex("^[a-zA-Z0-9_]+=.*")
     }
 
@@ -59,11 +65,19 @@ internal class DesktopMediaRecorderController(
 
     override fun configureVideo(settings: VideoCaptureSettings) {
         check(_state.value !is RecordingState.Recording && _state.value != RecordingState.Preparing && _state.value != RecordingState.Finalizing)
+        if (settings == videoSettings) return
         videoSettings = settings
+        // A framing preview is already running; rebuild it for the new shape.
+        if (previewProcess != null && process == null) {
+            scope.launch { startPreview(settings) }
+        }
     }
 
     private val startLock = Mutex()
     private val generation = AtomicLong()
+
+    private val previewLock = Mutex()
+    private val previewGeneration = AtomicLong()
 
     private val _state = MutableStateFlow<RecordingState>(RecordingState.Idle)
     override val state: StateFlow<RecordingState> = _state.asStateFlow()
@@ -74,8 +88,17 @@ internal class DesktopMediaRecorderController(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     @Volatile private var process: Process? = null
-    private val shutdownHook = Thread({ process?.destroyForcibly() }, "mira-capture-shutdown")
-        .also { Runtime.getRuntime().addShutdownHook(it) }
+
+    /** Lightweight camera handle used only for framing before the shutter is pressed. */
+    @Volatile private var previewProcess: Process? = null
+    @Volatile private var previewSettings: VideoCaptureSettings? = null
+    private val shutdownHook = Thread(
+        {
+            process?.destroyForcibly()
+            previewProcess?.destroyForcibly()
+        },
+        "mira-capture-shutdown",
+    ).also { Runtime.getRuntime().addShutdownHook(it) }
     private var outputFile: File? = null
     private var startedAt: Long = 0
     private var currentKind: CaptureKind = CaptureKind.AUDIO
@@ -90,29 +113,38 @@ internal class DesktopMediaRecorderController(
                 _state.value = RecordingState.Failed("FFmpeg is not available in this build")
                 return
             }
+            if (kind == CaptureKind.PHOTO) {
+                capturePhoto(request)
+                return
+            }
+            // The camera belongs to one process at a time; release the framing feed first.
+            // Taking Preparing first also stops a settings-triggered preview restart from
+            // slipping in and grabbing the camera while the recorder starts.
             _state.value = RecordingState.Preparing
+            stopPreview()
             previewFrame.value = null
             previewJpeg = null
             currentKind = kind
             cameraSize = preferredCameraSize(videoSettings)
-            val extension = if (kind == CaptureKind.VIDEO) "mp4" else "m4a"
+            val launchKind = kind
+            val extension = if (launchKind == CaptureKind.VIDEO) "mp4" else "m4a"
             val file = File.createTempFile("mira-capture-", ".$extension").apply { deleteOnExit() }
             outputFile = file
 
-            if (launch(kind, file, pixelFormat = null, request = request)) return
+            if (launch(launchKind, file, pixelFormat = null, request = request)) return
             if (generation.get() != request) return
 
-            if (kind == CaptureKind.VIDEO && desktopOs == DesktopOs.MAC && cameraSize != null) {
+            if (launchKind == CaptureKind.VIDEO && desktopOs == DesktopOs.MAC && cameraSize != null) {
                 val fallbackSize = fallbackCameraSize(stderrText(), cameraSize!!)
                 if (fallbackSize != null && fallbackSize != cameraSize) {
                     cameraSize = fallbackSize
-                    if (launch(kind, file, pixelFormat = null, request = request)) return
+                    if (launch(launchKind, file, pixelFormat = null, request = request)) return
                     if (generation.get() != request) return
                 }
             }
             val offered = parseSupportedPixelFormats(stderrText())
             val fallback = MAC_PIXEL_FORMATS.firstOrNull { it in offered } ?: offered.firstOrNull()
-            if (fallback != null && launch(kind, file, pixelFormat = fallback, request = request)) return
+            if (fallback != null && launch(launchKind, file, pixelFormat = fallback, request = request)) return
             if (generation.get() == request) _state.value = RecordingState.Failed(failureMessage())
         } catch (cancelled: CancellationException) {
             if (generation.get() == request) cancel()
@@ -258,10 +290,182 @@ internal class DesktopMediaRecorderController(
         }
     }
 
+    /**
+     * Opens the camera for framing before the shutter is pressed.
+     *
+     * Recording cannot start until the user commits, and a photo should be one tap, so framing
+     * runs as its own lightweight MJPEG-only process. It is torn down the moment a real capture
+     * begins, because a camera handle belongs to one process at a time.
+     */
+    internal suspend fun startPreview(settings: VideoCaptureSettings = videoSettings) {
+        previewLock.withLock {
+            if (process != null ||
+                _state.value == RecordingState.Preparing ||
+                _state.value == RecordingState.Finalizing
+            ) {
+                return
+            }
+            if (previewProcess != null) {
+                if (previewSettings == settings) return
+                // The shape (or quality) changed; the running feed is now stale.
+                stopPreview()
+            }
+            if (previewCommandFactory == null && FfmpegBinary.path == null) return
+            videoSettings = settings
+            val request = previewGeneration.get()
+            var size = preferredCameraSize(videoSettings)
+            previewJpeg = null
+            previewFrame.value = null
+            val formats: List<String?> = if (desktopOs == DesktopOs.MAC) MAC_PIXEL_FORMATS else listOf(null)
+            for (format in formats) {
+                if (previewGeneration.get() != request) return
+                if (launchPreview(format, size, request)) return
+                // A camera may not offer the requested size even though it can produce the
+                // selected shape; retry with the closest mode it actually advertised.
+                if (desktopOs == DesktopOs.MAC && size != null) {
+                    fallbackCameraSize(stderrText(), size)?.let { size = it }
+                }
+            }
+            if (previewGeneration.get() == request) {
+                _state.value = RecordingState.Failed(failureMessage())
+            }
+        }
+    }
+
+    /** Starts one framing attempt; [pixelFormat] candidates are retried by [startPreview]. */
+    private suspend fun launchPreview(
+        pixelFormat: String?,
+        size: CameraSize?,
+        request: Long,
+    ): Boolean {
+        val binary = FfmpegBinary.path ?: ""
+        synchronized(stderrLines) { stderrLines.clear() }
+        val command = previewCommandFactory?.invoke(videoSettings)
+            ?: buildPreviewCommand(
+                binary = binary,
+                inputArgs = videoOnlyInputArgs(pixelFormat, size),
+                videoSettings = videoSettings,
+            )
+        val started = withContext(Dispatchers.IO) {
+            runCatching { ProcessBuilder(command).redirectErrorStream(false).start() }.getOrNull()
+        } ?: return false
+
+        if (previewGeneration.get() != request) {
+            started.destroyForcibly()
+            return true
+        }
+        previewProcess = started
+        previewSettings = videoSettings
+        val firstFrame = AtomicBoolean(false)
+        val stderrJob = scope.launch { drain(started, CaptureKind.VIDEO, AtomicBoolean(false)) }
+        scope.launch { readPreviewFrames(started, firstFrame) }
+
+        val ready = withTimeoutOrNull(startupTimeoutMs) {
+            while (previewProcess === started && started.isAlive) {
+                if (firstFrame.get()) return@withTimeoutOrNull true
+                delay(50)
+            }
+            false
+        }
+        if (previewProcess !== started) return true
+        if (ready == true) {
+            scope.launch { watchPreviewDeath(started) }
+            return true
+        }
+        previewProcess = null
+        previewSettings = null
+        started.destroyForcibly()
+        stderrJob.join() // Pixel-format retry must see the complete diagnostic.
+        return false
+    }
+
+    private suspend fun readPreviewFrames(
+        active: Process,
+        firstFrame: AtomicBoolean,
+    ) = withContext(Dispatchers.IO) {
+        readJpegFrames(active.inputStream) { bytes ->
+            if (previewProcess !== active) return@readJpegFrames false
+            val decoded = decodeJpegFrame(bytes) ?: return@readJpegFrames false
+            previewJpeg = bytes
+            previewFrame.value = decoded
+            firstFrame.set(true)
+            true
+        }
+    }
+
+    private suspend fun watchPreviewDeath(active: Process) = withContext(Dispatchers.IO) {
+        active.waitFor()
+        if (previewProcess === active) {
+            previewProcess = null
+            previewSettings = null
+            previewFrame.value = null
+            previewJpeg = null
+        }
+    }
+
+    /** Non-suspending teardown for composables, which cannot await process exit. */
+    internal fun cancelPreview() {
+        previewGeneration.incrementAndGet()
+        previewProcess?.destroyForcibly()
+        previewProcess = null
+        previewSettings = null
+        previewFrame.value = null
+        previewJpeg = null
+    }
+
+    /** Ends the framing process and waits for the camera handle to actually close. */
+    private suspend fun stopPreview() {
+        previewGeneration.incrementAndGet()
+        val running = previewProcess ?: return
+        previewProcess = null
+        previewSettings = null
+        withContext(Dispatchers.IO) {
+            running.destroyForcibly()
+            running.waitFor(2, TimeUnit.SECONDS)
+        }
+    }
+
+    /**
+     * A photo is one tap: snapshot the latest framing frame rather than starting a recording the
+     * user would have to stop again (which also started a misleading timer).
+     */
+    private suspend fun capturePhoto(request: Long) {
+        currentKind = CaptureKind.PHOTO
+        if (previewProcess == null) startPreview()
+        if (generation.get() != request) return
+        _state.value = RecordingState.Preparing
+        val jpeg = withTimeoutOrNull(PHOTO_TIMEOUT_MS) {
+            while (previewJpeg == null && previewProcess?.isAlive == true) delay(30)
+            previewJpeg
+        }
+        if (generation.get() != request) return
+        if (jpeg == null) {
+            _state.value = RecordingState.Failed("Could not take a photo. Please try again.")
+            return
+        }
+        stopPreview()
+        previewFrame.value = null
+        previewJpeg = null
+        _state.value = RecordingState.Finished(
+            CaptureResult(
+                kind = CaptureKind.PHOTO,
+                path = null,
+                bytes = jpeg,
+                mime = "image/jpeg",
+                sizeBytes = jpeg.size.toLong(),
+                durationMs = 0,
+            ),
+        )
+    }
+
     override fun cancel() {
         generation.incrementAndGet()
+        previewGeneration.incrementAndGet()
         process?.destroyForcibly()
         process = null
+        previewProcess?.destroyForcibly()
+        previewProcess = null
+        previewSettings = null
         outputFile?.delete()
         outputFile = null
         previewFrame.value = null
@@ -365,9 +569,23 @@ internal class DesktopMediaRecorderController(
 public actual fun CameraPreview(
     controller: MediaRecorderController,
     modifier: Modifier,
+    settings: VideoCaptureSettings,
 ) {
     val desktopController = controller as? DesktopMediaRecorderController
-    val frame by (desktopController?.previewFrame ?: MutableStateFlow(null)).collectAsState()
+    val frames = remember(desktopController) {
+        desktopController?.previewFrame ?: MutableStateFlow(null)
+    }
+    val frame by frames.collectAsState()
+
+    // Open the camera for framing as soon as the preview mounts, and reshape it whenever the
+    // selected settings change. Reading the settings here keeps the live feed tied to the UI even
+    // if a recorder-side configuration callback is missed or delivered out of order.
+    LaunchedEffect(desktopController, settings) {
+        desktopController?.startPreview(settings)
+    }
+    DisposableEffect(desktopController) {
+        onDispose { desktopController?.cancelPreview() }
+    }
 
     Box(modifier.background(Color.Black), contentAlignment = Alignment.Center) {
         frame?.let { bitmap ->
@@ -375,11 +593,44 @@ public actual fun CameraPreview(
                 bitmap = bitmap,
                 contentDescription = null,
                 modifier = Modifier.fillMaxSize(),
-                // Show the same full frame as the recording, including portrait camera feeds.
+                // Show the whole camera frame. Cropping to fill a wide window magnifies the feed
+                // and hides what is actually being recorded.
                 contentScale = ContentScale.Fit,
             )
         }
     }
+}
+
+/**
+ * The framing-only pipeline: MJPEG straight to stdout.
+ *
+ * No encoders, muxer, file, or audio — this exists to keep the camera open for a live view before
+ * the shutter, and a lightweight process is quick to close so the recording pipeline can reopen
+ * the same device.
+ */
+internal fun buildPreviewCommand(
+    binary: String,
+    inputArgs: List<String>,
+    videoSettings: VideoCaptureSettings = VideoCaptureSettings(),
+): List<String> = buildList {
+    add(binary)
+    add("-hide_banner")
+    add("-loglevel")
+    add("error")
+    addAll(inputArgs)
+    add("-vf")
+    add("${videoFilter(videoSettings)},scale=$PREVIEW_WIDTH:-2,format=yuvj420p")
+    // AVFoundation can report a microsecond time base as a million fps; cap the output rate so
+    // the preview pipe is not flooded with duplicate frames.
+    add("-r:v")
+    add("30")
+    add("-c:v")
+    add("mjpeg")
+    add("-q:v")
+    add("6")
+    add("-f")
+    add("mjpeg")
+    add("pipe:1")
 }
 
 /**

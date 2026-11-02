@@ -46,7 +46,7 @@ public data class VideoCaptureSettings(
     val facing: CameraFacing = CameraFacing.BACK,
 )
 
-public enum class CaptureKind { AUDIO, VIDEO }
+public enum class CaptureKind { AUDIO, VIDEO, PHOTO }
 
 public sealed interface RecordingState {
     public data object Idle : RecordingState
@@ -58,11 +58,12 @@ public sealed interface RecordingState {
 }
 
 /**
- * A finished recording.
+ * A finished recording, still photo, or picked-from-library item.
  *
- * Every platform produces mp4/H.264+AAC or m4a/AAC — Android and iOS natively, desktop via the
- * bundled FFmpeg, and web by transcoding its webm with ffmpeg.wasm before this is emitted. Nothing
- * is normalised server-side, so media recorded anywhere plays everywhere.
+ * Every platform produces mp4/H.264+AAC or m4a/AAC for recordings — Android and iOS natively,
+ * desktop via the bundled FFmpeg, and web by transcoding its webm with ffmpeg.wasm before this is
+ * emitted. A still photo is always a JPEG. Nothing is normalised server-side, so media captured or
+ * picked anywhere plays or displays everywhere.
  */
 public data class CaptureResult(
     val kind: CaptureKind,
@@ -116,4 +117,5 @@ public expect fun createMediaRecorderController(): MediaRecorderController
 public expect fun CameraPreview(
     controller: MediaRecorderController,
     modifier: Modifier,
+    settings: VideoCaptureSettings = VideoCaptureSettings(),
 )

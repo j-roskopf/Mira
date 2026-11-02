@@ -8,18 +8,22 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.material3.Text
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.PlainTooltip
+import androidx.compose.material3.Text
+import androidx.compose.material3.TooltipBox
+import androidx.compose.material3.TooltipDefaults
+import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
@@ -52,6 +56,8 @@ import com.joetr.mira.media.CaptureResult
 import com.joetr.mira.media.MediaRecorderController
 import com.joetr.mira.media.MediaSource
 import com.joetr.mira.media.RecordingState
+import com.joetr.mira.media.pickMedia
+import com.joetr.mira.media.VideoAspectRatio
 import com.joetr.mira.media.VideoCaptureSettings
 import com.joetr.mira.media.VideoQuality
 import com.joetr.mira.media.supportsCapture
@@ -63,7 +69,6 @@ import com.joetr.mira.ui.formatDuration
 import com.joetr.mira.ui.icons.MiraIcon
 import com.joetr.mira.ui.icons.MiraIconPainter
 import com.joetr.mira.ui.icons.MiraIcons
-import com.joetr.mira.ui.theme.MiraRadii
 import com.joetr.mira.ui.theme.MiraSpacing
 import com.joetr.mira.ui.theme.MiraTheme
 import kotlinx.coroutines.launch
@@ -87,6 +92,7 @@ public fun ComposeEntryScreen(
     onBodyChange: (String) -> Unit,
     onDateClick: () -> Unit,
     onCaptureFinished: (CaptureResult) -> Unit,
+    onMediaPicked: (List<CaptureResult>) -> Unit,
     onSave: () -> Unit,
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
@@ -100,7 +106,9 @@ public fun ComposeEntryScreen(
     val focusRequester = remember { FocusRequester() }
     val body = initialBody
     var activeCapture by remember { mutableStateOf(initialCapture) }
-    var previewExpanded by remember { mutableStateOf(false) }
+    var cameraOpen by remember {
+        mutableStateOf(initialCapture == CaptureKind.VIDEO || initialCapture == CaptureKind.PHOTO)
+    }
     var videoSettings by remember { mutableStateOf(VideoCaptureSettings()) }
     val configurableVideo = recorder.supportsVideoSettings
 
@@ -109,7 +117,7 @@ public fun ComposeEntryScreen(
     LaunchedEffect(Unit) {
         if (initialCapture == null) {
             runCatching { focusRequester.requestFocus() }
-        } else if (initialCapture != CaptureKind.VIDEO || !configurableVideo) {
+        } else if (initialCapture == CaptureKind.AUDIO) {
             recorder.start(initialCapture)
         }
     }
@@ -122,29 +130,56 @@ public fun ComposeEntryScreen(
         val finished = state as? RecordingState.Finished ?: return@LaunchedEffect
         onCaptureFinished(finished.result)
         activeCapture = null
+        cameraOpen = false
     }
 
-    LaunchedEffect(activeCapture) {
-        if (activeCapture != CaptureKind.VIDEO) previewExpanded = false
-    }
-
-    fun startCapture(kind: CaptureKind) {
-        if (kind == CaptureKind.VIDEO && configurableVideo && activeCapture != kind) {
-            activeCapture = kind
-            return
-        }
+    fun beginCapture(kind: CaptureKind) {
         activeCapture = kind
+        when (kind) {
+            // Audio stays inline; there is nothing to frame.
+            CaptureKind.AUDIO -> scope.launch {
+                val currentState = recorder.state.value
+                if (currentState == RecordingState.Preparing ||
+                    currentState == RecordingState.Finalizing ||
+                    currentState is RecordingState.Recording
+                ) {
+                    return@launch
+                }
+                recorder.start(kind)
+            }
+            CaptureKind.VIDEO, CaptureKind.PHOTO -> cameraOpen = true
+        }
+    }
+
+    /** Runs the shutter: starts capture, or stops the running take (also snapshots desktop photos). */
+    fun shutter() {
+        val kind = activeCapture ?: return
         scope.launch {
             val currentState = recorder.state.value
             if (currentState == RecordingState.Preparing ||
-                currentState == RecordingState.Finalizing ||
-                currentState is RecordingState.Recording
+                currentState == RecordingState.Finalizing
             ) {
+                return@launch
+            }
+            if (currentState is RecordingState.Recording) {
+                recorder.stop()
                 return@launch
             }
             if (kind == CaptureKind.VIDEO && configurableVideo) recorder.configureVideo(videoSettings)
             recorder.start(kind)
         }
+    }
+
+    fun closeCamera() {
+        recorder.cancel()
+        activeCapture = null
+        cameraOpen = false
+    }
+
+    /** Apply a settings change immediately, so a live desktop preview reshapes without a restart. */
+    fun updateVideoSettings(updated: VideoCaptureSettings) {
+        videoSettings = updated
+        if (configurableVideo) recorder.configureVideo(updated)
     }
 
     Column(
@@ -210,94 +245,60 @@ public fun ComposeEntryScreen(
             )
         }
 
-        if (activeCapture == CaptureKind.VIDEO) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .then(if (configurableVideo) Modifier.weight(2f) else Modifier.aspectRatio(16f / 9f))
-                    .clip(RoundedCornerShape(MiraRadii.media)),
-            ) {
-                // Only one preview surface is alive at a time; the full-screen dialog owns the
-                // camera while it is open. Re-composing this one on close also gives CameraX a
-                // fresh view to apply the current rotation to.
-                if (!previewExpanded) {
-                    CameraPreview(
-                        controller = recorder,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .clickable(onClickLabel = "Expand camera preview") { previewExpanded = true },
-                    )
-                }
-                if (configurableVideo) {
-                    PreviewSettings(
-                        settings = videoSettings,
-                        qualities = recorder.supportedQualities,
-                        showCameraFacing = recorder.supportsCameraFacing,
-                        enabled = state != RecordingState.Preparing &&
-                            state != RecordingState.Finalizing &&
-                            state !is RecordingState.Recording,
-                        onChange = { videoSettings = it },
-                        compact = true,
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .padding(MiraSpacing.sm),
-                    )
-                }
-            }
-            Spacer(Modifier.height(MiraSpacing.md))
-        }
-
         CaptureBar(
             state = state,
             activeCapture = activeCapture,
-            onStart = { kind -> startCapture(kind) },
+            onStart = { kind -> beginCapture(kind) },
             onStop = { scope.launch { recorder.stop() } },
             onCancelCapture = {
                 recorder.cancel()
                 activeCapture = null
             },
+            onAttachFromLibrary = { scope.launch { onMediaPicked(pickMedia()) } },
         )
 
         Spacer(Modifier.height(MiraSpacing.xxl))
     }
 
-    if (previewExpanded && activeCapture == CaptureKind.VIDEO) {
-        FullScreenCameraPreview(
+    val captureKind = activeCapture
+    if (cameraOpen && (captureKind == CaptureKind.VIDEO || captureKind == CaptureKind.PHOTO)) {
+        CameraCaptureScreen(
+            kind = captureKind,
             controller = recorder,
             settings = videoSettings,
             qualities = if (configurableVideo) recorder.supportedQualities else emptyList(),
+            aspectRatios = if (configurableVideo) recorder.supportedAspectRatios else emptyList(),
             showCameraFacing = configurableVideo && recorder.supportsCameraFacing,
-            controlsEnabled = state != RecordingState.Preparing &&
+            settingsEnabled = state != RecordingState.Preparing &&
                 state != RecordingState.Finalizing &&
                 state !is RecordingState.Recording,
-            onSettingsChange = { videoSettings = it },
+            onSettingsChange = { updateVideoSettings(it) },
             recordingState = state,
-            onToggleRecording = {
-                if (state is RecordingState.Recording) {
-                    scope.launch { recorder.stop() }
-                } else {
-                    startCapture(CaptureKind.VIDEO)
-                }
-            },
-            onDismiss = { previewExpanded = false },
+            onShutter = { shutter() },
+            onDismiss = { closeCamera() },
         )
     }
 }
 
-/** A modal, edge-to-edge view of the camera for framing a shot. */
+/** A full-screen camera page, so the live preview is never squeezed into the editor. */
 @Composable
-private fun FullScreenCameraPreview(
+private fun CameraCaptureScreen(
+    kind: CaptureKind,
     controller: MediaRecorderController,
     settings: VideoCaptureSettings,
     qualities: List<VideoQuality>,
+    aspectRatios: List<VideoAspectRatio>,
     showCameraFacing: Boolean,
-    controlsEnabled: Boolean,
+    settingsEnabled: Boolean,
     onSettingsChange: (VideoCaptureSettings) -> Unit,
     recordingState: RecordingState,
-    onToggleRecording: () -> Unit,
+    onShutter: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     val colors = MiraTheme.colors
+    val recording = recordingState as? RecordingState.Recording
+    val busy = recordingState == RecordingState.Preparing || recordingState == RecordingState.Finalizing
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -309,24 +310,24 @@ private fun FullScreenCameraPreview(
         ) {
             CameraPreview(
                 controller = controller,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clickable(onClickLabel = "Close full screen preview", onClick = onDismiss),
+                modifier = Modifier.fillMaxSize(),
+                settings = settings,
             )
             CircleIconButton(
                 icon = MiraIcons.Close,
-                contentDescription = "Close full screen preview",
+                contentDescription = "Close camera",
                 onClick = onDismiss,
                 tint = Color.White,
                 modifier = Modifier
                     .align(Alignment.TopEnd)
+                    .statusBarsPadding()
                     .padding(MiraSpacing.lg),
             )
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .fillMaxWidth()
-                    .background(Color.Black.copy(alpha = 0.4f))
+                    .background(Color.Black.copy(alpha = 0.45f))
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
@@ -337,25 +338,57 @@ private fun FullScreenCameraPreview(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(MiraSpacing.sm),
             ) {
-                PreviewSettings(
-                    settings = settings,
-                    qualities = qualities,
-                    showCameraFacing = showCameraFacing,
-                    enabled = controlsEnabled,
-                    onChange = onSettingsChange,
-                    compact = false,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Spacer(Modifier.height(MiraSpacing.xs))
+                if (recording != null) {
+                    val nearLimit = recording.elapsedMs >= CaptureLimits.WARN_DURATION_MS
+                    Text(
+                        text = formatDuration(recording.elapsedMs),
+                        style = MiraTheme.type.timestamp,
+                        color = if (nearLimit) colors.error else Color.White,
+                    )
+                }
                 if (recordingState == RecordingState.Preparing ||
                     recordingState == RecordingState.Finalizing
                 ) {
+                    Text(
+                        text = when {
+                            kind == CaptureKind.PHOTO &&
+                                recordingState == RecordingState.Finalizing -> "Saving photo…"
+                            kind == CaptureKind.PHOTO -> "Taking photo…"
+                            recordingState == RecordingState.Finalizing -> "Finishing recording…"
+                            else -> "Starting camera and microphone…"
+                        },
+                        style = MiraTheme.type.meta,
+                        color = Color.White,
+                    )
+                }
+                (recordingState as? RecordingState.Failed)?.let { failure ->
+                    Text(
+                        text = failure.message,
+                        style = MiraTheme.type.meta,
+                        color = colors.error,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+                if (qualities.isNotEmpty() || aspectRatios.isNotEmpty() || showCameraFacing) {
+                    PreviewSettings(
+                        settings = settings,
+                        qualities = qualities,
+                        aspectRatios = aspectRatios,
+                        showCameraFacing = showCameraFacing,
+                        enabled = settingsEnabled,
+                        onChange = onSettingsChange,
+                        compact = false,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(MiraSpacing.xs))
+                }
+                if (busy) {
                     CircularProgressIndicator(color = colors.accent, modifier = Modifier.size(64.dp))
                 } else {
                     RecordButton(
-                        recording = recordingState is RecordingState.Recording,
-                        onClick = onToggleRecording,
-                        icon = MiraIcons.Video,
+                        recording = recording != null,
+                        onClick = onShutter,
+                        icon = if (kind == CaptureKind.VIDEO) MiraIcons.Video else MiraIcons.Camera,
                     )
                 }
             }
@@ -367,6 +400,7 @@ private fun FullScreenCameraPreview(
 private fun PreviewSettings(
     settings: VideoCaptureSettings,
     qualities: List<VideoQuality>,
+    aspectRatios: List<VideoAspectRatio>,
     showCameraFacing: Boolean,
     enabled: Boolean,
     onChange: (VideoCaptureSettings) -> Unit,
@@ -381,6 +415,20 @@ private fun PreviewSettings(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(spacing),
     ) {
+        if (aspectRatios.isNotEmpty()) {
+            Row(horizontalArrangement = Arrangement.spacedBy(spacing)) {
+                aspectRatios.forEach { aspectRatio ->
+                    AspectRatioChoice(
+                        aspectRatio = aspectRatio,
+                        selected = settings.aspectRatio == aspectRatio,
+                        enabled = enabled,
+                        size = buttonSize,
+                        iconSize = iconSize,
+                        onClick = { onChange(settings.copy(aspectRatio = aspectRatio)) },
+                    )
+                }
+            }
+        }
         if (qualities.isNotEmpty() || showCameraFacing) {
             Row(horizontalArrangement = Arrangement.spacedBy(spacing)) {
                 qualities.forEach { quality ->
@@ -419,6 +467,38 @@ private fun PreviewSettings(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AspectRatioChoice(
+    aspectRatio: VideoAspectRatio,
+    selected: Boolean,
+    enabled: Boolean,
+    size: Dp,
+    iconSize: Dp,
+    onClick: () -> Unit,
+) {
+    val tooltipState = rememberTooltipState(isPersistent = false)
+    TooltipBox(
+        positionProvider = TooltipDefaults.rememberTooltipPositionProvider(),
+        tooltip = {
+            PlainTooltip {
+                Text(aspectRatio.explanation, style = MiraTheme.type.meta)
+            }
+        },
+        state = tooltipState,
+    ) {
+        PreviewChoice(
+            icon = aspectRatio.previewIcon(),
+            contentDescription = "Shape: ${aspectRatio.label}",
+            selected = selected,
+            enabled = enabled,
+            size = size,
+            iconSize = iconSize,
+            onClick = onClick,
+        )
+    }
+}
+
 @Composable
 private fun PreviewChoice(
     icon: MiraIconPainter,
@@ -452,6 +532,21 @@ private fun VideoQuality.previewIcon(): MiraIconPainter = when (this) {
     VideoQuality.HIGH -> MiraIcons.QualityHigh
 }
 
+private fun VideoAspectRatio.previewIcon(): MiraIconPainter = when (this) {
+    VideoAspectRatio.ORIGINAL -> MiraIcons.AspectOriginal
+    VideoAspectRatio.LANDSCAPE -> MiraIcons.AspectLandscape
+    VideoAspectRatio.PORTRAIT -> MiraIcons.AspectPortrait
+    VideoAspectRatio.SQUARE -> MiraIcons.AspectSquare
+}
+
+private val VideoAspectRatio.explanation: String
+    get() = when (this) {
+        VideoAspectRatio.ORIGINAL -> "Camera original — use whatever shape the camera reports"
+        VideoAspectRatio.LANDSCAPE -> "Landscape 16:9 — wide frame, the standard video shape"
+        VideoAspectRatio.PORTRAIT -> "Portrait 9:16 — tall frame, like a phone held upright"
+        VideoAspectRatio.SQUARE -> "Square 1:1 — equal width and height"
+    }
+
 @Composable
 private fun CaptureBar(
     state: RecordingState,
@@ -459,6 +554,7 @@ private fun CaptureBar(
     onStart: (CaptureKind) -> Unit,
     onStop: () -> Unit,
     onCancelCapture: () -> Unit,
+    onAttachFromLibrary: () -> Unit,
 ) {
     val colors = MiraTheme.colors
     val recording = state as? RecordingState.Recording
@@ -467,7 +563,11 @@ private fun CaptureBar(
         if (state == RecordingState.Preparing || state == RecordingState.Finalizing) {
             Text(
                 text = if (state == RecordingState.Finalizing) "Finishing recording…"
-                    else if (activeCapture == CaptureKind.VIDEO) "Starting camera and microphone…" else "Starting microphone…",
+                    else when (activeCapture) {
+                        CaptureKind.VIDEO -> "Starting camera and microphone…"
+                        CaptureKind.PHOTO -> "Starting camera…"
+                        else -> "Starting microphone…"
+                    },
                 style = MiraTheme.type.meta,
                 color = colors.inkMuted,
                 modifier = Modifier.fillMaxWidth(),
@@ -503,7 +603,7 @@ private fun CaptureBar(
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (recording != null || activeCapture != null) {
+            if (recording != null || activeCapture == CaptureKind.AUDIO) {
                 // The discard button must not shift the record button off centre.
                 Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
                     CircleIconButton(
@@ -519,10 +619,10 @@ private fun CaptureBar(
                         onClick = {
                             if (recording != null) onStop() else activeCapture?.let(onStart)
                         },
-                        icon = if (activeCapture == CaptureKind.VIDEO) {
-                            MiraIcons.Video
-                        } else {
-                            MiraIcons.Microphone
+                        icon = when (activeCapture) {
+                            CaptureKind.VIDEO -> MiraIcons.Video
+                            CaptureKind.PHOTO -> MiraIcons.Camera
+                            else -> MiraIcons.Microphone
                         },
                     )
                 }
@@ -542,6 +642,18 @@ private fun CaptureBar(
                             onClick = { onStart(CaptureKind.VIDEO) },
                         )
                     }
+                    if (supportsCapture(CaptureKind.PHOTO)) {
+                        CircleIconButton(
+                            icon = MiraIcons.Camera,
+                            contentDescription = "Take photo",
+                            onClick = { onStart(CaptureKind.PHOTO) },
+                        )
+                    }
+                    CircleIconButton(
+                        icon = MiraIcons.Photo,
+                        contentDescription = "Attach from library",
+                        onClick = onAttachFromLibrary,
+                    )
                 }
             }
         }

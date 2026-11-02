@@ -163,10 +163,10 @@ public class AppGraph(
         val attachmentId = "${currentTimeMillis()}-${result.kind.name.lowercase()}"
         val attachment = Attachment(
             id = attachmentId,
-            kind = if (result.kind == CaptureKind.VIDEO) {
-                AttachmentKind.VIDEO
-            } else {
-                AttachmentKind.AUDIO
+            kind = when (result.kind) {
+                CaptureKind.VIDEO -> AttachmentKind.VIDEO
+                CaptureKind.PHOTO -> AttachmentKind.IMAGE
+                CaptureKind.AUDIO -> AttachmentKind.AUDIO
             },
             storagePath = "",
             mime = result.mime,

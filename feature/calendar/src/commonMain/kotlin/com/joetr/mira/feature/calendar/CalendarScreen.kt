@@ -1,14 +1,10 @@
 package com.joetr.mira.feature.calendar
 
-import androidx.compose.animation.AnimatedContent
-import com.joetr.mira.ui.motion.miraDateTransition
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -18,11 +14,22 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.joetr.mira.domain.LocalDateKey
@@ -37,12 +44,35 @@ import com.joetr.mira.ui.icons.MiraIcons
 import com.joetr.mira.ui.monthShortName
 import com.joetr.mira.ui.sundayFirstColumn
 import com.joetr.mira.ui.motion.sharedDayCircle
+import com.joetr.mira.ui.theme.MiraRadii
 import com.joetr.mira.ui.theme.MiraSizes
 import com.joetr.mira.ui.theme.MiraSpacing
 import com.joetr.mira.ui.theme.MiraAccentCanvas
 import com.joetr.mira.ui.theme.MiraTheme
 import com.joetr.mira.ui.theme.busyThreshold
 import com.joetr.mira.ui.theme.heatmapStep
+import kotlinx.coroutines.flow.collect
+
+private const val PAGER_CENTER: Int = Int.MAX_VALUE / 2
+
+private fun MonthKey.monthsUntil(other: MonthKey): Int =
+    (other.year * 12 + other.monthNumber) - (year * 12 + monthNumber)
+
+private fun rowsIn(month: MonthKey): Int =
+    (month.firstDay.sundayFirstColumn() + lengthOfMonth(month.year, month.monthNumber) + 6) / 7
+
+/**
+ * Row budget for the pager while the gesture is in flight. The settled month and the committed
+ * [month] bracket every page that can come into view, so the height only changes after a settle —
+ * never mid-drag.
+ */
+private fun rowsAcross(from: MonthKey, to: MonthKey): Int {
+    val first = minOf(from, to).minusMonths(1)
+    val last = maxOf(from, to).plusMonths(1)
+    val distance = first.monthsUntil(last)
+    if (distance > 24) return 6
+    return (0..distance).maxOf { rowsIn(first.plusMonths(it)) }
+}
 
 /**
  * The home screen: a month of circles whose colour is how much you wrote.
@@ -72,7 +102,35 @@ public fun CalendarScreen(
         BoxWithConstraints(modifier.fillMaxSize().background(colors.canvas)) {
             val expanded = maxWidth >= 800.dp
             val availableHeight = maxHeight
-            val dateTransition = miraDateTransition()
+            val pagerState = rememberPagerState(
+                initialPage = PAGER_CENTER,
+                pageCount = { Int.MAX_VALUE },
+            )
+            val anchorMonth = remember { month }
+            val pageToMonth: (Int) -> MonthKey = remember(anchorMonth) {
+                { page -> anchorMonth.plusMonths(page - PAGER_CENTER) }
+            }
+            val monthToPage: (MonthKey) -> Int = remember(anchorMonth) {
+                { value -> PAGER_CENTER + anchorMonth.monthsUntil(value) }
+            }
+            val latestMonth by rememberUpdatedState(month)
+            val latestOnMonthChange by rememberUpdatedState(onMonthChange)
+
+            LaunchedEffect(month) {
+                val target = monthToPage(month)
+                if (pagerState.currentPage != target || pagerState.currentPageOffsetFraction != 0f) {
+                    withFrameNanos { }
+                    pagerState.animateScrollToPage(target)
+                }
+            }
+
+            LaunchedEffect(pagerState) {
+                snapshotFlow { pagerState.settledPage }.collect { page ->
+                    val target = pageToMonth(page)
+                    if (target != latestMonth) latestOnMonthChange(target)
+                }
+            }
+
             Column(
                 Modifier.fillMaxSize()
                     .verticalScroll(rememberScrollState())
@@ -90,19 +148,31 @@ public fun CalendarScreen(
 
                 Spacer(Modifier.height(MiraSpacing.xxxl))
 
-                AnimatedContent(
-                    targetState = month,
-                    transitionSpec = { dateTransition(targetState.value.compareTo(initialState.value)) },
-                    label = "calendar-month",
-                ) { displayMonth ->
-                    val rows = (displayMonth.firstDay.sundayFirstColumn() +
-                        lengthOfMonth(displayMonth.year, displayMonth.monthNumber) + 6) / 7
-                    val rowHeight = if (expanded) {
-                        ((availableHeight - 304.dp) / rows).coerceIn(64.dp, 120.dp)
-                    } else MiraSizes.touchTarget
-                    Column {
+                val settledPage = pagerState.settledPage
+                val settledMonth = pageToMonth(settledPage)
+                val visibleRows = remember(settledMonth, month) {
+                    rowsAcross(settledMonth, month)
+                }
+                val rowHeight = if (expanded) {
+                    ((availableHeight - 304.dp) / visibleRows).coerceIn(64.dp, 120.dp)
+                } else MiraSizes.touchTarget
+                val density = LocalDensity.current
+                val chromeHeight = with(density) {
+                    MiraTheme.type.monthTitle.lineHeight.toDp() + MiraSpacing.xl +
+                        MiraTheme.type.weekdayHead.lineHeight.toDp() + MiraSpacing.sm
+                }
+                val pageHeight = chromeHeight + rowHeight * visibleRows +
+                    MiraSizes.dayGap * (visibleRows - 1)
+
+                HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier.fillMaxWidth().height(pageHeight),
+                    key = { it },
+                ) { page ->
+                    val pageMonth = pageToMonth(page)
+                    Column(Modifier.fillMaxWidth().height(pageHeight)) {
                         Text(
-                            text = displayMonth.displayName().uppercase(),
+                            text = pageMonth.displayName().uppercase(),
                             style = MiraTheme.type.monthTitle,
                             color = colors.ink,
                         )
@@ -113,7 +183,7 @@ public fun CalendarScreen(
                         Spacer(Modifier.height(MiraSpacing.sm))
 
                         MonthGrid(
-                            month = displayMonth,
+                            month = pageMonth,
                             today = today,
                             selected = selected,
                             activity = activity,
@@ -121,6 +191,7 @@ public fun CalendarScreen(
                             onDayClick = onDayClick,
                             rowHeight = rowHeight,
                             daySize = if (expanded) 56.dp else MiraSizes.dayCircle,
+                            enableSharedTransition = page == pagerState.settledPage,
                         )
                     }
                 }
@@ -186,14 +257,25 @@ private fun YearNavigator(
             ) {
                 range.forEach { number ->
                     val isCurrent = number == month.monthNumber
-                    Text(
-                        text = monthShortName(number),
-                        style = MiraTheme.type.yearNav,
-                        color = if (isCurrent) colors.ink else colors.inkFaint,
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier
                             .clickable { onMonthSelect(number) }
                             .padding(vertical = MiraSpacing.xs, horizontal = MiraSpacing.xs),
-                    )
+                    ) {
+                        Text(
+                            text = monthShortName(number),
+                            style = MiraTheme.type.yearNav,
+                            color = if (isCurrent) colors.ink else colors.inkFaint,
+                        )
+                        Spacer(Modifier.height(MiraSpacing.xs))
+                        Box(
+                            Modifier
+                                .height(2.dp)
+                                .width(if (isCurrent) 16.dp else 0.dp)
+                                .background(colors.accent, RoundedCornerShape(MiraRadii.pill)),
+                        )
+                    }
                 }
             }
         }
@@ -225,6 +307,7 @@ private fun MonthGrid(
     onDayClick: (LocalDateKey) -> Unit,
     rowHeight: Dp,
     daySize: Dp,
+    enableSharedTransition: Boolean,
 ) {
     val daysInMonth = lengthOfMonth(month.year, month.monthNumber)
     val leadingBlanks = remember(month) { month.firstDay.sundayFirstColumn() }
@@ -250,8 +333,11 @@ private fun MonthGrid(
                                 isToday = date == today,
                                 isSelected = date == selected,
                                 onClick = { onDayClick(date) },
-                                modifier = Modifier
-                                    .sharedDayCircle(date.value),
+                                modifier = if (enableSharedTransition) {
+                                    Modifier.sharedDayCircle(date.value)
+                                } else {
+                                    Modifier
+                                },
                             )
                         }
                     }

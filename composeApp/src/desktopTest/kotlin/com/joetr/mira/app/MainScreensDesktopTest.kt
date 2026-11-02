@@ -261,7 +261,7 @@ private fun ComposeSample() {
         onRemoveAttachment = {},
         onBodyChange = {},
         onDateClick = {},
-        onCaptureFinished = {},
+        onCaptureFinished = {}, onMediaPicked = {},
         onSave = {},
         onCancel = {},
         onDelete = {},

@@ -119,6 +119,45 @@ class CaptureCommandTest {
         }
     }
 
+    @Test
+    fun framingPreviewStreamsMjpegWithoutAudioOrMuxer() {
+        val command = buildPreviewCommand(
+            binary = "ffmpeg",
+            inputArgs = listOf("-f", "lavfi", "-i", "testsrc=size=1280x720:rate=30"),
+        )
+        assertEquals("mjpeg", command[command.lastIndex - 1])
+        assertEquals("pipe:1", command.last())
+        assertTrue(command.none { it == "-c:a" || it == "tee" || it == "-map" })
+    }
+
+    /** The framing filter must already be shaped, so the preview shows the final framing. */
+    @Test
+    fun framingPreviewMatchesTheSelectedShape() {
+        val landscape = buildPreviewCommand(
+            "ffmpeg", emptyList(), VideoCaptureSettings(VideoAspectRatio.LANDSCAPE),
+        )
+        val portrait = buildPreviewCommand(
+            "ffmpeg", emptyList(), VideoCaptureSettings(VideoAspectRatio.PORTRAIT),
+        )
+        val landscapeFilter = landscape[landscape.indexOf("-vf") + 1]
+        val portraitFilter = portrait[portrait.indexOf("-vf") + 1]
+        assertTrue("landscape was $landscapeFilter", landscapeFilter.contains("scale=1920:1080"))
+        assertTrue("portrait was $portraitFilter", portraitFilter.contains("scale=1080:1920"))
+    }
+
+    @Test
+    fun framingPreviewProducesFrames() {
+        assumeTrue("FFmpeg is not available", ffmpeg != null)
+        val command = buildPreviewCommand(
+            binary = ffmpeg!!,
+            inputArgs = listOf("-f", "lavfi", "-i", "testsrc=size=1280x720:rate=30"),
+        )
+        val process = ProcessBuilder(command).start()
+        val frames = process.inputStream.readNBytes(256 * 1024)
+        process.destroyForcibly()
+        assertTrue("expected preview frames", countJpegFrames(frames) > 0)
+    }
+
     /** The escape matters: unescaped, tee reads the comma as the start of the next option. */
     @Test
     fun teeSelectCommaIsEscaped() {

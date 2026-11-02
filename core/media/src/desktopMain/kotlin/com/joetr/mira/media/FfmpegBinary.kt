@@ -131,6 +131,34 @@ internal fun videoInputArgs(
 }
 
 /**
+ * Video-only input for the framing preview.
+ *
+ * Unlike [videoInputArgs], this never opens the microphone: framing should not trigger a
+ * microphone prompt, and the recording pipeline opens both devices itself when the shutter is
+ * pressed.
+ */
+internal fun videoOnlyInputArgs(
+    pixelFormat: String? = null,
+    videoSize: CameraSize? = null,
+): List<String> = when (desktopOs) {
+    DesktopOs.MAC -> listOf("-thread_queue_size", "1024") +
+        (videoSize?.let { listOf("-video_size", "${it.width}x${it.height}") } ?: emptyList()) + listOf(
+        "-f", "avfoundation",
+        // Required: the default of 29.97 is rejected by the built-in camera.
+        "-framerate", "30",
+        "-pixel_format", pixelFormat ?: MAC_PIXEL_FORMATS.first(),
+        "-i", "0",
+    )
+    DesktopOs.WINDOWS -> listOf(
+        "-f", "dshow",
+        "-i", "video=${defaultWindowsVideoDevice()}",
+    )
+    DesktopOs.LINUX -> listOf(
+        "-f", "v4l2", "-framerate", "30", "-i", "/dev/video0",
+    )
+}
+
+/**
  * DirectShow needs device names rather than indices, and they differ per machine.
  *
  * These defaults cover the common case; Settings lets the name be overridden, and

@@ -43,6 +43,17 @@ internal class WebMediaRecorderController : MediaRecorderController {
         _state.value = RecordingState.Preparing
         startedAt = currentTimeMs()
 
+        if (kind == CaptureKind.PHOTO) {
+            val started = startWebPhotoPreview()
+            if (started == null) {
+                _state.value = RecordingState.Failed("Camera permission was declined")
+                return
+            }
+            handle = started
+            _state.value = RecordingState.Recording(0)
+            return
+        }
+
         val started = startWebRecording(kind == CaptureKind.VIDEO)
         if (started == null) {
             _state.value = RecordingState.Failed("Microphone or camera permission was declined")
@@ -54,6 +65,28 @@ internal class WebMediaRecorderController : MediaRecorderController {
 
     override suspend fun stop() {
         val active = handle ?: return
+
+        if (currentKind == CaptureKind.PHOTO) {
+            _state.value = RecordingState.Finalizing
+            val photo = capturePhotoFromPreview(active)
+            handle = null
+            if (photo == null || photo.isEmpty()) {
+                _state.value = RecordingState.Failed("Could not take a photo. Please try again.")
+                return
+            }
+            _state.value = RecordingState.Finished(
+                CaptureResult(
+                    kind = CaptureKind.PHOTO,
+                    path = null,
+                    bytes = photo,
+                    mime = "image/jpeg",
+                    sizeBytes = photo.size.toLong(),
+                    durationMs = 0,
+                ),
+            )
+            return
+        }
+
         val elapsed = (currentTimeMs() - startedAt).toLong()
         _state.value = RecordingState.Preparing
 
@@ -105,6 +138,7 @@ private val previewBounds = linkedMapOf<Int, List<Double>>()
 public actual fun CameraPreview(
     controller: MediaRecorderController,
     modifier: Modifier,
+    settings: VideoCaptureSettings,
 ) {
     // The preview is a <video> element positioned by the JS side; Compose reserves the space.
     val id = remember { nextPreviewId++ }

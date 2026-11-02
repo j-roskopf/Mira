@@ -39,8 +39,10 @@ Everything lands as mp4/H.264+AAC or m4a/AAC from every platform, so media recor
 everywhere — a voice note recorded in Chrome still opens on an iPhone years later.
 
 Desktop capture runs a **bundled, size-trimmed static FFmpeg** (~10–20 MB; a stock build is
-120–160 MB). One process writes the file and streams MJPEG on stdout for the live preview via the
-`tee` muxer, so the camera is only opened once.
+120–160 MB). A lightweight MJPEG-only process opens the camera for framing as soon as the capture
+page appears; pressing the shutter closes it and starts the recording process, which writes the
+file and streams MJPEG on stdout via the `tee` muxer. A camera handle is only ever held by one
+process at a time.
 
 Playback mirrors it: `MediaPlayer` on Android, `AVPlayer` on iOS, a real `<audio>`/`<video>` element
 on web, and on desktop the same bundled FFmpeg decoding to PCM and MJPEG — the JDK plays PCM but has
