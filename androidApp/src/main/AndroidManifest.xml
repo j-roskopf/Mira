@@ -36,9 +36,6 @@
                 <data android:host="mira.joetr.com" android:pathPrefix="/calendar/" android:scheme="https" />
             </intent-filter>
         </activity>
-        <receiver
-            android:name=".updates.AndroidUpdateInstallReceiver"
-            android:exported="false" />
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
