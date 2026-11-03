@@ -1,0 +1,65 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Desktop",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "${workspaceFolder}/gradlew",
+      "runtimeArgs": [":composeApp:run"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Android",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "ADB=\"${ANDROID_HOME:-$HOME/Library/Android/sdk}/platform-tools/adb\"; [ -x \"$ADB\" ] || ADB=adb; ./gradlew :androidApp:installDebug && \"$ADB\" shell monkey -p com.joetr.mira.debug -c android.intent.category.LAUNCHER 1"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "iOS",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": ["${workspaceFolder}/scripts/run-ios-simulator.sh"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Web",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "${workspaceFolder}/gradlew",
+      "runtimeArgs": [":composeApp:wasmJsBrowserDevelopmentRun"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Screenshots",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "${workspaceFolder}/gradlew",
+      "runtimeArgs": [":composeApp:recordRoborazziDesktop"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Build FFmpeg",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "./scripts/build-ffmpeg.sh \"$([ \"$(uname -s)\" = Darwin ] && echo macos || echo linux)\""
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}"
+    }
+  ]
+}

@@ -1,0 +1,79 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Mira: Desktop",
+      "type": "shell",
+      "command": "./gradlew",
+      "args": [":composeApp:run"],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Mira: Android",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-c",
+        "ADB=\"${ANDROID_HOME:-$HOME/Library/Android/sdk}/platform-tools/adb\"; [ -x \"$ADB\" ] || ADB=adb; ./gradlew :androidApp:installDebug && \"$ADB\" shell monkey -p com.joetr.mira.debug -c android.intent.category.LAUNCHER 1"
+      ],
+      "group": "build",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Mira: iOS",
+      "type": "shell",
+      "command": "./scripts/run-ios-simulator.sh",
+      "group": "build",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Mira: Web",
+      "type": "shell",
+      "command": "./gradlew",
+      "args": [":composeApp:wasmJsBrowserDevelopmentRun"],
+      "group": "build",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Mira: Screenshots",
+      "type": "shell",
+      "command": "./gradlew",
+      "args": [":composeApp:recordRoborazziDesktop"],
+      "group": "test",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Mira: Build FFmpeg",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "-c",
+        "./scripts/build-ffmpeg.sh \"$([ \"$(uname -s)\" = Darwin ] && echo macos || echo linux)\""
+      ],
+      "group": "build",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    }
+  ]
+}
