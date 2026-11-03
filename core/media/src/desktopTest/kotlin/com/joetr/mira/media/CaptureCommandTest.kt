@@ -49,8 +49,7 @@ class CaptureCommandTest {
 
             val probe = probe(output)
             println("video capture probe:\n$probe")
-            val expectedCodec = if (desktopOs == DesktopOs.MAC) "hevc" else "h264"
-            assertTrue("expected $expectedCodec in the mp4, got: $probe", probe.contains(expectedCodec))
+            assertTrue("expected H.264 in the mp4, got: $probe", probe.contains("h264"))
             assertTrue("expected AAC in the mp4, got: $probe", probe.contains("aac"))
             // The recording branch upscales to the configured width before encoding.
             assertTrue("expected yuv420p, got: $probe", probe.contains("yuv420p"))
@@ -135,10 +134,10 @@ class CaptureCommandTest {
     @Test
     fun framingPreviewMatchesTheSelectedShape() {
         val landscape = buildPreviewCommand(
-            "ffmpeg", emptyList(), VideoCaptureSettings(VideoAspectRatio.LANDSCAPE),
+            "ffmpeg", emptyList(), VideoCaptureSettings(VideoAspectRatio.LANDSCAPE, quality = VideoQuality.HIGH),
         )
         val portrait = buildPreviewCommand(
-            "ffmpeg", emptyList(), VideoCaptureSettings(VideoAspectRatio.PORTRAIT),
+            "ffmpeg", emptyList(), VideoCaptureSettings(VideoAspectRatio.PORTRAIT, quality = VideoQuality.HIGH),
         )
         val landscapeFilter = landscape[landscape.indexOf("-vf") + 1]
         val portraitFilter = portrait[portrait.indexOf("-vf") + 1]
@@ -186,7 +185,7 @@ class CaptureCommandTest {
         )
         val encoder = command[command.indexOf("-c:v:0") + 1]
         if (desktopOs == DesktopOs.MAC) {
-            assertEquals("hevc_videotoolbox", encoder)
+            assertEquals("h264_videotoolbox", encoder)
             assertTrue("-preset is a libx264 option", "-preset" !in command)
         } else {
             assertEquals("libx264", encoder)

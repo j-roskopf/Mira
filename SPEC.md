@@ -204,8 +204,8 @@ live before the shutter. Recording replaces it with one `tee` process: the file 
 stream on stdout, decoded into Compose frames. A photo is a single tap that snapshots the framing
 frame; only one process ever holds the camera.
 
-**Capture limits:** video 1080p / ~4 Mbps / H.264; audio 64 kbps mono AAC; 10 minutes maximum with
-a soft warning at 5.
+**Capture limits:** video H.264 at three tiers — 360p / 350 kbps, 720p / 1.2 Mbps (default), and
+1080p / 2.5 Mbps; audio 64 kbps mono AAC; 10 minutes maximum with a soft warning at 5.
 
 ### Playback
 

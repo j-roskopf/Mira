@@ -145,6 +145,9 @@ SELECT * FROM media_blobs;
 markBlobUploaded:
 UPDATE media_blobs SET uploaded = 1 WHERE id = ?;
 
+markBlobPending:
+UPDATE media_blobs SET uploaded = 0 WHERE id = ?;
+
 touchBlob:
 UPDATE media_blobs SET last_access = ? WHERE id = ?;
 
