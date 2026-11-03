@@ -142,7 +142,7 @@ jobs:
         if: matrix.target == 'linux' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update
-          sudo apt-get install -y nasm yasm libx264-dev libv4l-dev libasound2-dev pkg-config
+          sudo apt-get install -y nasm yasm libv4l-dev libasound2-dev pkg-config
 
       # Always set up MSYS2: the Verify step below runs on cache hits too, and `msys2 {0}`
       # is only available once this action has run.
