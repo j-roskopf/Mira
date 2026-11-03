@@ -31,6 +31,7 @@ public enum class VideoAspectRatio(public val label: String, public val ratio: F
 }
 
 public enum class VideoQuality(public val label: String, public val shortEdge: Int, public val bitrate: Int) {
+    DATA_SAVER("360p · smallest files", 360, 500_000),
     STANDARD("720p · smaller files", 720, 2_000_000),
     HIGH("1080p · higher quality", 1080, 4_000_000),
 }
@@ -60,10 +61,13 @@ public sealed interface RecordingState {
 /**
  * A finished recording, still photo, or picked-from-library item.
  *
- * Every platform produces mp4/H.264+AAC or m4a/AAC for recordings — Android and iOS natively,
- * desktop via the bundled FFmpeg, and web by transcoding its webm with ffmpeg.wasm before this is
- * emitted. A still photo is always a JPEG. Nothing is normalised server-side, so media captured or
- * picked anywhere plays or displays everywhere.
+ * Every platform produces mp4/AAC or m4a/AAC for recordings — Android and iOS natively, desktop via
+ * the bundled FFmpeg, and web by transcoding its webm with ffmpeg.wasm before this is emitted. The
+ * video codec inside that mp4 is H.264 everywhere except Android, iOS, and macOS desktop, which
+ * prefer HEVC when the device can encode it and fall back to H.264 otherwise — decode support for
+ * both is broad enough on those platforms not to break playback elsewhere. A still photo is always a
+ * JPEG. Nothing is normalised server-side, so media captured or picked anywhere plays or displays
+ * everywhere.
  */
 public data class CaptureResult(
     val kind: CaptureKind,
@@ -93,6 +97,25 @@ public interface MediaRecorderController {
 
     /** Whether the user can switch between the front and back camera. */
     public val supportsCameraFacing: Boolean get() = false
+
+    /**
+     * Whether [CameraPreview] owns the whole viewport, as opposed to being laid out inside an
+     * explicitly shaped frame.
+     *
+     * Desktop draws the feed into a frame that matches the selected output shape — dropping the
+     * whole viewport would either stretch the feed or bury it in black bars — so its controls get
+     * their own row below the preview rather than floating on top of it.
+     */
+    public val previewFillsViewport: Boolean get() = true
+
+    /**
+     * Whether rotating the device changes the shape [CameraPreview] is laid out in, so the capture
+     * screen should move its controls to the side when that shape goes wide.
+     *
+     * Only handheld devices rotate this way — a desktop window or browser tab can be wide without
+     * the user having turned anything sideways, so those platforms keep a fixed bottom dock.
+     */
+    public val adaptsControlsToOrientation: Boolean get() = false
 
     public fun configureVideo(settings: VideoCaptureSettings) {}
 

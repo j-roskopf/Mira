@@ -27,14 +27,14 @@ WORK="${ROOT}/build/ffmpeg-src"
 OUT="${ROOT}/build/ffmpeg"
 mkdir -p "${WORK}" "${OUT}"
 
-# macOS encodes H.264 with VideoToolbox, a system framework: hardware accelerated, no external
-# library to link, and nothing for the binary to depend on at runtime. Linking libx264 there
-# produced a binary tied to the build machine's homebrew copy, since macOS ld has no -Bstatic and
-# prefers the dylib whenever both it and the archive are present.
+# macOS encodes HEVC with VideoToolbox, a system framework: hardware accelerated, no external
+# library to link, and nothing for the binary to depend on at runtime. Linking libx264/libx265
+# there produced a binary tied to the build machine's homebrew copy, since macOS ld has no
+# -Bstatic and prefers the dylib whenever both it and the archive are present.
 case "${TARGET}" in
   macos)
     INDEV=(--enable-indev=avfoundation)
-    VIDEO_ENCODER=(--enable-videotoolbox --enable-encoder=h264_videotoolbox)
+    VIDEO_ENCODER=(--enable-videotoolbox --enable-encoder=hevc_videotoolbox)
     ;;
   windows)
     INDEV=(--enable-indev=dshow)
@@ -73,7 +73,8 @@ CONFIGURE_FLAGS=(
   # Inputs: camera and microphone for this platform.
   "${INDEV[@]}"
 
-  # Encoders: H.264 video (per-platform, see above), AAC audio, MJPEG for the live preview.
+  # Encoders: HEVC on macOS, H.264 on Windows/Linux (per-platform, see above), AAC audio, MJPEG
+  # for the live preview.
   "${VIDEO_ENCODER[@]}"
   --enable-encoder=aac
   --enable-encoder=mjpeg
