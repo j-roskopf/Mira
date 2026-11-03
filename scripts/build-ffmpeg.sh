@@ -15,6 +15,9 @@
 set -euo pipefail
 
 FFMPEG_VERSION="7.1.1"
+# Ubuntu 26.04's libx264-dev no longer ships libx264.a (24.04 did), so Linux builds x264 itself
+# to keep the shipped binary fully static. Pinned to the stable branch head Ubuntu packages.
+X264_VERSION="b35605ace3ddf7c1a5d67a2eb553f034aef41d55"
 TARGET="${1:-}"
 
 if [[ -z "${TARGET}" ]]; then
@@ -150,15 +153,37 @@ CONFIGURE_FLAGS=(
   --enable-bsf=aac_adtstoasc
 )
 
-# MinGW links the runtime (libgcc, libwinpthread) dynamically by default, and on Linux the
-# package's libx264 is only available as a shared object. Either way the single-file artifact
-# would fail to start on a machine without the matching libraries installed, so link the whole
-# executable statically.
+# MinGW links the runtime (libgcc, libwinpthread) dynamically by default, and Linux needs the
+# x264 archive built above because the distro no longer ships one. Either way the single-file
+# artifact would fail to start on a machine without the matching libraries installed, so link
+# the whole executable statically.
 if [[ "${TARGET}" == "windows" || "${TARGET}" == "linux" ]]; then
   CONFIGURE_FLAGS+=(--extra-ldflags=-static)
 fi
 
 cd "${WORK}"
+
+if [[ "${TARGET}" == "linux" ]]; then
+  X264_SRC="${WORK}/x264-${X264_VERSION}"
+  X264_PREFIX="${WORK}/x264-install"
+  if [[ ! -d "${X264_SRC}" ]]; then
+    echo "==> Fetching x264 ${X264_VERSION:0:9}"
+    curl -fsSL -o "${X264_SRC}.tar.gz" \
+      "https://code.videolan.org/videolan/x264/-/archive/${X264_VERSION}/x264-${X264_VERSION}.tar.gz"
+    tar xf "${X264_SRC}.tar.gz"
+  fi
+  if [[ ! -f "${X264_PREFIX}/lib/libx264.a" ]]; then
+    echo "==> Building static x264"
+    (
+      cd "${X264_SRC}"
+      ./configure --prefix="${X264_PREFIX}" --enable-static --disable-shared --disable-cli
+      make -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
+      make install
+    )
+  fi
+  # Prepend so FFmpeg's pkg-config probe resolves the static build, not any distro package.
+  export PKG_CONFIG_PATH="${X264_PREFIX}/lib/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"
+fi
 
 if [[ ! -d "ffmpeg-${FFMPEG_VERSION}" ]]; then
   echo "==> Fetching FFmpeg ${FFMPEG_VERSION}"
