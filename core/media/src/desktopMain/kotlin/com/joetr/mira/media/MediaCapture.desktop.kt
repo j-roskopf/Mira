@@ -641,10 +641,9 @@ internal fun buildPreviewCommand(
  * which need no camera or microphone and therefore run anywhere.
  *
  * Video takes **two encoders**, not one. The `tee` muxer shares a single encoded stream across its
- * slaves, so the recording file (H.264 or HEVC) and an MJPEG preview cannot come from the same
- * encode — tee rejects it with "mjpeg muxer supports only codec mjpeg for type video". The filter
- * graph splits the camera feed, each branch gets its own encoder, and `select` routes the right
- * streams to each slave.
+ * slaves, so the H.264 file and an MJPEG preview cannot come from the same encode — tee rejects it
+ * with "mjpeg muxer supports only codec mjpeg for type video". The filter graph splits the camera
+ * feed, each branch gets its own encoder, and `select` routes the right streams to each slave.
  */
 internal fun buildCaptureCommand(
     binary: String,
@@ -719,19 +718,16 @@ internal const val PREVIEW_WIDTH: Int = 640
  * The recording-branch video encoder.
  *
  * macOS uses VideoToolbox: it is a system framework, so the bundled FFmpeg needs no external
- * library and stays self-contained, and encoding runs on dedicated hardware. HEVC on VideoToolbox
- * is hardware-accelerated on every Mac capable of running this app, so it is used unconditionally
- * there rather than probed for — unlike Android, there is no fleet of older/budget machines behind
- * this build. It takes no `-preset` — that option is libx264's, and passing it makes FFmpeg exit.
- * Windows and Linux stay on libx264: software HEVC (`libx265`) is meaningfully slower and risks not
- * keeping up with a live recording on weaker hardware.
+ * library and stays self-contained, and encoding runs on dedicated hardware. It takes no `-preset`
+ * — that option is libx264's, and passing it makes FFmpeg exit. H.264 is chosen over HEVC
+ * deliberately: the archive has to play on every client, and Android plus the browser cannot be
+ * guaranteed to decode HEVC. Windows and Linux use libx264 for the same reason.
  */
 internal fun videoEncoderArgs(bitrate: Int = CaptureLimits.VIDEO_BITRATE): List<String> = when (desktopOs) {
     DesktopOs.MAC -> listOf(
-        "-c:v:0", "hevc_videotoolbox",
+        "-c:v:0", "h264_videotoolbox",
         "-b:v:0", bitrate.toString(),
         "-realtime", "1",
-        "-tag:v:0", "hvc1",
     )
     DesktopOs.WINDOWS, DesktopOs.LINUX -> listOf(
         "-c:v:0", "libx264",

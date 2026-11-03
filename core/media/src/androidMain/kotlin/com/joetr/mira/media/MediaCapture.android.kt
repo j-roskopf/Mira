@@ -1,7 +1,6 @@
 package com.joetr.mira.media
 
 import android.Manifest
-import android.media.MediaFormat
 import android.media.MediaRecorder
 import android.os.Build
 import android.util.Size
@@ -62,8 +61,8 @@ public actual fun createMediaRecorderController(): MediaRecorderController =
  * Android capture: `MediaRecorder` for audio, CameraX `Recorder` for video.
  *
  * Both are configured to the same limits as every other platform, and both already emit m4a/AAC
- * and mp4 — so nothing needs transcoding before upload. The video recorder asks for HEVC and falls
- * back to CameraX's default (H.264) on devices with no hardware HEVC encoder. Video binds a
+ * and mp4/H.264 — so nothing needs transcoding before upload. H.264 is CameraX's default and is
+ * kept deliberately: it is the one codec every client in the archive can decode. Video binds a
  * `Preview` alongside the recorder so the live camera is visible while composing.
  *
  * No aspect ratio picker is offered: CameraX already rotates the recording to match the device's
@@ -514,12 +513,8 @@ internal class AndroidMediaRecorderController : MediaRecorderController {
             )
             .setTargetVideoEncodingBitRate(videoSettings.quality.bitrate)
             .apply {
-                // Only request HEVC when the device actually has an encoder for it — binding
-                // throws otherwise, and plenty of budget/older phones have no hardware HEVC
-                // encoder at all. Leaving the call out keeps CameraX's H.264 default.
-                if (MediaFormat.MIMETYPE_VIDEO_HEVC in Recorder.getSupportedVideoMimeTypes()) {
-                    setVideoMimeType(MediaFormat.MIMETYPE_VIDEO_HEVC)
-                }
+                // CameraX defaults to H.264. Do not ask for HEVC: Android devices are uneven
+                // about decoding it, and the archive has to play everywhere.
                 val ratio = videoSettings.aspectRatio.cameraXAspectRatio()
                 if (ratio != AspectRatio.RATIO_DEFAULT) setAspectRatio(ratio)
             }

@@ -13,10 +13,19 @@ class CameraFormatTest {
 
     @Test
     fun selectedShapeRequestsCameraOrientationInsteadOfOnlyChangingOutputCanvas() {
-        assertEquals(CameraSize(1920, 1080), preferredCameraSize(VideoCaptureSettings(VideoAspectRatio.LANDSCAPE)))
+        assertEquals(
+            CameraSize(1920, 1080),
+            preferredCameraSize(VideoCaptureSettings(VideoAspectRatio.LANDSCAPE, quality = VideoQuality.HIGH)),
+        )
         assertEquals(CameraSize(1280, 720), preferredCameraSize(VideoCaptureSettings(VideoAspectRatio.LANDSCAPE, quality = VideoQuality.STANDARD)))
-        assertEquals(CameraSize(1080, 1920), preferredCameraSize(VideoCaptureSettings(VideoAspectRatio.PORTRAIT)))
-        assertEquals(CameraSize(1920, 1080), preferredCameraSize(VideoCaptureSettings(VideoAspectRatio.SQUARE)))
+        assertEquals(
+            CameraSize(1080, 1920),
+            preferredCameraSize(VideoCaptureSettings(VideoAspectRatio.PORTRAIT, quality = VideoQuality.HIGH)),
+        )
+        assertEquals(
+            CameraSize(1920, 1080),
+            preferredCameraSize(VideoCaptureSettings(VideoAspectRatio.SQUARE, quality = VideoQuality.HIGH)),
+        )
         assertNull(preferredCameraSize(VideoCaptureSettings(VideoAspectRatio.ORIGINAL)))
     }
 

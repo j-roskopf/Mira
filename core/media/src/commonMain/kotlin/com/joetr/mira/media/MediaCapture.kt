@@ -14,7 +14,7 @@ import kotlinx.coroutines.flow.StateFlow
 public object CaptureLimits {
     public const val VIDEO_WIDTH: Int = 1920
     public const val VIDEO_HEIGHT: Int = 1080
-    public const val VIDEO_BITRATE: Int = 4_000_000
+    public const val VIDEO_BITRATE: Int = 2_500_000
     public const val AUDIO_BITRATE: Int = 64_000
     public const val AUDIO_CHANNELS: Int = 1
     public const val AUDIO_SAMPLE_RATE: Int = 44_100
@@ -31,9 +31,9 @@ public enum class VideoAspectRatio(public val label: String, public val ratio: F
 }
 
 public enum class VideoQuality(public val label: String, public val shortEdge: Int, public val bitrate: Int) {
-    DATA_SAVER("360p · smallest files", 360, 500_000),
-    STANDARD("720p · smaller files", 720, 2_000_000),
-    HIGH("1080p · higher quality", 1080, 4_000_000),
+    DATA_SAVER("360p · smallest files", 360, 350_000),
+    STANDARD("720p · smaller files", 720, 1_200_000),
+    HIGH("1080p · higher quality", 1080, 2_500_000),
 }
 
 public enum class CameraFacing(public val label: String) {
@@ -43,7 +43,7 @@ public enum class CameraFacing(public val label: String) {
 
 public data class VideoCaptureSettings(
     val aspectRatio: VideoAspectRatio = VideoAspectRatio.ORIGINAL,
-    val quality: VideoQuality = VideoQuality.HIGH,
+    val quality: VideoQuality = VideoQuality.STANDARD,
     val facing: CameraFacing = CameraFacing.BACK,
 )
 
@@ -61,13 +61,13 @@ public sealed interface RecordingState {
 /**
  * A finished recording, still photo, or picked-from-library item.
  *
- * Every platform produces mp4/AAC or m4a/AAC for recordings — Android and iOS natively, desktop via
- * the bundled FFmpeg, and web by transcoding its webm with ffmpeg.wasm before this is emitted. The
- * video codec inside that mp4 is H.264 everywhere except Android, iOS, and macOS desktop, which
- * prefer HEVC when the device can encode it and fall back to H.264 otherwise — decode support for
- * both is broad enough on those platforms not to break playback elsewhere. A still photo is always a
- * JPEG. Nothing is normalised server-side, so media captured or picked anywhere plays or displays
- * everywhere.
+ * Every platform produces mp4/H.264+AAC or m4a/AAC for recordings — Android and iOS natively,
+ * desktop via the bundled FFmpeg, and web by transcoding its webm with ffmpeg.wasm before this is
+ * emitted. H.264 is deliberate: it is the one video codec every target can decode, so a file
+ * recorded on any device plays on every other one. HEVC is not used for capture even where the
+ * hardware encoder is faster, because Android and the browser cannot be relied on to decode it.
+ * A still photo is always a JPEG. Nothing is normalised server-side, so media captured or picked
+ * anywhere plays or displays everywhere.
  */
 public data class CaptureResult(
     val kind: CaptureKind,

@@ -260,7 +260,7 @@ internal class DesktopMediaPlayerController : MediaPlayerController {
 
     private fun resolvePath(source: MediaSource): String? = when (source) {
         is MediaSource.LocalFile -> source.path.takeIf { File(it).exists() }
-        is MediaSource.Remote -> source.url
+        is MediaSource.Remote -> downloadRemote(source.url)
         is MediaSource.Bytes -> {
             val extension = if (source.mime.startsWith("video/")) "mp4" else "m4a"
             runCatching {
@@ -272,7 +272,48 @@ internal class DesktopMediaPlayerController : MediaPlayerController {
             }.getOrNull()
         }
     }
+
+    /**
+     * Pulls a remote attachment down before handing it to FFmpeg.
+     *
+     * The trimmed FFmpeg build disables networking (`--disable-network`), so it cannot open an
+     * `https://` URL at all — which is exactly what a file synced from another device is on this
+     * one. Materialising it to a temp file keeps the player working regardless of codec and avoids
+     * needing FFmpeg's HTTP stack.
+     */
+    private fun downloadRemote(url: String): String? {
+        val file = runCatching { File.createTempFile("mira-playback-", ".mp4").apply { deleteOnExit() } }
+            .getOrNull() ?: return null
+        return if (downloadRemoteMedia(url, file)) {
+            tempFile = file
+            file.absolutePath
+        } else {
+            file.delete()
+            null
+        }
+    }
 }
+
+/**
+ * Streams [url] into [destination], returning false if the server rejects it or nothing arrived.
+ *
+ * Split out so the download path can be tested against a local HTTP server rather than the real
+ * Storage endpoint.
+ */
+internal fun downloadRemoteMedia(url: String, destination: File): Boolean = runCatching {
+    val connection = java.net.URI.create(url).toURL().openConnection().apply {
+        connectTimeout = 15_000
+        readTimeout = 30_000
+        if (this is java.net.HttpURLConnection) {
+            instanceFollowRedirects = true
+            requestMethod = "GET"
+        }
+    }
+    connection.getInputStream().use { input ->
+        destination.outputStream().use { output -> input.copyTo(output) }
+    }
+    destination.length() > 0L
+}.getOrDefault(false)
 
 /**
  * Splits an MJPEG stream into frames on its SOI/EOI markers.

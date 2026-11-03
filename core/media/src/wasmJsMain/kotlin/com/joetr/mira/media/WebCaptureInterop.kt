@@ -21,11 +21,11 @@ private fun startWebRecordingJs(video: Boolean): Promise<JsAny?> = js(
     """
     (async () => {
         const constraints = video
-            ? { audio: true, video: { width: { ideal: 1920 }, height: { ideal: 1080 } } }
+            ? { audio: true, video: { width: { ideal: 1280 }, height: { ideal: 720 } } }
             : { audio: { channelCount: 1 } };
         const stream = await navigator.mediaDevices.getUserMedia(constraints);
         const options = video
-            ? { mimeType: 'video/webm', videoBitsPerSecond: 4000000, audioBitsPerSecond: 64000 }
+            ? { mimeType: 'video/webm', videoBitsPerSecond: 1200000, audioBitsPerSecond: 64000 }
             : { mimeType: 'audio/webm', audioBitsPerSecond: 64000 };
         let recorder;
         try {
@@ -176,7 +176,7 @@ private fun transcodeJs(input: Int8Array, video: Boolean): Promise<ArrayBuffer?>
         const outName = video ? 'out.mp4' : 'out.m4a';
         await ffmpeg.writeFile('in.webm', new Uint8Array(input.buffer));
         const args = video
-            ? ['-i', 'in.webm', '-c:v', 'libx264', '-preset', 'veryfast', '-b:v', '4000000',
+            ? ['-i', 'in.webm', '-c:v', 'libx264', '-preset', 'veryfast', '-b:v', '1200000',
                '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '64000', '-ac', '1', outName]
             : ['-i', 'in.webm', '-c:a', 'aac', '-b:a', '64000', '-ac', '1', outName];
         await ffmpeg.exec(args);

@@ -47,7 +47,9 @@ Matrix over `macos-latest`, `windows-latest`, `ubuntu-latest`. Runs
 Mira needs:
 
 - input devices: `avfoundation` (macOS), `dshow` (Windows), `v4l2` + `pulse` (Linux)
-- encoders: `libx264`, `aac`; decoders: `h264`, `aac`, `mjpeg`, `rawvideo`
+- encoders: `h264_videotoolbox` on macOS, `libx264` elsewhere, plus `aac`; decoders: `h264`,
+  `hevc`, `aac`, `mjpeg`, `rawvideo` (HEVC is decode-only, for imported iPhone video and
+  normalising old recordings on upload)
 - muxers: `mp4`, `ipod` (m4a), `mjpeg`; protocols: `file`, `pipe`
 - filters: `scale`, `format`
 

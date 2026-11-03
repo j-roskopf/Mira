@@ -8,6 +8,9 @@ import com.joetr.mira.domain.Attachment
 import com.joetr.mira.domain.AttachmentKind
 import com.joetr.mira.domain.AttachmentState
 import com.joetr.mira.media.MediaSource
+import com.joetr.mira.media.isHevcVideo
+import com.joetr.mira.media.normalizeVideo
+import com.joetr.mira.media.supportsVideoNormalization
 import com.joetr.mira.network.MiraFirebase
 import com.joetr.mira.platform.currentTimeMillis
 import com.joetr.mira.platform.detectImageMimeType
@@ -81,6 +84,9 @@ public class MediaRepository(
      */
     public suspend fun uploadPending(ownerId: String, includeVideo: Boolean): Int {
         val session = firebase.sessionForSync() ?: return 0
+        // One-time repair for video recorded while HEVC capture was briefly enabled. Requeue the
+        // local originals so the normal upload path re-encodes them to H.264 for every client.
+        if (supportsVideoNormalization) requeueNonPortableVideos()
         val staged = io { queries.selectUnuploadedBlobs().awaitAsList() }
         var uploaded = 0
 
@@ -269,6 +275,27 @@ public class MediaRepository(
         }
     }
 
+    /**
+     * Re-marks already-uploaded HEVC videos as pending so they are uploaded again as H.264.
+     *
+     * Earlier builds could record HEVC on Apple hardware. The cloud copy is the source for every
+     * other device, so a device that still holds the original has to republish it in a codec
+     * everyone can decode. Runs once per install; platforms without a transcoder skip it entirely.
+     */
+    private suspend fun requeueNonPortableVideos() {
+        val done = io { queries.getSetting(NON_PORTABLE_VIDEO_REPAIR_KEY).awaitAsOneOrNull() }
+        if (done == "1") return
+        for (blob in io { queries.selectAllBlobs().awaitAsList() }) {
+            if (blob.uploaded == 0L) continue
+            val entry = entries.entry(blob.entry_id) ?: continue
+            val attachment = entry.attachments.firstOrNull { it.id == blob.id } ?: continue
+            if (attachment.kind != AttachmentKind.VIDEO) continue
+            val bytes = readBytes(blob.id) ?: continue
+            if (isHevcVideo(bytes)) io { queries.markBlobPending(blob.id) }
+        }
+        io { queries.putSetting(NON_PORTABLE_VIDEO_REPAIR_KEY, "1") }
+    }
+
     private suspend fun readBytes(attachmentId: String): ByteArray? {
         val blob = io { queries.selectBlob(attachmentId).awaitAsOneOrNull() } ?: return null
         blob.data_?.let { return it }
@@ -283,13 +310,22 @@ public class MediaRepository(
 private data class UploadPayload(val bytes: ByteArray, val mime: String)
 
 /**
- * Normalises a photo to JPEG before it reaches Storage.
+ * Normalises media to a format every client can read before it reaches Storage.
  *
  * Phones hand back HEIC from the camera roll, and HEIC is not viewable in the browser or on every
  * desktop decoder. [resizeImage] uses each platform's own image stack (and heic2any on web) to bake
- * orientation and produce a JPEG every client can show. The local copy keeps its original bytes.
+ * orientation and produce a JPEG every client can show.
+ *
+ * Video is re-encoded when it is HEVC. The archive's contract is that anything recorded anywhere
+ * plays everywhere, and Android plus the browser cannot be relied on to decode HEVC; desktop's
+ * bundled FFmpeg is the only transcoder in the app, so other platforms pass their bytes through.
+ * The local copy keeps its original bytes.
  */
 private suspend fun uploadPayloadFor(attachment: Attachment, bytes: ByteArray): UploadPayload {
+    if (attachment.kind == AttachmentKind.VIDEO) {
+        val portable = runCatching { normalizeVideo(bytes, attachment.mime) }.getOrNull()
+        return UploadPayload(portable ?: bytes, attachment.mime)
+    }
     if (attachment.kind != AttachmentKind.IMAGE) return UploadPayload(bytes, attachment.mime)
     val actualMime = detectImageMimeType(bytes) ?: attachment.mime
     if (actualMime in JPEG_SAFE_IMAGE_MIMES) return UploadPayload(bytes, actualMime)
@@ -314,6 +350,7 @@ internal fun extensionFor(mime: String): String = when {
 private val JPEG_SAFE_IMAGE_MIMES: Set<String> = setOf("image/jpeg", "image/png", "image/webp")
 private const val PHOTO_MAX_LONG_EDGE: Int = 4096
 private const val PHOTO_JPEG_QUALITY: Int = 90
+private const val NON_PORTABLE_VIDEO_REPAIR_KEY: String = "non_portable_video_repair_done"
 
 /** Reads a captured file from disk. Web has no filesystem, so it stores bytes inline instead. */
 internal expect suspend fun readLocalFile(path: String): ByteArray?
