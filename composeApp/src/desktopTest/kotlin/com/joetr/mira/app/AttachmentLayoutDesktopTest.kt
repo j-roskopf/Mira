@@ -53,6 +53,8 @@ class AttachmentLayoutDesktopTest {
             }
             // Capture controls only exist when FFmpeg is bundled; CI runs without it.
             val captureSupported = supportsCapture(CaptureKind.AUDIO)
+            onNodeWithText("1 video · 2 voice notes").assertIsDisplayed()
+            onNodeWithContentDescription("Expand attachments").performClick()
             onNodeWithText("Video 1").assertIsDisplayed()
             onNodeWithText("Save").assertIsDisplayed()
             if (captureSupported) onNodeWithContentDescription("Record audio").assertIsDisplayed()

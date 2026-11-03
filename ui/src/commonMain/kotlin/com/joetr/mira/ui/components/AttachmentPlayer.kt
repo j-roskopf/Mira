@@ -68,59 +68,77 @@ public fun AudioAttachmentRow(
     onPlayPause: () -> Unit,
     onSeek: (Float) -> Unit,
     modifier: Modifier = Modifier,
+    label: String = "Voice note",
+    onRemove: (() -> Unit)? = null,
 ) {
     val colors = MiraTheme.colors
     val duration = state.durationMs.takeIf { it > 0 } ?: attachment.durationMs
 
-    Row(
+    Column(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(MiraRadii.card))
             .background(colors.surfaceRaised)
             .padding(MiraSpacing.md),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(MiraSpacing.md),
+        verticalArrangement = Arrangement.spacedBy(MiraSpacing.xs),
     ) {
-        Box(
-            modifier = Modifier
-                .size(36.dp)
-                .background(colors.accent, CircleShape)
-                .clickable(enabled = !state.preparing, onClick = onPlayPause),
-            contentAlignment = Alignment.Center,
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(MiraSpacing.md),
         ) {
-            MiraIcon(
-                painter = if (state.playing) MiraIcons.Pause else MiraIcons.Play,
-                tint = colors.onAccent,
-                size = 16.dp,
-            )
-        }
-
-        Column(Modifier.weight(1f)) {
-            Scrubber(progress = state.progress, onSeek = onSeek)
-            Spacer(Modifier.height(MiraSpacing.xs))
-            Row {
-                Text(
-                    text = formatDuration(state.positionMs),
-                    style = MiraTheme.type.meta,
-                    color = colors.inkMuted,
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .background(colors.accent, CircleShape)
+                    .clickable(enabled = !state.preparing, onClick = onPlayPause),
+                contentAlignment = Alignment.Center,
+            ) {
+                MiraIcon(
+                    painter = if (state.playing) MiraIcons.Pause else MiraIcons.Play,
+                    tint = colors.onAccent,
+                    size = 18.dp,
                 )
-                Spacer(Modifier.weight(1f))
-                Text(
-                    text = formatDuration(duration),
-                    style = MiraTheme.type.meta,
-                    color = colors.inkMuted,
+            }
+
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = label,
+                        style = MiraTheme.type.uiBody,
+                        color = colors.ink,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (!attachment.isUploaded) {
+                        MiraIcon(MiraIcons.CloudPending, tint = colors.accent, size = 16.dp)
+                        Spacer(Modifier.width(MiraSpacing.xs))
+                    }
+                    Text(
+                        text = if (state.positionMs > 0) {
+                            "${formatDuration(state.positionMs)} / ${formatDuration(duration)}"
+                        } else {
+                            formatDuration(duration)
+                        },
+                        style = MiraTheme.type.meta,
+                        color = colors.inkMuted,
+                    )
+                }
+                Spacer(Modifier.height(MiraSpacing.xxs))
+                Scrubber(progress = state.progress, onSeek = onSeek)
+            }
+
+            onRemove?.let { remove ->
+                CircleIconButton(
+                    icon = MiraIcons.Trash,
+                    contentDescription = "Remove $label",
+                    onClick = remove,
                 )
             }
         }
 
-        if (!attachment.isUploaded) {
-            MiraIcon(MiraIcons.CloudPending, tint = colors.accent, size = 16.dp)
+        state.errorMessage?.let { message ->
+            Text(message, style = MiraTheme.type.meta, color = colors.error)
         }
-    }
-
-    state.errorMessage?.let { message ->
-        Spacer(Modifier.height(MiraSpacing.xs))
-        Text(message, style = MiraTheme.type.meta, color = colors.error)
     }
 }
 
@@ -185,21 +203,23 @@ public fun VideoAttachmentTile(
             }
         }
 
-        Spacer(Modifier.height(MiraSpacing.sm))
+        if (started) {
+            Spacer(Modifier.height(MiraSpacing.sm))
 
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.weight(1f)) {
-                Scrubber(progress = state.progress, onSeek = onSeek)
-            }
-            Spacer(Modifier.width(MiraSpacing.md))
-            Text(
-                text = "${formatDuration(state.positionMs)} / ${formatDuration(duration)}",
-                style = MiraTheme.type.meta,
-                color = colors.inkMuted,
-            )
-            if (!attachment.isUploaded) {
-                Spacer(Modifier.width(MiraSpacing.sm))
-                MiraIcon(MiraIcons.CloudPending, tint = colors.accent, size = 16.dp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.weight(1f)) {
+                    Scrubber(progress = state.progress, onSeek = onSeek)
+                }
+                Spacer(Modifier.width(MiraSpacing.md))
+                Text(
+                    text = "${formatDuration(state.positionMs)} / ${formatDuration(duration)}",
+                    style = MiraTheme.type.meta,
+                    color = colors.inkMuted,
+                )
+                if (!attachment.isUploaded) {
+                    Spacer(Modifier.width(MiraSpacing.sm))
+                    MiraIcon(MiraIcons.CloudPending, tint = colors.accent, size = 16.dp)
+                }
             }
         }
 

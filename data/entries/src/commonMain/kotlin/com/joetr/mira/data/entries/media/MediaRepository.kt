@@ -10,6 +10,9 @@ import com.joetr.mira.domain.AttachmentState
 import com.joetr.mira.media.MediaSource
 import com.joetr.mira.network.MiraFirebase
 import com.joetr.mira.platform.currentTimeMillis
+import com.joetr.mira.platform.detectImageMimeType
+import com.joetr.mira.platform.isJpegImage
+import com.joetr.mira.platform.resizeImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -87,14 +90,15 @@ public class MediaRepository(
             if (attachment.kind == AttachmentKind.VIDEO && !includeVideo) continue
 
             val bytes = readBytes(blob.id) ?: continue
+            val payload = uploadPayloadFor(attachment, bytes)
             val objectName = firebase.storage.mediaPath(
                 ownerId = ownerId,
                 entryId = entry.id,
                 attachmentId = attachment.id,
-                extension = extensionFor(attachment.mime),
+                extension = extensionFor(payload.mime),
             )
             val result = runCatching {
-                firebase.storage.upload(session.idToken, objectName, bytes, attachment.mime)
+                firebase.storage.upload(session.idToken, objectName, payload.bytes, payload.mime)
             }.getOrNull() ?: continue
 
             val updated = entry.copy(
@@ -105,6 +109,7 @@ public class MediaRepository(
                         it.copy(
                             storagePath = result.storagePath,
                             url = result.downloadUrl,
+                            mime = payload.mime,
                             state = AttachmentState.UPLOADED,
                         )
                     }
@@ -124,7 +129,8 @@ public class MediaRepository(
      *
      * Prefers a local file so playback starts instantly and works offline, falls back to a signed
      * Storage URL so it streams, and only materialises bytes when neither is available — which is
-     * the web case, and anything captured but not yet uploaded.
+     * the web case, and anything captured but not yet uploaded. Images are always materialised,
+     * since the image tile decodes bytes rather than streaming a URL.
      */
     public suspend fun sourceFor(attachment: Attachment): MediaSource? {
         val blob = io { queries.selectBlob(attachment.id).awaitAsOneOrNull() }
@@ -135,6 +141,13 @@ public class MediaRepository(
             }
             blob.data_?.let { bytes -> return MediaSource.Bytes(bytes, attachment.mime) }
         }
+        // Photos are decoded in memory rather than streamed, so a remote-only image has to be
+        // fetched now; handing back a Remote would leave the tile stuck on its placeholder after
+        // a reinstall or cache eviction even though the bytes are safely in Storage.
+        if (attachment.kind == AttachmentKind.IMAGE) {
+            bytesFor(attachment)?.let { return MediaSource.Bytes(it, attachment.mime) }
+        }
+
         attachment.url?.let { return MediaSource.Remote(it) }
 
         // No local copy and no usable URL: fetch it so playback can still happen.
@@ -267,12 +280,40 @@ public class MediaRepository(
         withContext(Dispatchers.Default) { block() }
 }
 
+private data class UploadPayload(val bytes: ByteArray, val mime: String)
+
+/**
+ * Normalises a photo to JPEG before it reaches Storage.
+ *
+ * Phones hand back HEIC from the camera roll, and HEIC is not viewable in the browser or on every
+ * desktop decoder. [resizeImage] uses each platform's own image stack (and heic2any on web) to bake
+ * orientation and produce a JPEG every client can show. The local copy keeps its original bytes.
+ */
+private suspend fun uploadPayloadFor(attachment: Attachment, bytes: ByteArray): UploadPayload {
+    if (attachment.kind != AttachmentKind.IMAGE) return UploadPayload(bytes, attachment.mime)
+    val actualMime = detectImageMimeType(bytes) ?: attachment.mime
+    if (actualMime in JPEG_SAFE_IMAGE_MIMES) return UploadPayload(bytes, actualMime)
+
+    val jpeg = runCatching {
+        resizeImage(bytes, PHOTO_MAX_LONG_EDGE, PHOTO_JPEG_QUALITY)
+    }.getOrNull() ?: return UploadPayload(bytes, actualMime)
+    return if (isJpegImage(jpeg)) UploadPayload(jpeg, "image/jpeg") else UploadPayload(bytes, actualMime)
+}
+
 internal fun extensionFor(mime: String): String = when {
     mime.startsWith("video/") -> "mp4"
     mime.contains("mp4") || mime.contains("aac") || mime.contains("m4a") -> "m4a"
     mime.contains("webm") -> "webm"
+    mime.contains("jpeg") || mime.contains("jpg") -> "jpg"
+    mime.contains("png") -> "png"
+    mime.contains("webp") -> "webp"
+    mime.contains("heic") || mime.contains("heif") -> "heic"
     else -> "bin"
 }
+
+private val JPEG_SAFE_IMAGE_MIMES: Set<String> = setOf("image/jpeg", "image/png", "image/webp")
+private const val PHOTO_MAX_LONG_EDGE: Int = 4096
+private const val PHOTO_JPEG_QUALITY: Int = 90
 
 /** Reads a captured file from disk. Web has no filesystem, so it stores bytes inline instead. */
 internal expect suspend fun readLocalFile(path: String): ByteArray?
