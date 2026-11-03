@@ -86,3 +86,47 @@ public fun busyThreshold(counts: Collection<Int>, floor: Int = 3): Int {
     val index = ((active.size - 1) * 0.9f).toInt()
     return maxOf(active[index], floor)
 }
+
+/**
+ * The stable colour identity of a tag. Every tag name owns one of the ten accents, so `#walk`
+ * reads the same colour on every screen and across launches without storing a colour anywhere.
+ */
+public fun tagAccent(tag: String): MiraAccent {
+    var hash = 0
+    for (character in tag.trim().trimStart('#').lowercase()) {
+        hash = hash * 31 + character.code
+    }
+    return MiraAccent.entries[((hash % MiraAccent.entries.size) + MiraAccent.entries.size) % MiraAccent.entries.size]
+}
+
+/** Soft tinted surface and matching ink for a tag pill. */
+public data class TagTone(val surface: Color, val ink: Color)
+
+/**
+ * Derives a tag's pill colours from its accent.
+ *
+ * The surface is a low-chroma wash at the accent's hue, and the ink keeps that hue at a lightness
+ * that clears AA against the surface in both themes. Alpha is not used: over the near-black canvas
+ * it would grey the colours into mush.
+ */
+public fun MiraAccent.tagTone(dark: Boolean): TagTone {
+    val surface = Oklch(
+        l = if (dark) DARK_TAG_L else LIGHT_TAG_L,
+        c = if (dark) DARK_TAG_C else LIGHT_TAG_C,
+        h = oklch.h,
+    ).toColor()
+    val ink = Oklch(
+        l = if (dark) DARK_TAG_INK_L else LIGHT_TAG_INK_L,
+        c = oklch.c.coerceAtMost(0.16f),
+        h = oklch.h,
+    ).toColor()
+    return TagTone(surface, ink)
+}
+
+private const val DARK_TAG_L = 0.31f
+private const val DARK_TAG_C = 0.075f
+private const val DARK_TAG_INK_L = 0.83f
+private const val LIGHT_TAG_L = 0.93f
+private const val LIGHT_TAG_C = 0.042f
+private const val LIGHT_TAG_INK_L = 0.45f
+

@@ -5,8 +5,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasSetTextAction
-import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.runDesktopComposeUiTest
 import com.joetr.mira.domain.LocalDateKey
@@ -44,7 +45,56 @@ class EntryEditingDesktopTest {
         runOnIdle { body.value = "Previously saved note" }
         onNode(hasSetTextAction()).assertTextEquals("Previously saved note")
         onNode(hasSetTextAction()).performTextReplacement("Updated note")
-        onNodeWithText("Save changes").performClick()
+        onNodeWithContentDescription("Save changes").performClick()
         runOnIdle { assertEquals("Updated note", saved) }
+    }
+
+    @Test
+    fun tagCanBeAddedFromEditorAndRemoved() = runDesktopComposeUiTest {
+        val tags = mutableStateOf(listOf("work"))
+        var added: String? = null
+        var removed: String? = null
+        setContent {
+            MiraTheme(darkTheme = true, motionEnabled = false) {
+                val recorder = remember { createMediaRecorderController() }
+                ComposeEntryScreen(
+                    date = LocalDateKey("2026-10-31"),
+                    initialBody = "Note",
+                    recorder = recorder,
+                    attachments = emptyList(),
+                    tags = tags.value,
+                    recentTags = listOf("walk", "travel"),
+                    onAddTag = { tag ->
+                        added = tag
+                        tags.value = tags.value + tag
+                    },
+                    onRemoveTag = { tag ->
+                        removed = tag
+                        tags.value = tags.value - tag
+                    },
+                    sourceFor = { null },
+                    onRemoveAttachment = {},
+                    onBodyChange = {},
+                    onDateClick = {},
+                    onCaptureFinished = {}, onMediaPicked = {},
+                    onSave = {},
+                    onCancel = {},
+                )
+            }
+        }
+
+        onNodeWithContentDescription("Add tag").performClick()
+        onNodeWithContentDescription("Tag name").performTextInput("travel")
+        onNodeWithContentDescription("Add tag").performClick()
+        runOnIdle {
+            assertEquals("travel", added)
+            assertEquals(listOf("work", "travel"), tags.value)
+        }
+
+        onNodeWithContentDescription("Remove tag #travel").performClick()
+        runOnIdle {
+            assertEquals("travel", removed)
+            assertEquals(listOf("work"), tags.value)
+        }
     }
 }

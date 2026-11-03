@@ -102,6 +102,13 @@ SELECT * FROM entries WHERE pending_sync = 1;
 selectEarliestEntryDate:
 SELECT MIN(local_date) FROM entries WHERE owner_id = ? AND deleted = 0;
 
+-- Tags from the most recently touched entries, decoded and de-duplicated by the repository.
+selectRecentTags:
+SELECT tags FROM entries
+WHERE owner_id = ? AND deleted = 0
+ORDER BY updated_at DESC
+LIMIT 100;
+
 purgeDeletedBefore:
 DELETE FROM entries WHERE deleted = 1 AND updated_at < ?;
 

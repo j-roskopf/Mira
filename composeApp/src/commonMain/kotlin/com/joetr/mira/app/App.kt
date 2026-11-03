@@ -190,6 +190,7 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
                                 },
                                 onSelectDate = { selectedDate = it },
                                 onRefresh = ::refresh,
+                                refreshVersion = refreshVersion,
                             )
                             }
                         }
@@ -260,6 +261,7 @@ private fun Screen(
     onReplaceTop: (Any) -> Unit,
     onSelectDate: (LocalDateKey) -> Unit,
     onRefresh: () -> Unit,
+    refreshVersion: Int,
 ) {
     val scope = rememberCoroutineScope()
 
@@ -280,7 +282,6 @@ private fun Screen(
                 }
             },
             onYearClick = { onNavigate(YearKey(it)) },
-            onSettingsClick = { onNavigate(SettingsKey) },
             onComposeClick = { onNavigate(ComposeKey(date = today.value)) },
         )
 
@@ -310,10 +311,13 @@ private fun Screen(
             var attachments by remember(key) {
                 mutableStateOf<List<com.joetr.mira.domain.Attachment>>(emptyList())
             }
+            var tags by remember(key) { mutableStateOf<List<String>>(emptyList()) }
+            var recentTags by remember { mutableStateOf<List<String>>(emptyList()) }
             var confirmDelete by remember(key) { mutableStateOf(false) }
             var entryError by remember(key) { mutableStateOf<String?>(null) }
             var loaded by remember(key) { mutableStateOf(key.entryId == null) }
             var saving by remember(key) { mutableStateOf(false) }
+            var deleting by remember(key) { mutableStateOf(false) }
             var stagingRecording by remember(key) { mutableStateOf(false) }
 
             val deletableId = key.entryId
@@ -327,19 +331,31 @@ private fun Screen(
                     destructive = true,
                     onConfirm = {
                         confirmDelete = false
-                        scope.launch {
-                            val existing = graph.entries.entry(deletableId)
-                            graph.entries.delete(deletableId)
-                            existing?.let { graph.media.deleteMediaFor(it.id, it.attachments) }
-                            graph.onLocalWrite()
-                            onRefresh()
-                            onBack()
+                        if (!deleting) {
+                            deleting = true
+                            scope.launch {
+                                try {
+                                    val existing = graph.entries.entry(deletableId)
+                                    graph.entries.delete(deletableId)
+                                    existing?.let { graph.media.deleteMediaFor(it.id, it.attachments) }
+                                    graph.onLocalWrite()
+                                    onRefresh()
+                                    onBack()
+                                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                                    throw cancelled
+                                } catch (_: Exception) {
+                                    entryError = "Could not delete this entry. Please try again."
+                                    deleting = false
+                                }
+                            }
                         }
                     },
                 )
             }
 
-            LaunchedEffect(key.entryId) {
+            LaunchedEffect(key.entryId, ownerId) {
+                recentTags = runCatching { graph.entries.recentTags(ownerId) }
+                    .getOrDefault(emptyList())
                 key.entryId?.let { id ->
                     try {
                         val existing = graph.entries.entry(id)
@@ -348,6 +364,7 @@ private fun Screen(
                         } else {
                             body = existing.body
                             attachments = existing.attachments
+                            tags = existing.tags
                             loaded = true
                         }
                     } catch (cancelled: kotlinx.coroutines.CancellationException) {
@@ -371,10 +388,19 @@ private fun Screen(
             ComposeEntryScreen(
                 date = date,
                 saving = saving || stagingRecording,
+                deleting = deleting,
                 errorMessage = entryError,
                 initialBody = body,
                 recorder = recorder,
                 attachments = attachments,
+                tags = tags,
+                recentTags = recentTags,
+                onAddTag = { tag ->
+                    if (tags.none { it.equals(tag, ignoreCase = true) }) tags = tags + tag
+                },
+                onRemoveTag = { tag ->
+                    tags = tags.filterNot { it.equals(tag, ignoreCase = true) }
+                },
                 sourceFor = { graph.media.sourceFor(it) },
                 onRemoveAttachment = { attachment ->
                     attachments = attachments.filterNot { it.id == attachment.id }
@@ -430,10 +456,15 @@ private fun Screen(
                                     body = body,
                                     date = date,
                                     attachments = attachments,
+                                    tags = tags,
                                 )
                             } else {
                                 graph.entries.save(
-                                    requireNotNull(existing).copy(body = body, attachments = attachments),
+                                    requireNotNull(existing).copy(
+                                        body = body,
+                                        attachments = attachments,
+                                        tags = tags,
+                                    ),
                                 )
                             }
                             graph.onEntrySaved(ownerId)
@@ -459,6 +490,7 @@ private fun Screen(
         is TimelineKey -> TimelineScreen(
             entries = timeline,
             onEntryClick = { onNavigate(ComposeKey(entryId = it.id, date = it.localDate.value)) },
+            today = today,
         )
 
         is SearchKey -> {
@@ -467,15 +499,22 @@ private fun Screen(
                 mutableStateOf(com.joetr.mira.data.entries.SearchFilters())
             }
             var results by remember { mutableStateOf<List<Entry>>(emptyList()) }
+            var availableTags by remember { mutableStateOf<List<String>>(emptyList()) }
 
             LaunchedEffect(query, filters, ownerId) {
                 results = graph.entries.search(ownerId, query, filters)
+            }
+
+            LaunchedEffect(ownerId, refreshVersion) {
+                availableTags = runCatching { graph.entries.recentTags(ownerId) }
+                    .getOrDefault(emptyList())
             }
 
             SearchScreen(
                 query = query,
                 filters = filters,
                 results = results,
+                availableTags = availableTags,
                 onQueryChange = { query = it },
                 onFiltersChange = { filters = it },
                 onEntryClick = {

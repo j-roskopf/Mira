@@ -81,6 +81,12 @@ class MainScreensDesktopTest {
     @Test fun timelineDark() = capture("Timeline_dark", dark = true) { TimelineSample() }
     @Test fun timelineLight() = capture("Timeline_light", dark = false) { TimelineSample() }
 
+    @Test fun timelineCompactDark() =
+        capture("TimelineCompact_dark", dark = true, width = 390, height = 780) { TimelineSample() }
+
+    @Test fun timelineCompactLight() =
+        capture("TimelineCompact_light", dark = false, width = 390, height = 780) { TimelineSample() }
+
     @Test fun searchDark() = capture("Search_dark", dark = true) { SearchSample() }
     @Test fun searchLight() = capture("Search_light", dark = false) { SearchSample() }
 
@@ -198,7 +204,6 @@ private fun CalendarSample(empty: Boolean = false) {
         onMonthChange = {},
         onDayClick = {},
         onYearClick = {},
-        onSettingsClick = {},
         onComposeClick = {},
     )
 }
@@ -234,7 +239,7 @@ private fun DaySample(empty: Boolean = false) {
 
 @Composable
 private fun TimelineSample() {
-    TimelineScreen(entries = sampleEntries, onEntryClick = {})
+    TimelineScreen(entries = sampleEntries, onEntryClick = {}, today = sampleDate)
 }
 
 @Composable
@@ -243,6 +248,7 @@ private fun SearchSample() {
         query = "morning",
         filters = SearchFilters(),
         results = sampleEntries.takeLast(1),
+        availableTags = listOf("walk", "work", "travel"),
         onQueryChange = {},
         onFiltersChange = {},
         onEntryClick = {},
@@ -257,6 +263,8 @@ private fun ComposeSample() {
         initialBody = sampleEntries[1].body,
         recorder = recorder,
         attachments = sampleEntries[1].attachments,
+        tags = listOf("voice", "commute"),
+        recentTags = listOf("walk", "work", "travel"),
         sourceFor = { null },
         onRemoveAttachment = {},
         onBodyChange = {},

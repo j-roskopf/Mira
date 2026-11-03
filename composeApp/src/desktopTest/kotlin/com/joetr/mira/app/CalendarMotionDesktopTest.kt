@@ -50,7 +50,7 @@ class CalendarMotionDesktopTest {
         setContent {
             MiraTheme {
                 CalendarScreen(month.value, LocalDateKey("2026-10-31"), emptyMap(), null,
-                    { month.value = it }, { selected = it }, {}, {}, {}, showComposeButton = false)
+                    { month.value = it }, { selected = it }, {}, {}, showComposeButton = false)
             }
         }
         mainClock.autoAdvance = false
@@ -71,7 +71,7 @@ class CalendarMotionDesktopTest {
         setContent {
             MiraTheme(motionEnabled = false) {
                 CalendarScreen(month.value, LocalDateKey("2026-01-01"), emptyMap(), null,
-                    { month.value = it }, {}, {}, {}, {}, showComposeButton = false)
+                    { month.value = it }, {}, {}, {}, showComposeButton = false)
             }
         }
         onNodeWithText("Feb", ignoreCase = true).performClick()
