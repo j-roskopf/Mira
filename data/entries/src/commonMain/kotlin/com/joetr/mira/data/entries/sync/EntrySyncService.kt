@@ -34,6 +34,10 @@ public class EntrySyncService(
     private val _state = MutableStateFlow(SyncState(SyncStatus.SYNCED))
     public val state: StateFlow<SyncState> = _state.asStateFlow()
 
+    /** Bumped after each successful sync so observers can reload data the sync may have changed. */
+    private val _revision = MutableStateFlow(0L)
+    public val revision: StateFlow<Long> = _revision.asStateFlow()
+
     private var debounceJob: Job? = null
     private var lastSuccessfulSyncAt: Long = 0L
 
@@ -108,6 +112,7 @@ public class EntrySyncService(
                     }
                 }.onSuccess {
                     lastSuccessfulSyncAt = currentTimeMillis()
+                    _revision.value++
                     refreshState()
                 }.onFailure { error ->
                     refreshState(status = SyncStatus.ERROR, errorMessage = error.message)
