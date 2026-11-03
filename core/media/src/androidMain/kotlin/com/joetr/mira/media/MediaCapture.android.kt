@@ -1,6 +1,7 @@
 package com.joetr.mira.media
 
 import android.Manifest
+import android.media.MediaFormat
 import android.media.MediaRecorder
 import android.os.Build
 import android.util.Size
@@ -60,11 +61,13 @@ public actual fun createMediaRecorderController(): MediaRecorderController =
 /**
  * Android capture: `MediaRecorder` for audio, CameraX `Recorder` for video.
  *
- * Both are configured to the same limits as every other platform, and both already emit
- * m4a/AAC and mp4/H.264 — so nothing needs transcoding before upload. Video binds a `Preview`
- * alongside the recorder so the live camera is visible while composing.
+ * Both are configured to the same limits as every other platform, and both already emit m4a/AAC
+ * and mp4 — so nothing needs transcoding before upload. The video recorder asks for HEVC and falls
+ * back to CameraX's default (H.264) on devices with no hardware HEVC encoder. Video binds a
+ * `Preview` alongside the recorder so the live camera is visible while composing.
  *
- * CameraX only exposes 4:3 and 16:9 recording ratios, so square capture is not offered here.
+ * No aspect ratio picker is offered: CameraX already rotates the recording to match the device's
+ * orientation, so the captured shape just follows however the phone is held.
  */
 internal class AndroidMediaRecorderController : MediaRecorderController {
 
@@ -72,12 +75,13 @@ internal class AndroidMediaRecorderController : MediaRecorderController {
     override val state: StateFlow<RecordingState> = _state.asStateFlow()
 
     override val supportsVideoSettings: Boolean = true
-    override val supportedAspectRatios: List<VideoAspectRatio> = listOf(
-        VideoAspectRatio.ORIGINAL,
-        VideoAspectRatio.LANDSCAPE,
-    )
+
+    // Rotating the phone already rotates the recording via CameraX's target rotation, so there is
+    // nothing left for a manual shape picker to do.
+    override val supportedAspectRatios: List<VideoAspectRatio> = emptyList()
     override val supportedQualities: List<VideoQuality> = VideoQuality.entries
     override val supportsCameraFacing: Boolean = true
+    override val adaptsControlsToOrientation: Boolean = true
 
     private val videoCapture = MutableStateFlow<VideoCapture<Recorder>?>(null)
     @Volatile private var imageCaptureUseCase: ImageCapture? = null
@@ -502,6 +506,7 @@ internal class AndroidMediaRecorderController : MediaRecorderController {
         val quality = when (videoSettings.quality) {
             VideoQuality.HIGH -> Quality.FHD
             VideoQuality.STANDARD -> Quality.HD
+            VideoQuality.DATA_SAVER -> Quality.SD
         }
         val recorder = Recorder.Builder()
             .setQualitySelector(
@@ -509,6 +514,12 @@ internal class AndroidMediaRecorderController : MediaRecorderController {
             )
             .setTargetVideoEncodingBitRate(videoSettings.quality.bitrate)
             .apply {
+                // Only request HEVC when the device actually has an encoder for it — binding
+                // throws otherwise, and plenty of budget/older phones have no hardware HEVC
+                // encoder at all. Leaving the call out keeps CameraX's H.264 default.
+                if (MediaFormat.MIMETYPE_VIDEO_HEVC in Recorder.getSupportedVideoMimeTypes()) {
+                    setVideoMimeType(MediaFormat.MIMETYPE_VIDEO_HEVC)
+                }
                 val ratio = videoSettings.aspectRatio.cameraXAspectRatio()
                 if (ratio != AspectRatio.RATIO_DEFAULT) setAspectRatio(ratio)
             }

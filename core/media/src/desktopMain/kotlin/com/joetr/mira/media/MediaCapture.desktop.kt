@@ -60,6 +60,7 @@ internal class DesktopMediaRecorderController(
     }
 
     override val supportsVideoSettings: Boolean = true
+    override val previewFillsViewport: Boolean = false
     private var videoSettings = VideoCaptureSettings()
     private var cameraSize: CameraSize? = null
 
@@ -640,9 +641,10 @@ internal fun buildPreviewCommand(
  * which need no camera or microphone and therefore run anywhere.
  *
  * Video takes **two encoders**, not one. The `tee` muxer shares a single encoded stream across its
- * slaves, so an H.264 file and an MJPEG preview cannot come from the same encode — tee rejects it
- * with "mjpeg muxer supports only codec mjpeg for type video". The filter graph splits the camera
- * feed, each branch gets its own encoder, and `select` routes the right streams to each slave.
+ * slaves, so the recording file (H.264 or HEVC) and an MJPEG preview cannot come from the same
+ * encode — tee rejects it with "mjpeg muxer supports only codec mjpeg for type video". The filter
+ * graph splits the camera feed, each branch gets its own encoder, and `select` routes the right
+ * streams to each slave.
  */
 internal fun buildCaptureCommand(
     binary: String,
@@ -701,7 +703,7 @@ internal fun buildCaptureCommand(
     if (kind == CaptureKind.VIDEO) {
         add("-f")
         add("tee")
-        // Streams 0 and 1 are the H.264 and MJPEG branches in -map order, 2 is the audio. The
+        // Streams 0 and 1 are the recording and MJPEG branches in -map order, 2 is the audio. The
         // comma inside a tee slave option must be escaped or tee reads it as the next option.
         add("[select=0\\,2:f=mp4]$outputPath|[select=1:f=mjpeg]pipe:1")
     } else {
@@ -714,17 +716,22 @@ internal fun buildCaptureCommand(
 internal const val PREVIEW_WIDTH: Int = 640
 
 /**
- * The H.264 encoder for the recording branch.
+ * The recording-branch video encoder.
  *
  * macOS uses VideoToolbox: it is a system framework, so the bundled FFmpeg needs no external
- * library and stays self-contained, and encoding runs on dedicated hardware. It takes no `-preset`
- * — that option is libx264's, and passing it makes FFmpeg exit.
+ * library and stays self-contained, and encoding runs on dedicated hardware. HEVC on VideoToolbox
+ * is hardware-accelerated on every Mac capable of running this app, so it is used unconditionally
+ * there rather than probed for — unlike Android, there is no fleet of older/budget machines behind
+ * this build. It takes no `-preset` — that option is libx264's, and passing it makes FFmpeg exit.
+ * Windows and Linux stay on libx264: software HEVC (`libx265`) is meaningfully slower and risks not
+ * keeping up with a live recording on weaker hardware.
  */
 internal fun videoEncoderArgs(bitrate: Int = CaptureLimits.VIDEO_BITRATE): List<String> = when (desktopOs) {
     DesktopOs.MAC -> listOf(
-        "-c:v:0", "h264_videotoolbox",
+        "-c:v:0", "hevc_videotoolbox",
         "-b:v:0", bitrate.toString(),
         "-realtime", "1",
+        "-tag:v:0", "hvc1",
     )
     DesktopOs.WINDOWS, DesktopOs.LINUX -> listOf(
         "-c:v:0", "libx264",
@@ -733,7 +740,7 @@ internal fun videoEncoderArgs(bitrate: Int = CaptureLimits.VIDEO_BITRATE): List<
     )
 }
 
-/** Fit the entire camera image, then pad before splitting so preview and recording match. */
+/** Fit the camera image so it covers the selected shape, cropping the overflow. */
 internal fun videoFilter(settings: VideoCaptureSettings): String {
     val edge = settings.quality.shortEdge
     val (width, height) = when (settings.aspectRatio) {
@@ -742,6 +749,9 @@ internal fun videoFilter(settings: VideoCaptureSettings): String {
         VideoAspectRatio.SQUARE -> edge to edge
         VideoAspectRatio.ORIGINAL -> return "scale=${edge * 16 / 9}:${edge * 16 / 9}:force_original_aspect_ratio=decrease:force_divisible_by=2,setsar=1"
     }
-    return "scale=$width:$height:force_original_aspect_ratio=decrease:force_divisible_by=2," +
-        "pad=$width:$height:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1"
+    // Crop rather than pad: a padded square or portrait frame is mostly black bars, so it never
+    // reads as the shape the user picked. Cropping fills the frame, matching what the phone
+    // cameras already do with their own previews.
+    return "scale=$width:$height:force_original_aspect_ratio=increase:force_divisible_by=2," +
+        "crop=$width:$height,setsar=1"
 }

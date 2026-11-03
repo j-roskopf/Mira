@@ -667,6 +667,19 @@ public object MiraIcons {
         }
     }
 
+    public val QualityDataSaver: MiraIconPainter = MiraIconPainter { scope, tint, stroke ->
+        with(scope) {
+            val bottom = size.height * 0.78f
+            drawRoundRect(
+                color = tint,
+                topLeft = Offset(size.width * 0.42f, bottom - size.height * 0.30f),
+                size = Size(size.width * 0.14f, size.height * 0.30f),
+                cornerRadius = CornerRadius(2f, 2f),
+                style = stroke,
+            )
+        }
+    }
+
     public val QualityStandard: MiraIconPainter = MiraIconPainter { scope, tint, stroke ->
         with(scope) {
             val bottom = size.height * 0.78f

@@ -30,12 +30,15 @@ import platform.AVFoundation.AVCapturePhotoOutput
 import platform.AVFoundation.AVCapturePhotoSettings
 import platform.AVFoundation.AVCaptureSession
 import platform.AVFoundation.AVCaptureSessionPreset1280x720
+import platform.AVFoundation.AVCaptureSessionPreset640x480
 import platform.AVFoundation.AVCaptureSessionPresetHigh
 import platform.AVFoundation.AVCaptureVideoPreviewLayer
 import platform.AVFoundation.AVCaptureFileOutput
 import platform.AVFoundation.AVLayerVideoGravityResizeAspectFill
 import platform.AVFoundation.AVMediaTypeAudio
 import platform.AVFoundation.AVMediaTypeVideo
+import platform.AVFoundation.AVVideoCodecKey
+import platform.AVFoundation.AVVideoCodecTypeHEVC
 import platform.AVFoundation.defaultDeviceWithDeviceType
 import platform.AVFoundation.fileDataRepresentation
 import platform.CoreAudioTypes.kAudioFormatMPEG4AAC
@@ -67,10 +70,29 @@ public actual fun createMediaRecorderController(): MediaRecorderController =
     IosMediaRecorderController()
 
 /**
+ * Switches the movie output to HEVC when the device can actually encode it.
+ *
+ * Every iPhone since the 6s can, but checking first avoids the alternative — `setOutputSettings`
+ * does not validate, so an unsupported codec would silently produce an empty or broken recording
+ * instead of failing loudly.
+ */
+@OptIn(ExperimentalForeignApi::class)
+private fun AVCaptureMovieFileOutput.preferHevcIfAvailable() {
+    val connection = connectionWithMediaType(AVMediaTypeVideo) ?: return
+    if (availableVideoCodecTypes().contains(AVVideoCodecTypeHEVC)) {
+        setOutputSettings(mapOf<Any?, Any?>(AVVideoCodecKey to AVVideoCodecTypeHEVC), connection)
+    }
+}
+
+/**
  * iOS capture: `AVAudioRecorder` for audio, `AVCaptureMovieFileOutput` for video.
  *
- * Both already produce m4a/AAC and mp4/H.264 at the limits Mira applies everywhere, so nothing is
- * transcoded before upload.
+ * Both already produce m4a/AAC and mp4 at the limits Mira applies everywhere, so nothing is
+ * transcoded before upload. Video asks for HEVC — hardware-encoded on every iPhone since the 6s —
+ * falling back to H.264 if a given device ever reports it unsupported.
+ *
+ * No aspect ratio picker is offered: AVFoundation already orients the recording to match the
+ * device, so the captured shape just follows however the phone is held.
  */
 @OptIn(ExperimentalForeignApi::class, ExperimentalTime::class)
 internal class IosMediaRecorderController : MediaRecorderController {
@@ -82,8 +104,10 @@ internal class IosMediaRecorderController : MediaRecorderController {
         private set
 
     override val supportsVideoSettings: Boolean = true
+    override val supportedAspectRatios: List<VideoAspectRatio> = emptyList()
     override val supportedQualities: List<VideoQuality> = VideoQuality.entries
     override val supportsCameraFacing: Boolean = true
+    override val adaptsControlsToOrientation: Boolean = true
 
     private var videoSettings = VideoCaptureSettings()
     private var videoInput: AVCaptureDeviceInput? = null
@@ -146,6 +170,7 @@ internal class IosMediaRecorderController : MediaRecorderController {
         }
         val output = AVCaptureMovieFileOutput()
         if (created.canAddOutput(output)) created.addOutput(output)
+        output.preferHevcIfAvailable()
         movieOutput = output
         val stillOutput = AVCapturePhotoOutput()
         if (created.canAddOutput(stillOutput)) created.addOutput(stillOutput)
@@ -319,6 +344,7 @@ internal class IosMediaRecorderController : MediaRecorderController {
     private fun VideoQuality.iosPreset(): String? = when (this) {
         VideoQuality.HIGH -> AVCaptureSessionPresetHigh
         VideoQuality.STANDARD -> AVCaptureSessionPreset1280x720
+        VideoQuality.DATA_SAVER -> AVCaptureSessionPreset640x480
     }
 
     private fun nowMillis(): Long = Clock.System.now().toEpochMilliseconds()

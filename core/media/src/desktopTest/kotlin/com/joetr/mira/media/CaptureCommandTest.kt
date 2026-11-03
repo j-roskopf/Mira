@@ -49,9 +49,10 @@ class CaptureCommandTest {
 
             val probe = probe(output)
             println("video capture probe:\n$probe")
-            assertTrue("expected H.264 in the mp4, got: $probe", probe.contains("h264"))
+            val expectedCodec = if (desktopOs == DesktopOs.MAC) "hevc" else "h264"
+            assertTrue("expected $expectedCodec in the mp4, got: $probe", probe.contains(expectedCodec))
             assertTrue("expected AAC in the mp4, got: $probe", probe.contains("aac"))
-            // The recording branch upscales to the configured width and converts for H.264.
+            // The recording branch upscales to the configured width before encoding.
             assertTrue("expected yuv420p, got: $probe", probe.contains("yuv420p"))
             assertTrue(
                 "expected ${CaptureLimits.VIDEO_WIDTH} wide, got: $probe",
@@ -184,7 +185,8 @@ class CaptureCommandTest {
             audioInputIndex = 1,
         )
         val encoder = command[command.indexOf("-c:v:0") + 1]
-        if (encoder == "h264_videotoolbox") {
+        if (desktopOs == DesktopOs.MAC) {
+            assertEquals("hevc_videotoolbox", encoder)
             assertTrue("-preset is a libx264 option", "-preset" !in command)
         } else {
             assertEquals("libx264", encoder)
@@ -204,7 +206,7 @@ class CaptureCommandTest {
         assertTrue(
             command.none {
                 it == "tee" || it == "libx264" || it == "h264_videotoolbox" ||
-                    it == "-filter_complex"
+                    it == "hevc_videotoolbox" || it == "-filter_complex"
             },
         )
         assertEquals("/tmp/out.m4a", command.last())
@@ -264,21 +266,18 @@ class CaptureCommandTest {
                     }
                     assertEquals("$settings width", expected.first, recording.width)
                     assertEquals("$settings height", expected.second, recording.height)
-                    // All four camera edges must survive both outputs; cropping would remove them.
+                    // Cropping to the chosen shape must fill the frame, never pad it with black bars.
                     for (image in listOf(recording, preview)) {
-                        val scale = minOf(image.width / 360.0, image.height / 640.0)
-                        val left = (image.width - 360 * scale) / 2
-                        val top = (image.height - 640 * scale) / 2
-                        val points = listOf(
-                            Triple(180, 32, java.awt.Color.RED), Triple(180, 608, java.awt.Color.BLUE),
-                            Triple(18, 320, java.awt.Color.GREEN), Triple(342, 320, java.awt.Color.YELLOW),
+                        val corners = listOf(
+                            0 to 0, image.width - 1 to 0,
+                            0 to image.height - 1, image.width - 1 to image.height - 1,
                         )
-                        for ((x, y, expectedColor) in points) {
-                            val actual = java.awt.Color(image.getRGB((left + x * scale).toInt(), (top + y * scale).toInt()))
-                            assertTrue("$settings lost camera edge at $x,$y: $actual",
-                                kotlin.math.abs(actual.red - expectedColor.red) < 40 &&
-                                    kotlin.math.abs(actual.green - expectedColor.green) < 40 &&
-                                    kotlin.math.abs(actual.blue - expectedColor.blue) < 40)
+                        for ((x, y) in corners) {
+                            val actual = java.awt.Color(image.getRGB(x, y))
+                            assertTrue(
+                                "$settings left a pad bar at $x,$y: $actual",
+                                actual.red + actual.green + actual.blue > 90,
+                            )
                         }
                     }
                     assertEquals(
