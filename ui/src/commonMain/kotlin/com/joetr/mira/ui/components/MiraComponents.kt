@@ -16,6 +16,8 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -40,6 +42,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -55,6 +58,8 @@ import com.joetr.mira.ui.theme.MiraRadii
 import com.joetr.mira.ui.theme.MiraSizes
 import com.joetr.mira.ui.theme.MiraSpacing
 import com.joetr.mira.ui.theme.MiraTheme
+import com.joetr.mira.ui.theme.tagAccent
+import com.joetr.mira.ui.theme.tagTone
 import com.joetr.mira.ui.weekdayUpper
 
 /**
@@ -119,9 +124,6 @@ public fun EntryCard(
                 )
                 Spacer(Modifier.weight(1f))
                 AttachmentDots(entry)
-                onClick?.let { edit ->
-                    CircleIconButton(MiraIcons.Edit, "Edit entry", onClick = edit)
-                }
             }
             if (entry.body.isNotBlank()) {
                 Spacer(Modifier.height(MiraSpacing.sm))
@@ -132,6 +134,10 @@ public fun EntryCard(
                     maxLines = maxLines,
                     overflow = TextOverflow.Ellipsis,
                 )
+            }
+            if (entry.tags.isNotEmpty()) {
+                Spacer(Modifier.height(MiraSpacing.sm))
+                EntryTagLine(entry.tags)
             }
         }
     }
@@ -253,23 +259,29 @@ public fun CircleIconButton(
     modifier: Modifier = Modifier,
     tint: Color? = null,
     filled: Boolean = false,
+    enabled: Boolean = true,
 ) {
     val colors = MiraTheme.colors
+    val active = enabled
     Box(
         modifier = modifier
             .sizeIn(minWidth = MiraSizes.touchTarget, minHeight = MiraSizes.touchTarget)
-            .clickable(onClick = onClick),
+            .clickable(enabled = active, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Box(
             modifier = Modifier
                 .size(34.dp)
-                .background(if (filled) colors.accent else colors.surfaceRaised, CircleShape),
+                .background(
+                    if (filled && active) colors.accent else colors.surfaceRaised,
+                    CircleShape,
+                ),
             contentAlignment = Alignment.Center,
         ) {
             MiraIcon(
                 painter = icon,
-                tint = tint ?: if (filled) colors.onAccent else colors.ink,
+                tint = tint
+                    ?: if (filled && active) colors.onAccent else if (active) colors.ink else colors.inkFaint,
                 size = 18.dp,
                 modifier = Modifier.semantics { this.contentDescription = contentDescription },
             )
@@ -406,6 +418,97 @@ public fun Chip(
             color = if (selected) colors.onAccent else colors.inkMuted,
         )
     }
+}
+
+/** A tag pill. Optionally selectable, and optionally removable via a small trailing close glyph. */
+@Composable
+public fun TagChip(
+    text: String,
+    modifier: Modifier = Modifier,
+    selected: Boolean = false,
+    onClick: (() -> Unit)? = null,
+    onRemove: (() -> Unit)? = null,
+) {
+    val colors = MiraTheme.colors
+    val tone = remember(text, colors.isDark) { tagAccent(text).tagTone(colors.isDark) }
+    val surface = if (selected) colors.accent else tone.surface
+    val ink = if (selected) colors.onAccent else tone.ink
+    Row(
+        modifier = modifier
+            .background(surface, RoundedCornerShape(MiraRadii.pill))
+            .let { if (onClick != null) it.clickable(onClick = onClick) else it }
+            .padding(
+                start = MiraSpacing.lg,
+                end = if (onRemove != null) MiraSpacing.xs else MiraSpacing.lg,
+                top = MiraSpacing.xs,
+                bottom = MiraSpacing.xs,
+            ),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(MiraSpacing.xs),
+    ) {
+        Text(
+            text,
+            style = MiraTheme.type.meta.copy(fontWeight = FontWeight.Medium),
+            color = ink,
+        )
+        onRemove?.let { remove ->
+            Box(
+                modifier = Modifier
+                    .size(18.dp)
+                    .clip(CircleShape)
+                    .clickable(onClickLabel = "Remove tag $text", onClick = remove)
+                    .semantics { contentDescription = "Remove tag $text" },
+                contentAlignment = Alignment.Center,
+            ) {
+                MiraIcon(
+                    painter = MiraIcons.Close,
+                    tint = ink,
+                    size = 11.dp,
+                )
+            }
+        }
+    }
+}
+
+/** The quiet tag pills under entry text — one line of wrapping chip chrome, no interaction. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+public fun EntryTagLine(
+    tags: List<String>,
+    modifier: Modifier = Modifier,
+    maxTags: Int = 4,
+) {
+    if (tags.isEmpty()) return
+    val shown = tags.take(maxTags)
+    val overflow = tags.size - shown.size
+    FlowRow(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(MiraSpacing.xs),
+        verticalArrangement = Arrangement.spacedBy(MiraSpacing.xs),
+    ) {
+        shown.forEach { tag -> EntryTagPill("#$tag") }
+        if (overflow > 0) EntryTagPill("+$overflow", faint = true)
+    }
+}
+
+@Composable
+private fun EntryTagPill(text: String, faint: Boolean = false) {
+    val colors = MiraTheme.colors
+    val tone = if (faint) null else remember(text, colors.isDark) {
+        tagAccent(text).tagTone(colors.isDark)
+    }
+    Text(
+        text = text,
+        modifier = Modifier
+            .background(
+                tone?.surface ?: colors.surfaceRaised,
+                RoundedCornerShape(MiraRadii.pill),
+            )
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+        style = MiraTheme.type.meta.copy(fontWeight = FontWeight.Medium),
+        color = tone?.ink ?: colors.inkMuted,
+        maxLines = 1,
+    )
 }
 
 @Composable

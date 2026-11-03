@@ -36,7 +36,6 @@ import com.joetr.mira.domain.LocalDateKey
 import com.joetr.mira.domain.MonthKey
 import com.joetr.mira.domain.lengthOfMonth
 import com.joetr.mira.ui.WEEKDAY_HEADS
-import com.joetr.mira.ui.components.CircleIconButton
 import com.joetr.mira.ui.components.HeatmapDay
 import com.joetr.mira.ui.components.MiraFab
 import com.joetr.mira.ui.displayName
@@ -90,7 +89,6 @@ public fun CalendarScreen(
     onMonthChange: (MonthKey) -> Unit,
     onDayClick: (LocalDateKey) -> Unit,
     onYearClick: (Int) -> Unit,
-    onSettingsClick: () -> Unit,
     onComposeClick: () -> Unit,
     modifier: Modifier = Modifier,
     showComposeButton: Boolean = true,
@@ -143,7 +141,6 @@ public fun CalendarScreen(
                     onMonthSelect = { onMonthChange(MonthKey.of(month.year, it)) },
                     onYearClick = { onYearClick(month.year) },
                     onYearStep = { onMonthChange(month.plusMonths(it * 12)) },
-                    onSettingsClick = onSettingsClick,
                 )
 
                 Spacer(Modifier.height(MiraSpacing.xxxl))
@@ -222,7 +219,6 @@ private fun YearNavigator(
     onMonthSelect: (Int) -> Unit,
     onYearClick: () -> Unit,
     onYearStep: (Int) -> Unit,
-    onSettingsClick: () -> Unit,
 ) {
     val colors = MiraTheme.colors
     Column {
@@ -239,12 +235,6 @@ private fun YearNavigator(
                     .size(4.dp)
                     .background(colors.accent, androidx.compose.foundation.shape.CircleShape)
                     .clickable { onYearStep(1) },
-            )
-            Spacer(Modifier.weight(1f))
-            CircleIconButton(
-                icon = MiraIcons.Settings,
-                contentDescription = "Settings",
-                onClick = onSettingsClick,
             )
         }
 

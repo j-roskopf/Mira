@@ -56,7 +56,7 @@ class AttachmentLayoutDesktopTest {
             onNodeWithText("1 video · 2 voice notes").assertIsDisplayed()
             onNodeWithContentDescription("Expand attachments").performClick()
             onNodeWithText("Video 1").assertIsDisplayed()
-            onNodeWithText("Save").assertIsDisplayed()
+            onNodeWithContentDescription("Save entry").assertIsDisplayed()
             if (captureSupported) onNodeWithContentDescription("Record audio").assertIsDisplayed()
             onRoot().captureRoboImage("src/desktopTest/resources/roborazzi/Attachments_${width}.png")
             onNodeWithContentDescription("Remove Voice note 3").performScrollTo().assertIsDisplayed().performClick()

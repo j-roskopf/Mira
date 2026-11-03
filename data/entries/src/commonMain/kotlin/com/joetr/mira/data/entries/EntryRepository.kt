@@ -83,6 +83,19 @@ public class EntryRepository(
         rows.map { it.toEntry() }.filter { filters.matches(it) }
     }
 
+    /**
+     * Tags used most recently, newest first, de-duplicated case-insensitively.
+     *
+     * Read from the last hundred touched entries rather than a separate tag table: the journal is
+     * small, and a derived list needs no migration or sync rules of its own.
+     */
+    public suspend fun recentTags(ownerId: String, limit: Int = 20): List<String> = io {
+        queries.selectRecentTags(ownerId).awaitAsList()
+            .flatMap { decodeTags(it) }
+            .distinctBy { it.lowercase() }
+            .take(limit)
+    }
+
     public suspend fun earliestDate(ownerId: String): LocalDateKey? = io {
         queries.selectEarliestEntryDate(ownerId).awaitAsOneOrNull()?.MIN?.let { LocalDateKey(it) }
     }

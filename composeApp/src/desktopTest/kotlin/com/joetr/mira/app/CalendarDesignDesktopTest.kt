@@ -49,7 +49,7 @@ class CalendarDesignDesktopTest {
                             CalendarScreen(
                                 MonthKey("2026-10"), LocalDateKey("2026-10-31"),
                                 mapOf(LocalDateKey("2026-10-12") to 1, LocalDateKey("2026-10-20") to 3),
-                                null, {}, {}, {}, {}, { composed = true },
+                                null, {}, {}, {}, { composed = true },
                                 showComposeButton = width >= 600,
                             )
                         }
@@ -71,7 +71,7 @@ class CalendarDesignDesktopTest {
         setContent {
             MiraTheme(darkTheme = false, motionEnabled = false) {
                 CalendarScreen(MonthKey("2026-10"), date, mapOf(date to 1), selected.value,
-                    {}, { selected.value = it }, {}, {}, {}, showComposeButton = false)
+                    {}, { selected.value = it }, {}, {}, showComposeButton = false)
                 selected.value?.let { day ->
                     DayEntriesSheet(day, listOf(entry), { selected.value = null },
                         { opened = it }, {})

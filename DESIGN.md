@@ -247,9 +247,12 @@ and video capture expand in place within the sheet; they do not push a new scree
 
 ### Timeline
 
-Reverse-chronological across all time, grouped by month with sticky `sectionLabel` headers. Rows
-are date, excerpt (2-line Literata clamp), attachment dots. Scroll position is persisted per session
-so returning doesn't dump you at today.
+Reverse-chronological across all time, grouped by month with sticky `sectionLabel` headers. Entries
+sit on a continuous date rail: a 62dp gutter holds `30 OCT` over the wall-clock time, a thin
+`inkFaint` line runs down the leading edge, and each entry marks the line with a hollow node.
+Today's node is filled with the accent and its date reads `TODAY`; it is the only coloured point on
+the rail. Content is the excerpt (2-line Literata clamp) with attachment dots opposite. Scroll
+position is persisted per session so returning doesn't dump you at today.
 
 ### Search
 

@@ -2,6 +2,7 @@ package com.joetr.mira.feature.search
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -14,8 +15,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.AnnotatedString
@@ -29,6 +32,7 @@ import com.joetr.mira.domain.Entry
 import com.joetr.mira.ui.components.AttachmentDots
 import com.joetr.mira.ui.components.Chip
 import com.joetr.mira.ui.components.EmptyState
+import com.joetr.mira.ui.components.EntryTagLine
 import com.joetr.mira.ui.components.SearchField
 import com.joetr.mira.ui.components.SectionLabel
 import com.joetr.mira.ui.displayDayMonth
@@ -51,8 +55,17 @@ public fun SearchScreen(
     onFiltersChange: (SearchFilters) -> Unit,
     onEntryClick: (Entry) -> Unit,
     modifier: Modifier = Modifier,
+    availableTags: List<String> = emptyList(),
 ) {
     val colors = MiraTheme.colors
+    val tagOptions = remember(availableTags, filters.tag) {
+        buildList {
+            filters.tag?.let { add(it) }
+            availableTags.forEach { tag ->
+                if (none { it.equals(tag, ignoreCase = true) }) add(tag)
+            }
+        }.take(12)
+    }
 
     Column(
         modifier = modifier
@@ -77,6 +90,33 @@ public fun SearchScreen(
                 selected = filters.hasVideo,
                 onClick = { onFiltersChange(filters.copy(hasVideo = !filters.hasVideo)) },
             )
+        }
+
+        if (tagOptions.isNotEmpty()) {
+            Spacer(Modifier.height(MiraSpacing.md))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(MiraSpacing.sm),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "TAGS",
+                    style = MiraTheme.type.sectionLabel,
+                    color = colors.inkFaint,
+                )
+                tagOptions.forEach { tag ->
+                    val selected = filters.tag?.equals(tag, ignoreCase = true) == true
+                    Chip(
+                        text = "#$tag",
+                        selected = selected,
+                        onClick = {
+                            onFiltersChange(filters.copy(tag = if (selected) null else tag))
+                        },
+                    )
+                }
+            }
         }
 
         Spacer(Modifier.height(MiraSpacing.xl))
@@ -120,14 +160,19 @@ private fun ResultRow(entry: Entry, query: String, onClick: () -> Unit) {
             color = colors.inkMuted,
             modifier = Modifier.width(72.dp),
         )
-        Text(
-            text = highlight(entry.excerpt(), query, colors.accent),
-            style = MiraTheme.type.entryExcerpt,
-            color = colors.ink,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.weight(1f),
-        )
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = highlight(entry.excerpt(), query, colors.accent),
+                style = MiraTheme.type.entryExcerpt,
+                color = colors.ink,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (entry.tags.isNotEmpty()) {
+                Spacer(Modifier.height(MiraSpacing.xs))
+                EntryTagLine(entry.tags)
+            }
+        }
         AttachmentDots(entry, modifier = Modifier.padding(top = MiraSpacing.xs))
     }
 }
