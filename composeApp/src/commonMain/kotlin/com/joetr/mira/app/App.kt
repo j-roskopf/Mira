@@ -74,6 +74,7 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
     val session by graph.session.observeSession()
         .collectAsState(SessionState.LocalPending(""))
     val pendingUpdateInstallConfirmation by graph.updates.pendingInstallConfirmation.collectAsState()
+    val syncRevision by graph.sync.revision.collectAsState()
 
     val systemDark = isSystemInDarkTheme()
     val dark = when (themeMode) {
@@ -106,6 +107,16 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
 
     fun refresh() {
         refreshVersion++
+    }
+
+    // A sync can pull entries after the screen has already loaded (startup, sign-in, manual
+    // "Sync now"). Reload whenever one completes so the calendar is not left showing stale data.
+    var seenSyncRevision by remember { mutableStateOf(syncRevision) }
+    LaunchedEffect(syncRevision) {
+        if (syncRevision != seenSyncRevision) {
+            seenSyncRevision = syncRevision
+            refresh()
+        }
     }
 
     // Cancel obsolete loads when month navigation interrupts an in-flight request.
