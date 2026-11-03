@@ -148,6 +148,17 @@ kotlin {
 compose.desktop {
     application {
         mainClass = "com.joetr.mira.app.MainKt"
+        buildTypes {
+            release {
+                // Compose enables ProGuard for release builds by default. Without explicit keep
+                // rules it shrinks the reflectively-loaded SQLite JDBC driver out of the bundle.
+                proguard {
+                    configurationFiles.from(
+                        project.layout.projectDirectory.file("desktop/proguard/release.pro"),
+                    )
+                }
+            }
+        }
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
 
