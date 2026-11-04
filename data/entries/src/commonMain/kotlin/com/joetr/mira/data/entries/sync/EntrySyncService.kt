@@ -1,11 +1,13 @@
 package com.joetr.mira.data.entries.sync
 
+import com.joetr.mira.data.entries.media.MediaRepository
 import com.joetr.mira.db.MiraDatabase
 import com.joetr.mira.domain.SyncState
 import com.joetr.mira.domain.SyncStatus
 import com.joetr.mira.network.MiraFirebase
 import com.joetr.mira.platform.currentTimeMillis
 import com.joetr.mira.platform.isNetworkAvailable
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -21,13 +23,16 @@ import kotlinx.coroutines.withContext
 /**
  * Drains the entry outbox to Firestore and merges remote changes back.
  *
- * Entry rows sync eagerly — text lands on every device within seconds. Media is handled separately
- * by the upload worker, which is why an attachment can reach another device before its bytes do.
+ * Entry rows sync eagerly — text lands on every device within seconds. Attachment bytes are
+ * uploaded first and the owning rows pushed afterwards, so a remote device never sees an entry
+ * referencing media the cloud does not have. A run is only [SyncStatus.SYNCED] once both are done.
  */
 public class EntrySyncService(
     database: MiraDatabase,
     private val firebase: MiraFirebase,
+    private val media: MediaRepository,
     private val scope: CoroutineScope? = null,
+    private val includeVideo: suspend () -> Boolean = { true },
 ) {
     private val backend: EntrySyncBackend = createEntrySyncBackend(database, firebase)
     private val syncMutex = Mutex()
@@ -49,7 +54,7 @@ public class EntrySyncService(
     /** Sync on returning to the foreground, unless a recent run succeeded with nothing queued. */
     public suspend fun syncIfStale() {
         if (!firebase.isConfigured) return
-        val hasPending = backend.pendingCount() > 0
+        val hasPending = backend.pendingCount() > 0 || media.pendingUploadCount() > 0
         if (
             !hasPending &&
             lastSuccessfulSyncAt > 0L &&
@@ -74,7 +79,7 @@ public class EntrySyncService(
 
     public suspend fun dropPendingSync() {
         backend.dropPending()
-        _state.value = SyncState(status = SyncStatus.SYNCED, pendingCount = 0)
+        refreshState()
     }
 
     public suspend fun dropPendingSyncEntry(id: String) {
@@ -104,8 +109,15 @@ public class EntrySyncService(
                     refreshState(status = SyncStatus.ERROR, errorMessage = "Not signed in to sync")
                     return@withContext
                 }
+                // Refresh first so the UI can name the attachments about to upload, not just say
+                // "Syncing" from a stale count.
+                refreshState()
                 _state.value = _state.value.copy(status = SyncStatus.SYNCING)
-                runCatching {
+                // Attachment bytes are best-effort: a failed upload must never stop the entry
+                // itself from reaching the cloud. Anything left behind stays queued for the next
+                // run, and refreshState reports it as pending rather than synced.
+                runCatchingNonCancellation { uploadPendingMedia() }
+                runCatchingNonCancellation {
                     val result = backend.sync(options)
                     if (result.rejected > 0) {
                         error(result.errorMessage ?: "Sync rejected ${result.rejected} change(s)")
@@ -121,11 +133,26 @@ public class EntrySyncService(
         }
     }
 
+    /**
+     * Uploads attachment bytes before pushing entries, so another device never receives an entry
+     * that points at media the cloud does not have yet.
+     */
+    private suspend fun uploadPendingMedia() {
+        val ownerId = firebase.sessionForSync()?.localId ?: return
+        media.uploadPending(ownerId, includeVideo = includeVideo())
+    }
+
     private suspend fun refreshState(status: SyncStatus? = null, errorMessage: String? = null) {
         val pending = backend.pendingEntries()
+        val pendingMedia = media.pendingUploadCount()
         _state.value = SyncState(
-            status = status ?: if (pending.isNotEmpty()) SyncStatus.PENDING else SyncStatus.SYNCED,
+            status = status ?: if (pending.isNotEmpty() || pendingMedia > 0) {
+                SyncStatus.PENDING
+            } else {
+                SyncStatus.SYNCED
+            },
             pendingCount = pending.size,
+            pendingMediaCount = pendingMedia,
             errorMessage = errorMessage,
             pendingEntries = pending,
         )
@@ -136,3 +163,13 @@ public class EntrySyncService(
         const val FOREGROUND_SYNC_MIN_INTERVAL_MS: Long = 5 * 60 * 1_000L
     }
 }
+
+/** Like [runCatching], but never turns cancellation into an ordinary failure. */
+private inline fun <T> runCatchingNonCancellation(block: () -> T): Result<T> =
+    try {
+        Result.success(block())
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (error: Throwable) {
+        Result.failure(error)
+    }

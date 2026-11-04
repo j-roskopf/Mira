@@ -2,6 +2,7 @@ package com.joetr.mira.data.entries.sync
 
 import app.cash.sqldelight.async.coroutines.awaitAsList
 import app.cash.sqldelight.async.coroutines.awaitAsOneOrNull
+import com.joetr.mira.data.entries.decodeAttachments
 import com.joetr.mira.data.entries.encodeAttachments
 import com.joetr.mira.data.entries.encodeTags
 import com.joetr.mira.data.entries.toAttachment
@@ -271,6 +272,20 @@ internal class FirebaseEntrySyncBackend(
                 RemoteMergeAction.Apply -> Unit
             }
             val remote = doc.entry
+            val remoteAttachments = remote.attachments.map { it.toAttachment() }
+            // Attachments that were left out of the push because their bytes were not uploaded
+            // yet are not in the remote row. Keep them locally so they are not lost (and can
+            // still upload) when a newer edit arrives from another device.
+            val localPendingAttachments = if (remote.deleted) {
+                emptyList()
+            } else {
+                local?.let { decodeAttachments(it.attachments) }
+                    ?.filterNot { it.isUploaded }
+                    .orEmpty()
+            }
+            val remoteIds = remoteAttachments.mapTo(mutableSetOf()) { it.id }
+            val mergedAttachments = remoteAttachments +
+                localPendingAttachments.filterNot { it.id in remoteIds }
             queries.upsertEntry(
                 id = doc.id,
                 owner_id = ownerId,
@@ -279,7 +294,7 @@ internal class FirebaseEntrySyncBackend(
                 created_tz = remote.createdTz,
                 updated_at = remote.updatedAt,
                 body = remote.body,
-                attachments = encodeAttachments(remote.attachments.map { it.toAttachment() }),
+                attachments = encodeAttachments(mergedAttachments),
                 tags = encodeTags(remote.tags),
                 deleted = if (remote.deleted) 1L else 0L,
                 pending_sync = 0L,

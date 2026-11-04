@@ -16,6 +16,7 @@ public data class PendingSyncEntry(
 public data class SyncState(
     val status: SyncStatus = SyncStatus.SYNCED,
     val pendingCount: Int = 0,
+    val pendingMediaCount: Int = 0,
     val errorMessage: String? = null,
     val pendingEntries: List<PendingSyncEntry> = emptyList(),
 )

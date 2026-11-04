@@ -1,5 +1,6 @@
 package com.joetr.mira.media
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.await
 import org.khronos.webgl.ArrayBuffer
 import org.khronos.webgl.Int8Array
@@ -20,10 +21,57 @@ internal fun currentTimeMs(): Double = js("Date.now()")
 private fun startWebRecordingJs(video: Boolean): Promise<JsAny?> = js(
     """
     (async () => {
-        const constraints = video
-            ? { audio: true, video: { width: { ideal: 1280 }, height: { ideal: 720 } } }
-            : { audio: { channelCount: 1 } };
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        // The camera preview is opened as soon as the capture screen mounts, so reuse its video
+        // track instead of asking the browser for a second camera stream. Only the microphone is
+        // acquired here (video-only previews would otherwise prompt for it up front).
+        const preview = video
+            ? (window.__miraCapturePreview
+                || (window.__miraCapturePreviewPromise
+                    ? await window.__miraCapturePreviewPromise
+                    : null))
+            : null;
+
+        let stream;
+        let previewEl = null;
+        if (video && preview) {
+            const microphone = await navigator.mediaDevices.getUserMedia({
+                audio: { channelCount: 1 },
+            });
+            stream = new MediaStream([
+                ...preview.stream.getVideoTracks(),
+                ...microphone.getAudioTracks(),
+            ]);
+            previewEl = preview.preview;
+            previewEl.srcObject = stream;
+            window.__miraCapturePreview = { stream: stream, preview: previewEl };
+        } else {
+            const constraints = video
+                ? { audio: true, video: { width: { ideal: 1280 }, height: { ideal: 720 } } }
+                : { audio: { channelCount: 1 } };
+            stream = await navigator.mediaDevices.getUserMedia(constraints);
+            if (video) {
+                previewEl = document.createElement('video');
+                previewEl.id = 'mira-capture-preview';
+                previewEl.autoplay = true;
+                previewEl.muted = true;
+                previewEl.playsInline = true;
+                previewEl.srcObject = stream;
+                previewEl.style.position = 'fixed';
+                previewEl.style.pointerEvents = 'none';
+                previewEl.style.objectFit = 'cover';
+                previewEl.style.zIndex = '1';
+                document.body.appendChild(previewEl);
+                const bounds = window.__miraPreviewBounds;
+                if (bounds) {
+                    previewEl.style.left = bounds[0] + 'px';
+                    previewEl.style.top = bounds[1] + 'px';
+                    previewEl.style.width = bounds[2] + 'px';
+                    previewEl.style.height = bounds[3] + 'px';
+                }
+                window.__miraCapturePreview = { stream: stream, preview: previewEl };
+            }
+        }
+
         const options = video
             ? { mimeType: 'video/webm', videoBitsPerSecond: 1200000, audioBitsPerSecond: 64000 }
             : { mimeType: 'audio/webm', audioBitsPerSecond: 64000 };
@@ -36,21 +84,6 @@ private fun startWebRecordingJs(video: Boolean): Promise<JsAny?> = js(
         const chunks = [];
         recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
         recorder.start(1000);
-
-        let previewEl = null;
-        if (video) {
-            previewEl = document.createElement('video');
-            previewEl.id = 'mira-capture-preview';
-            previewEl.autoplay = true;
-            previewEl.muted = true;
-            previewEl.playsInline = true;
-            previewEl.srcObject = stream;
-            previewEl.style.position = 'fixed';
-            previewEl.style.pointerEvents = 'none';
-            previewEl.style.objectFit = 'cover';
-            previewEl.style.zIndex = '1';
-            document.body.appendChild(previewEl);
-        }
 
         // Live level metering for the recording waveform. Separate from the recorder itself —
         // MediaRecorder exposes no amplitude, so this taps the same stream with a Web Audio analyser.
@@ -109,6 +142,10 @@ private fun stopWebRecordingJs(handle: JsAny): Promise<ArrayBuffer?> = js(
         await done;
         handle.stream.getTracks().forEach((t) => t.stop());
         if (handle.preview) { handle.preview.remove(); }
+        if (window.__miraCapturePreview
+            && window.__miraCapturePreview.preview === handle.preview) {
+            window.__miraCapturePreview = null;
+        }
         if (handle.audioCtx) { handle.audioCtx.close().catch(() => {}); }
         const blob = new Blob(handle.chunks, { type: handle.recorder.mimeType });
         return await blob.arrayBuffer();
@@ -123,33 +160,102 @@ internal suspend fun stopWebRecording(handle: JsAny): ByteArray? {
 }
 
 /**
- * Opens the camera (no microphone, no recorder) and shows the same live `<video>` preview element
- * a recording uses, so a photo can be framed before it is taken.
+ * Opens the camera (no microphone, no recorder) and shows a live `<video>` element, so the feed is
+ * visible and permission is requested as soon as the capture screen mounts. [startWebRecording] and
+ * [startWebPhotoPreview] reuse this same stream instead of opening the camera a second time.
+ *
+ * The promise is cached on `window` so a shutter pressed while the permission prompt is still open
+ * waits for the same stream rather than racing a second `getUserMedia`.
  */
-private fun startWebPhotoPreviewJs(): Promise<JsAny?> = js(
+private fun startWebPreviewJs(): Promise<JsAny?> = js(
     """
     (async () => {
-        const stream = await navigator.mediaDevices.getUserMedia({
-            video: { width: { ideal: 1920 }, height: { ideal: 1080 } },
-        });
-        const previewEl = document.createElement('video');
-        previewEl.id = 'mira-capture-preview';
-        previewEl.autoplay = true;
-        previewEl.muted = true;
-        previewEl.playsInline = true;
-        previewEl.srcObject = stream;
-        previewEl.style.position = 'fixed';
-        previewEl.style.pointerEvents = 'none';
-        previewEl.style.objectFit = 'cover';
-        previewEl.style.zIndex = '1';
-        document.body.appendChild(previewEl);
-        return { stream: stream, preview: previewEl };
+        if (window.__miraCapturePreview) return window.__miraCapturePreview;
+        if (window.__miraCapturePreviewPromise) {
+            try {
+                const pending = await window.__miraCapturePreviewPromise;
+                if (pending) return pending;
+            } catch (e) { }
+        }
+        if (window.__miraCapturePreview) return window.__miraCapturePreview;
+
+        // A generation counter lets cancelWebPreview abort a getUserMedia that resolves after the
+        // capture screen was dismissed, so closing quickly never leaves the camera running.
+        const generation = (window.__miraCaptureGeneration || 0) + 1;
+        window.__miraCaptureGeneration = generation;
+
+        const promise = (async () => {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { width: { ideal: 1920 }, height: { ideal: 1080 } },
+            });
+            if (window.__miraCaptureGeneration !== generation) {
+                stream.getTracks().forEach((t) => t.stop());
+                return null;
+            }
+            const previewEl = document.createElement('video');
+            previewEl.id = 'mira-capture-preview';
+            previewEl.autoplay = true;
+            previewEl.muted = true;
+            previewEl.playsInline = true;
+            previewEl.srcObject = stream;
+            previewEl.style.position = 'fixed';
+            previewEl.style.pointerEvents = 'none';
+            previewEl.style.objectFit = 'cover';
+            previewEl.style.zIndex = '1';
+            document.body.appendChild(previewEl);
+            // Layout has already run by the time getUserMedia resolves, so onGloballyPositioned
+            // will not fire again for the new element. Replay the last known bounds here.
+            const bounds = window.__miraPreviewBounds;
+            if (bounds) {
+                previewEl.style.left = bounds[0] + 'px';
+                previewEl.style.top = bounds[1] + 'px';
+                previewEl.style.width = bounds[2] + 'px';
+                previewEl.style.height = bounds[3] + 'px';
+            }
+            const handle = { stream: stream, preview: previewEl };
+            window.__miraCapturePreview = handle;
+            return handle;
+        })();
+
+        window.__miraCapturePreviewPromise = promise;
+        try {
+            return await promise;
+        } finally {
+            if (window.__miraCapturePreviewPromise === promise) {
+                window.__miraCapturePreviewPromise = null;
+            }
+        }
     })()
     """,
 )
 
-internal suspend fun startWebPhotoPreview(): JsAny? =
-    runCatching { startWebPhotoPreviewJs().await<JsAny?>() }.getOrNull()
+internal suspend fun startWebPreview(): JsAny? = try {
+    startWebPreviewJs().await<JsAny?>()
+} catch (cancelled: CancellationException) {
+    throw cancelled
+} catch (error: Throwable) {
+    null
+}
+
+internal fun cancelWebPreview() {
+    js(
+        """
+        try {
+            window.__miraCaptureGeneration = (window.__miraCaptureGeneration || 0) + 1;
+            window.__miraCapturePreviewPromise = null;
+            const preview = window.__miraCapturePreview;
+            window.__miraCapturePreview = null;
+            if (preview) {
+                preview.stream.getTracks().forEach((t) => t.stop());
+                if (preview.preview) { preview.preview.remove(); }
+            }
+        } catch (e) { }
+        """,
+    )
+}
+
+/** Reuses the framing preview when one is already open, so a photo does not restart the camera. */
+internal suspend fun startWebPhotoPreview(): JsAny? = startWebPreview()
 
 /** Snapshots the live preview's current frame to a JPEG, then releases the camera. */
 private fun capturePhotoFromPreviewJs(handle: JsAny): Promise<ArrayBuffer?> = js(
@@ -169,6 +275,10 @@ private fun capturePhotoFromPreviewJs(handle: JsAny): Promise<ArrayBuffer?> = js
         canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
         handle.stream.getTracks().forEach((t) => t.stop());
         video.remove();
+        if (window.__miraCapturePreview
+            && window.__miraCapturePreview.preview === video) {
+            window.__miraCapturePreview = null;
+        }
         const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.92));
         if (!blob) return null;
         return await blob.arrayBuffer();
@@ -187,8 +297,12 @@ internal fun cancelWebRecording(handle: JsAny) {
         """
         try {
             if (handle.recorder && handle.recorder.state !== 'inactive') handle.recorder.stop();
-            handle.stream.getTracks().forEach((t) => t.stop());
+            if (handle.stream) handle.stream.getTracks().forEach((t) => t.stop());
             if (handle.preview) { handle.preview.remove(); }
+            if (window.__miraCapturePreview
+                && window.__miraCapturePreview.preview === handle.preview) {
+                window.__miraCapturePreview = null;
+            }
             if (handle.audioCtx) { handle.audioCtx.close().catch(() => {}); }
         } catch (e) { }
         """,
@@ -209,10 +323,30 @@ private fun transcodeJs(input: Int8Array, video: Boolean): Promise<ArrayBuffer?>
             const mod = await import(/* webpackIgnore: true */ 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/+esm');
             const util = await import(/* webpackIgnore: true */ 'https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/+esm');
             const ffmpeg = new mod.FFmpeg();
-            const base = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm';
+            const core = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm';
+
+            // The FFmpeg class creates its worker with `new Worker(new URL('./worker.js',
+            // import.meta.url))`. Because the class itself is imported from a CDN, that resolves
+            // to a cross-origin URL, which browsers refuse to construct a worker from. Fetch the
+            // worker, rewrite its relative imports to absolute CDN URLs, and hand it over as a
+            // same-origin blob URL instead.
+            if (!window.__miraFfmpegWorkerURL) {
+                const workerUrl = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/esm/worker.js';
+                const source = await (await fetch(workerUrl)).text();
+                const patched = source.replace(
+                    /(\bfrom\s*)(["'])(\.{1,2}\/[^"']+)\2/g,
+                    (match, keyword, quote, specifier) =>
+                        keyword + quote + new URL(specifier, workerUrl).href + quote,
+                );
+                window.__miraFfmpegWorkerURL = URL.createObjectURL(
+                    new Blob([patched], { type: 'text/javascript' }),
+                );
+            }
+
             await ffmpeg.load({
-                coreURL: await util.toBlobURL(base + '/ffmpeg-core.js', 'text/javascript'),
-                wasmURL: await util.toBlobURL(base + '/ffmpeg-core.wasm', 'application/wasm'),
+                classWorkerURL: window.__miraFfmpegWorkerURL,
+                coreURL: await util.toBlobURL(core + '/ffmpeg-core.js', 'text/javascript'),
+                wasmURL: await util.toBlobURL(core + '/ffmpeg-core.wasm', 'application/wasm'),
             });
             window.__miraFfmpeg = ffmpeg;
         }
@@ -243,6 +377,7 @@ internal suspend fun transcodeToMp4(bytes: ByteArray, video: Boolean): ByteArray
 internal fun positionWebPreview(x: Double, y: Double, width: Double, height: Double) {
     js(
         """
+        window.__miraPreviewBounds = [x, y, width, height];
         const el = document.getElementById('mira-capture-preview');
         if (el) {
             el.style.left = x + 'px';

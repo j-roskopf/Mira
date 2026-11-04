@@ -55,16 +55,28 @@ public class AppGraph(
 
     public val entries: EntryRepository = EntryRepository(dataLayer.database, clock)
 
-    private val syncService = EntrySyncService(dataLayer.database, firebase, scope)
-    private val syncCoordinator = DefaultSyncCoordinator(syncService)
-    private val entryStore = DefaultEntryStore(dataLayer.database)
-
     public val media: MediaRepository = MediaRepository(
         database = dataLayer.database,
         firebase = firebase,
         entries = entries,
         policy = defaultRetentionPolicy(),
     )
+
+    public val settings: DefaultUserSettingsRepository =
+        DefaultUserSettingsRepository(dataLayer.database)
+
+    private val syncService = EntrySyncService(
+        database = dataLayer.database,
+        firebase = firebase,
+        media = media,
+        scope = scope,
+        includeVideo = {
+            val unmeteredOnly = settings.observeVideoUploadOnUnmeteredOnly().first()
+            !unmeteredOnly || isUnmeteredNetwork()
+        },
+    )
+    private val syncCoordinator = DefaultSyncCoordinator(syncService)
+    private val entryStore = DefaultEntryStore(dataLayer.database)
 
     public val archive: ArchiveService = ArchiveService(
         database = dataLayer.database,
@@ -79,9 +91,6 @@ public class AppGraph(
         media = media,
         appVersion = MiraBuildInfo.versionName,
     )
-
-    public val settings: DefaultUserSettingsRepository =
-        DefaultUserSettingsRepository(dataLayer.database)
 
     private val sessionRepository = DefaultSessionRepository(
         dataLayer.database,
@@ -107,30 +116,12 @@ public class AppGraph(
         } else {
             syncService.syncNow()
         }
-        drainMediaUploads()
         updates.checkForUpdates()
-    }
-
-    /**
-     * Uploads anything still staged locally.
-     *
-     * Audio goes immediately — a two-minute note is about a megabyte. Video waits for an unmetered
-     * connection unless the user turned that off, so an entry can reach another device before its
-     * video does; that is a state the UI renders rather than an error.
-     */
-    public suspend fun drainMediaUploads() {
-        val owner = sessionRepository.currentOwnerId() ?: return
-        val unmeteredOnly = settings.observeVideoUploadOnUnmeteredOnly().first()
-        media.uploadPending(owner, includeVideo = !unmeteredOnly || isUnmeteredNetwork())
     }
 
     init {
         AppLifecycleObserver.onForeground = {
-            scope.launch {
-                syncService.syncIfStale()
-                // Catches video that was deferred while on a metered connection.
-                drainMediaUploads()
-            }
+            scope.launch { syncService.syncIfStale() }
         }
     }
 
@@ -209,7 +200,6 @@ public class AppGraph(
                 archive.pushNow(ownerId, settings.observeIncludeMediaInArchive().first())
             }
         }
-        scope.launch { drainMediaUploads() }
     }
 
     /** Syncs and backs up everything an import just restored, in the app scope. */
@@ -220,14 +210,12 @@ public class AppGraph(
                 archive.pushNow(ownerId, settings.observeIncludeMediaInArchive().first())
             }
         }
-        scope.launch { drainMediaUploads() }
     }
 
     /** Called after any local write: entry sync is eager, the archive push is debounced. */
     public fun onLocalWrite() {
         syncService.onLocalWrite()
         archive.onLocalWrite()
-        scope.launch { drainMediaUploads() }
     }
 }
 
