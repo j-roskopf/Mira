@@ -5,6 +5,9 @@ import com.joetr.mira.data.entries.EntryRepository
 import com.joetr.mira.data.entries.media.MediaRepository
 import com.joetr.mira.db.MiraDatabase
 import com.joetr.mira.domain.Entry
+import com.joetr.mira.network.MiraFirebase
+import com.joetr.mira.network.RemoteArchiveConfig
+import com.joetr.mira.platform.isNetworkAvailable
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -39,6 +42,7 @@ public class ArchiveService(
     private val media: MediaRepository,
     private val httpClient: HttpClient,
     private val scope: CoroutineScope? = null,
+    private val firebase: MiraFirebase? = null,
 ) {
     private val queries get() = database.entriesQueries
     private val mutex = Mutex()
@@ -62,11 +66,144 @@ public class ArchiveService(
         write(KEY_REPO, target.slug)
         write(KEY_BRANCH, target.branch)
         _status.value = _status.value.copy(connected = true, repoSlug = target.slug)
+        publishTarget(target)
     }
 
+    /**
+     * Authorizes this device for the target another device already published.
+     *
+     * Only the token is device-local; the repository and branch came from the shared config, so
+     * there is no picker here. Returns false when no target is known yet.
+     */
+    public suspend fun authorize(token: String): Boolean {
+        val slug = read(KEY_REPO) ?: return false
+        val branch = read(KEY_BRANCH) ?: "main"
+        write(KEY_TOKEN, token)
+        _status.value = _status.value.copy(
+            connected = true,
+            repoSlug = slug,
+            errorMessage = null,
+        )
+        publishTarget(ArchiveTarget(slug.substringBefore('/'), slug.substringAfter('/'), branch))
+        return true
+    }
+
+    /**
+     * Applies the account-wide archive target from Firestore.
+     *
+     * The token is never synced, so a device that has not authorized yet ends up with a target but
+     * no [ArchiveStatus.connected]. A missing document means this account predates the shared
+     * config (or connected while offline), so the local target is published instead of erased.
+     */
+    public suspend fun refreshSharedConfig() {
+        val firebase = firebase ?: return
+        if (!isNetworkAvailable()) return
+        val session = try {
+            firebase.currentSession()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            return
+        } ?: return
+        val remote = try {
+            firebase.firestore.readArchiveConfig(session.idToken, session.localId)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            return
+        }
+        if (remote == null) {
+            val slug = read(KEY_REPO) ?: return
+            val branch = read(KEY_BRANCH) ?: "main"
+            write(KEY_OWNER, session.localId)
+            try {
+                firebase.firestore.writeArchiveConfig(
+                    idToken = session.idToken,
+                    ownerId = session.localId,
+                    config = RemoteArchiveConfig(enabled = true, repoSlug = slug, branch = branch),
+                )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // Offline or rate-limited; the local target still works.
+            }
+            return
+        }
+        if (!remote.enabled) {
+            mutex.withLock {
+                write(KEY_TOKEN, "")
+                write(KEY_REPO, "")
+                write(KEY_BRANCH, "")
+                write(KEY_LAST_PUSH, "")
+                _status.value = ArchiveStatus()
+            }
+            return
+        }
+        val slug = remote.repoSlug ?: return
+        mutex.withLock {
+            write(KEY_OWNER, session.localId)
+            write(KEY_REPO, slug)
+            write(KEY_BRANCH, remote.branch)
+            _status.value = _status.value.copy(
+                connected = read(KEY_TOKEN) != null,
+                repoSlug = slug,
+                errorMessage = null,
+            )
+        }
+    }
+
+    /** Stops backing up from this device, leaving the account-wide target in place. */
     public suspend fun disconnect() {
         debounceJob?.cancel()
         debounceJob = null
+        mutex.withLock {
+            write(KEY_TOKEN, "")
+            write(KEY_LAST_PUSH, "")
+            _status.value = _status.value.copy(
+                connected = false,
+                pushing = false,
+                errorMessage = null,
+            )
+        }
+    }
+
+    /**
+     * Removes the archive target for the whole account.
+     *
+     * The remote flag is written first; if that fails the local connection is left intact so a
+     * transient network error cannot silently resurrect the archive on the next refresh.
+     */
+    public suspend fun removeArchiveTarget() {
+        debounceJob?.cancel()
+        debounceJob = null
+        val firebase = firebase
+        val session = if (firebase != null) {
+            try {
+                firebase.currentSession()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                null
+            }
+        } else {
+            null
+        }
+        if (firebase != null && session != null) {
+            try {
+                firebase.firestore.writeArchiveConfig(
+                    idToken = session.idToken,
+                    ownerId = session.localId,
+                    config = RemoteArchiveConfig(enabled = false, repoSlug = null),
+                )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                _status.value = _status.value.copy(
+                    errorMessage = "Could not remove the archive target. Check your connection and try again.",
+                )
+                return
+            }
+        }
         mutex.withLock {
             write(KEY_TOKEN, "")
             write(KEY_REPO, "")
@@ -193,6 +330,34 @@ public class ArchiveService(
 
     public suspend fun rememberOwner(ownerId: String) {
         write(KEY_OWNER, ownerId)
+    }
+
+    /** Best-effort publish of the target; a failure never blocks the local connection. */
+    private suspend fun publishTarget(target: ArchiveTarget) {
+        val firebase = firebase ?: return
+        val session = try {
+            firebase.currentSession()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            return
+        } ?: return
+        write(KEY_OWNER, session.localId)
+        try {
+            firebase.firestore.writeArchiveConfig(
+                idToken = session.idToken,
+                ownerId = session.localId,
+                config = RemoteArchiveConfig(
+                    enabled = true,
+                    repoSlug = target.slug,
+                    branch = target.branch,
+                ),
+            )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // Offline, signed out, or rate-limited. The next refresh will publish it.
+        }
     }
 
     private suspend fun read(key: String): String? = withContext(Dispatchers.Default) {

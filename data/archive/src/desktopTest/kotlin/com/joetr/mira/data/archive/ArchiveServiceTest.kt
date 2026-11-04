@@ -2,6 +2,7 @@ package com.joetr.mira.data.archive
 
 import app.cash.sqldelight.driver.jdbc.sqlite.JdbcSqliteDriver
 import app.cash.sqldelight.async.coroutines.awaitAsOne
+import app.cash.sqldelight.async.coroutines.awaitAsOneOrNull
 import com.joetr.mira.db.MiraDatabase
 import com.joetr.mira.data.entries.EntryRepository
 import com.joetr.mira.data.entries.media.MediaRepository
@@ -111,6 +112,79 @@ class ArchiveServiceTest {
             }
             assertEquals(1, fixture.binaryUploads)
         } finally { fixture.close() }
+    }
+
+    @Test
+    fun sharedTargetAppliesWithoutAuthorizingThisDevice() = runTest {
+        withSharedConfig(
+            """{"fields":{"enabled":{"booleanValue":true},"repoSlug":{"stringValue":"me/journal"},"branch":{"stringValue":"archive"}}}""",
+        ) { db, service, _ ->
+            service.refreshSharedConfig()
+            assertEquals("me/journal", service.status.value.repoSlug)
+            assertFalse(service.status.value.connected)
+            assertEquals(
+                "archive",
+                db.entriesQueries.getSetting("github_archive_branch").awaitAsOneOrNull(),
+            )
+        }
+    }
+
+    @Test
+    fun disabledSharedTargetStopsArchivingOnThisDevice() = runTest {
+        withSharedConfig(
+            """{"fields":{"enabled":{"booleanValue":false},"branch":{"stringValue":"main"}}}""",
+            seedLocalTarget = true,
+        ) { db, service, _ ->
+            service.refreshSharedConfig()
+            assertFalse(service.status.value.connected)
+            assertNull(service.status.value.repoSlug)
+            assertTrue(
+                db.entriesQueries.getSetting("github_archive_token").awaitAsOneOrNull().isNullOrBlank(),
+            )
+        }
+    }
+
+    private suspend fun withSharedConfig(
+        response: String,
+        seedLocalTarget: Boolean = false,
+        block: suspend (MiraDatabase, ArchiveService, MiraFirebase) -> Unit,
+    ) {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val db = MiraDatabase(driver)
+        MiraDatabase.Schema.create(driver).await()
+        if (seedLocalTarget) {
+            db.entriesQueries.putSetting("github_archive_token", "token")
+            db.entriesQueries.putSetting("github_archive_repo", "me/journal")
+            db.entriesQueries.putSetting("github_archive_branch", "main")
+        }
+        val session = FirebaseSession(
+            localId = "owner",
+            idToken = "id-token",
+            refreshToken = "refresh-token",
+            expiresAtEpochMs = Long.MAX_VALUE,
+            isAnonymous = false,
+        )
+        val client = HttpClient(MockEngine { request ->
+            assertTrue(request.url.encodedPath.endsWith("/users/owner/meta/archive"))
+            respond(response)
+        })
+        try {
+            val firebase = MiraFirebase(client, object : FirebaseSessionStore {
+                override suspend fun load(): FirebaseSession = session
+                override suspend fun save(session: FirebaseSession?) {}
+            })
+            val clock = object : ClockZone {
+                override fun nowMillis() = 0L
+                override fun zone() = TimeZone.UTC
+            }
+            val entries = EntryRepository(db, clock)
+            val media = MediaRepository(db, firebase, entries, RetentionPolicy.KeepAll)
+            val service = ArchiveService(db, entries, media, client, firebase = firebase)
+            block(db, service, firebase)
+        } finally {
+            client.close()
+            driver.close()
+        }
     }
 
     private class Fixture {

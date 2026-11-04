@@ -74,6 +74,7 @@ internal fun SettingsRoute(
     var connectionMessage by remember { mutableStateOf("") }
     var connectionJob by remember { mutableStateOf<Job?>(null) }
     var accessToken by remember { mutableStateOf<String?>(null) }
+    var authorizeExistingTarget by remember { mutableStateOf(false) }
     var createRepository by remember { mutableStateOf(true) }
     var repositoryName by remember { mutableStateOf("mira-journal") }
     var existingRepository by remember { mutableStateOf("") }
@@ -84,7 +85,61 @@ internal fun SettingsRoute(
     var dataMessage by remember { mutableStateOf<String?>(null) }
     var dataMessageIsError by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) { localBytes = graph.media.localBytesUsed() }
+    LaunchedEffect(Unit) {
+        localBytes = graph.media.localBytesUsed()
+        // Pick up an archive target another device connected or removed while this one was idle.
+        graph.archive.refreshSharedConfig()
+    }
+
+    /**
+     * Device flow shared by both entry points.
+     *
+     * [existingTarget] is true when another device already published the repository: the token is
+     * then applied to that target without showing the repository picker.
+     */
+    fun beginGitHubAuth(existingTarget: Boolean) {
+        if (connectionDialog) return
+        accessToken = null
+        authorizeExistingTarget = existingTarget
+        createRepository = !existingTarget
+        repositoryName = "mira-journal"
+        existingRepository = ""
+        connectionDialog = true
+        connectionMessage = "Requesting a GitHub authorization code…"
+        connectionJob = scope.launch {
+            try {
+                val result = authorizeGitHub(graph) { code, uri ->
+                    connectionMessage = "Enter this code at $uri:\n\n$code\n\n" +
+                        "Waiting for you to authorize Mira in your browser."
+                }
+                when (result) {
+                    is DeviceFlowResult.Success -> {
+                        if (existingTarget) {
+                            if (graph.archive.authorize(result.accessToken)) {
+                                connectionDialog = false
+                            } else {
+                                connectionMessage = "No archive target is set up yet. Connect GitHub to choose one."
+                            }
+                        } else {
+                            accessToken = result.accessToken
+                            connectionMessage = ""
+                        }
+                    }
+                    DeviceFlowResult.Expired -> connectionMessage = "The GitHub code expired. Please connect again."
+                    DeviceFlowResult.Denied -> connectionMessage = "GitHub authorization was declined. Please connect again."
+                    is DeviceFlowResult.Failed -> connectionMessage = result.message
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: GitHubAuthorizationException) {
+                connectionMessage = error.message ?: "GitHub authorization failed."
+            } catch (_: Exception) {
+                connectionMessage = "Could not connect to GitHub. Check your connection and try again."
+            } finally {
+                connectionJob = null
+            }
+        }
+    }
 
     val updateState by graph.updates.state.collectAsState()
 
@@ -121,42 +176,10 @@ internal fun SettingsRoute(
             onThemeChange = { scope.launch { graph.settings.setThemeMode(it) } },
             onAccentChange = { scope.launch { graph.settings.setAccent(it.name) } },
             onSyncNow = { scope.launch { graph.sync.syncNow(forcePull = true) } },
-            onConnectGitHub = {
-                if (!connectionDialog) {
-                    accessToken = null
-                    createRepository = true
-                    repositoryName = "mira-journal"
-                    existingRepository = ""
-                    connectionDialog = true
-                    connectionMessage = "Requesting a GitHub authorization code…"
-                    connectionJob = scope.launch {
-                        try {
-                            val result = authorizeGitHub(graph) { code, uri ->
-                                connectionMessage = "Enter this code at $uri:\n\n$code\n\n" +
-                                    "Waiting for you to authorize Mira in your browser."
-                            }
-                            when (result) {
-                                is DeviceFlowResult.Success -> {
-                                    accessToken = result.accessToken
-                                    connectionMessage = ""
-                                }
-                                DeviceFlowResult.Expired -> connectionMessage = "The GitHub code expired. Please connect again."
-                                DeviceFlowResult.Denied -> connectionMessage = "GitHub authorization was declined. Please connect again."
-                                is DeviceFlowResult.Failed -> connectionMessage = result.message
-                            }
-                        } catch (cancelled: CancellationException) {
-                            throw cancelled
-                        } catch (error: GitHubAuthorizationException) {
-                            connectionMessage = error.message ?: "GitHub authorization failed."
-                        } catch (_: Exception) {
-                            connectionMessage = "Could not connect to GitHub. Check your connection and try again."
-                        } finally {
-                            connectionJob = null
-                        }
-                    }
-                }
-            },
+            onConnectGitHub = { beginGitHubAuth(existingTarget = false) },
+            onAuthorizeGitHub = { beginGitHubAuth(existingTarget = true) },
             onDisconnectGitHub = { scope.launch { graph.archive.disconnect() } },
+            onRemoveArchiveTarget = { scope.launch { graph.archive.removeArchiveTarget() } },
             onBackUpNow = {
                 scope.launch { graph.archive.pushNow(ownerId, includeMedia) }
             },
@@ -295,10 +318,11 @@ internal fun SettingsRoute(
             connectionJob?.cancel()
             connectionDialog = false
             accessToken = null
+            authorizeExistingTarget = false
         }
         AlertDialog(
             onDismissRequest = dismiss,
-            title = { Text("Connect GitHub") },
+            title = { Text(if (authorizeExistingTarget) "Connect this device" else "Connect GitHub") },
             text = {
                 Column(
                     modifier = Modifier.verticalScroll(rememberScrollState()),
