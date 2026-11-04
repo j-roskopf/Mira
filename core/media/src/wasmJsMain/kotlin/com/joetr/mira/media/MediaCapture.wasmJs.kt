@@ -10,9 +10,17 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 public actual fun supportsCapture(kind: CaptureKind): Boolean = hasMediaDevices()
 
@@ -38,6 +46,9 @@ internal class WebMediaRecorderController : MediaRecorderController {
     private var currentKind: CaptureKind = CaptureKind.AUDIO
     private var pending: CompletableDeferred<CaptureResult?>? = null
 
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var ticker: Job? = null
+
     override suspend fun start(kind: CaptureKind) {
         currentKind = kind
         _state.value = RecordingState.Preparing
@@ -61,10 +72,32 @@ internal class WebMediaRecorderController : MediaRecorderController {
         }
         handle = started
         _state.value = RecordingState.Recording(0)
+        ticker = scope.launch { tickElapsed(started) }
+    }
+
+    /**
+     * `MediaRecorder` has no progress event, so this is the only clock the recording has. The
+     * level reading rides along on the same poll, pulled from the analyser node [started] set up
+     * in `startWebRecordingJs`.
+     */
+    private suspend fun tickElapsed(started: JsAny) {
+        while (scope.isActive && handle === started && _state.value is RecordingState.Recording) {
+            delay(100)
+            if (handle !== started || _state.value !is RecordingState.Recording) return
+            val elapsed = (currentTimeMs() - startedAt).toLong()
+            val amplitude = getWebAmplitude(started)
+            _state.value = RecordingState.Recording(elapsed, amplitude)
+            if (elapsed >= CaptureLimits.MAX_DURATION_MS) {
+                stop()
+                return
+            }
+        }
     }
 
     override suspend fun stop() {
         val active = handle ?: return
+        ticker?.cancel()
+        ticker = null
 
         if (currentKind == CaptureKind.PHOTO) {
             _state.value = RecordingState.Finalizing
@@ -117,6 +150,8 @@ internal class WebMediaRecorderController : MediaRecorderController {
     }
 
     override fun cancel() {
+        ticker?.cancel()
+        ticker = null
         handle?.let { cancelWebRecording(it) }
         handle = null
         pending?.cancel()
@@ -124,7 +159,10 @@ internal class WebMediaRecorderController : MediaRecorderController {
         _state.value = RecordingState.Idle
     }
 
-    override fun release(): Unit = cancel()
+    override fun release() {
+        cancel()
+        scope.cancel()
+    }
 }
 
 /**

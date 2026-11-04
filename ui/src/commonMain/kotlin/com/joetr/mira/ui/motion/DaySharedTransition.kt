@@ -1,15 +1,10 @@
 package com.joetr.mira.ui.motion
 
-import androidx.compose.animation.AnimatedContentTransitionScope
 import androidx.compose.animation.AnimatedVisibilityScope
-import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionScope
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.Modifier
@@ -26,23 +21,6 @@ private val sharedBoundsSpec = spring<Rect>(
     dampingRatio = 0.86f,
     stiffness = Spring.StiffnessMediumLow,
 )
-
-/**
- * Fade keeps outgoing content alive long enough for shared-element matching; opaque roots are what
- * stop a white flash between screens on desktop and web.
- */
-@Composable
-public fun navSharedElementTransitionSpec(): AnimatedContentTransitionScope<*>.() -> ContentTransform {
-    val enabled = com.joetr.mira.ui.theme.MiraTheme.motionEnabled
-    val scheme = androidx.compose.material3.MaterialTheme.motionScheme
-    return {
-        if (!enabled) {
-            androidx.compose.animation.EnterTransition.None togetherWith androidx.compose.animation.ExitTransition.None
-        } else {
-            (fadeIn(scheme.defaultEffectsSpec()) togetherWith fadeOut(scheme.fastEffectsSpec())).using(null)
-        }
-    }
-}
 
 /**
  * The calendar day circle expanding into the day screen's header.

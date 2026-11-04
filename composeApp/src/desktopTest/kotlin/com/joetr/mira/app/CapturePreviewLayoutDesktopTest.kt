@@ -77,7 +77,13 @@ class CapturePreviewLayoutDesktopTest {
     /** Mobile landscape keeps its controls on the right, with the shutter centred beside them. */
     @Test
     fun landscapeControlsClingToTheRightWithACentredShutter() = runDesktopComposeUiTest(width = 900, height = 400) {
-        openCapture(FakeRecorder(fillsViewport = true, adaptsToOrientation = true))
+        openCapture(
+            FakeRecorder(
+                fillsViewport = true,
+                adaptsToOrientation = true,
+                aspectRatios = VideoAspectRatio.entries,
+            ),
+        )
         val settings = onNodeWithTag("capture-settings", useUnmergedTree = true).getUnclippedBoundsInRoot()
         val shutter = onNodeWithTag("capture-shutter", useUnmergedTree = true).getUnclippedBoundsInRoot()
         assertTrue("settings are not on the right edge: ${settings.right}", settings.right.value > 860f)

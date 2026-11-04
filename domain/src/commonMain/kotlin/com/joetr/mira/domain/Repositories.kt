@@ -51,4 +51,12 @@ public interface UserSettingsRepository {
     /** Whether the GitHub archive commits media files as files as well as links. */
     public fun observeIncludeMediaInArchive(): Flow<Boolean>
     public suspend fun setIncludeMediaInArchive(enabled: Boolean)
+
+    /** The default quality for newly captured videos. */
+    public fun observeVideoQuality(): Flow<CaptureQuality>
+    public suspend fun setVideoQuality(quality: CaptureQuality)
+
+    /** The default quality for newly captured photos. */
+    public fun observePhotoQuality(): Flow<CaptureQuality>
+    public suspend fun setPhotoQuality(quality: CaptureQuality)
 }

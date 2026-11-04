@@ -52,7 +52,7 @@ public fun miraHierarchyTransition(): (Boolean) -> ContentTransform {
     }
 }
 
-private fun ContentTransform.withoutSizeAnimation(): ContentTransform = ContentTransform(
+internal fun ContentTransform.withoutSizeAnimation(): ContentTransform = ContentTransform(
     targetContentEnter = targetContentEnter,
     initialContentExit = initialContentExit,
     sizeTransform = null,

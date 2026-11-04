@@ -51,10 +51,52 @@ private fun startWebRecordingJs(video: Boolean): Promise<JsAny?> = js(
             previewEl.style.zIndex = '1';
             document.body.appendChild(previewEl);
         }
-        return { recorder: recorder, stream: stream, chunks: chunks, preview: previewEl };
+
+        // Live level metering for the recording waveform. Separate from the recorder itself —
+        // MediaRecorder exposes no amplitude, so this taps the same stream with a Web Audio analyser.
+        let audioCtx = null;
+        let analyser = null;
+        let levelData = null;
+        try {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const source = audioCtx.createMediaStreamSource(stream);
+            analyser = audioCtx.createAnalyser();
+            analyser.fftSize = 256;
+            source.connect(analyser);
+            levelData = new Uint8Array(analyser.frequencyBinCount);
+        } catch (e) { }
+
+        return {
+            recorder: recorder,
+            stream: stream,
+            chunks: chunks,
+            preview: previewEl,
+            audioCtx: audioCtx,
+            analyser: analyser,
+            levelData: levelData,
+        };
     })()
     """,
 )
+
+/** Root-mean-square level of the live mic input, 0f..1f, for the recording waveform. */
+private fun getWebAmplitudeJs(handle: JsAny): Double = js(
+    """
+    (() => {
+        if (!handle.analyser || !handle.levelData) return 0;
+        handle.analyser.getByteTimeDomainData(handle.levelData);
+        let sum = 0;
+        for (let i = 0; i < handle.levelData.length; i++) {
+            const v = (handle.levelData[i] - 128) / 128;
+            sum += v * v;
+        }
+        const rms = Math.sqrt(sum / handle.levelData.length);
+        return Math.min(1, rms * 4);
+    })()
+    """,
+)
+
+internal fun getWebAmplitude(handle: JsAny): Float = getWebAmplitudeJs(handle).toFloat()
 
 internal suspend fun startWebRecording(video: Boolean): JsAny? =
     runCatching { startWebRecordingJs(video).await<JsAny?>() }.getOrNull()
@@ -67,6 +109,7 @@ private fun stopWebRecordingJs(handle: JsAny): Promise<ArrayBuffer?> = js(
         await done;
         handle.stream.getTracks().forEach((t) => t.stop());
         if (handle.preview) { handle.preview.remove(); }
+        if (handle.audioCtx) { handle.audioCtx.close().catch(() => {}); }
         const blob = new Blob(handle.chunks, { type: handle.recorder.mimeType });
         return await blob.arrayBuffer();
     })()
@@ -146,6 +189,7 @@ internal fun cancelWebRecording(handle: JsAny) {
             if (handle.recorder && handle.recorder.state !== 'inactive') handle.recorder.stop();
             handle.stream.getTracks().forEach((t) => t.stop());
             if (handle.preview) { handle.preview.remove(); }
+            if (handle.audioCtx) { handle.audioCtx.close().catch(() => {}); }
         } catch (e) { }
         """,
     )

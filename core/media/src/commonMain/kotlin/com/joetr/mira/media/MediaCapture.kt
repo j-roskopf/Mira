@@ -2,6 +2,7 @@ package com.joetr.mira.media
 
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import com.joetr.mira.domain.CaptureQuality
 import kotlinx.coroutines.flow.StateFlow
 
 /**
@@ -127,6 +128,29 @@ public interface MediaRecorderController {
 
 /** Whether this platform can record [kind] at all. Desktop video needs the bundled FFmpeg. */
 public expect fun supportsCapture(kind: CaptureKind): Boolean
+
+/**
+ * Whether [kind] can be captured with the platform's own camera UI.
+ *
+ * Android and iOS both have a full system camera that already knows about the device's cameras,
+ * flash, timer, zoom, and photo/video switch. Letting it own capture means Mira inherits those
+ * controls for free instead of reimplementing them in Compose. Desktop and web have no equivalent
+ * system camera, so they keep the in-app capture surface.
+ */
+public expect fun supportsNativeCapture(kind: CaptureKind): Boolean
+
+/**
+ * Opens the system camera for [kind] and returns what the user captured, or null when they
+ * cancelled, [kind] has no native camera, or the platform could not start one.
+ *
+ * [quality] comes from the user's settings. Native camera apps vary in what they let a caller
+ * control, so each platform maps it to the closest knob it has — a recording-quality extra, an
+ * export preset, or a post-capture photo resize — rather than ignoring it.
+ */
+public expect suspend fun captureWithNativeCamera(
+    kind: CaptureKind,
+    quality: CaptureQuality = CaptureQuality.MEDIUM,
+): CaptureResult?
 
 public expect fun createMediaRecorderController(): MediaRecorderController
 

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -23,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.joetr.mira.domain.CaptureQuality
 import com.joetr.mira.domain.SessionState
 import com.joetr.mira.domain.SyncState
 import com.joetr.mira.domain.SyncStatus
@@ -57,6 +59,8 @@ public data class SettingsUiState(
     val deleting: Boolean = false,
     val dataMessage: String? = null,
     val dataMessageIsError: Boolean = false,
+    val videoQuality: CaptureQuality = CaptureQuality.MEDIUM,
+    val photoQuality: CaptureQuality = CaptureQuality.MEDIUM,
 )
 
 public data class SettingsActions(
@@ -79,6 +83,8 @@ public data class SettingsActions(
     val onExportData: () -> Unit,
     val onImportData: () -> Unit,
     val onDeleteAllData: () -> Unit,
+    val onVideoQualityChange: (CaptureQuality) -> Unit = {},
+    val onPhotoQualityChange: (CaptureQuality) -> Unit = {},
 )
 
 @Composable
@@ -93,6 +99,7 @@ public fun SettingsScreen(
         modifier = modifier
             .fillMaxSize()
             .background(colors.canvas)
+            .imePadding()
             .verticalScroll(rememberScrollState())
             .padding(horizontal = MiraSpacing.gutter),
     ) {
@@ -178,6 +185,39 @@ public fun SettingsScreen(
                                 .clickable { actions.onAccentChange(accent) },
                         )
                     }
+                }
+            }
+        }
+
+        Section("Capture") {
+            Text(
+                text = "The default quality for new photos and videos. Native camera apps use " +
+                    "these as a guide, so the exact size can vary by device.",
+                style = MiraTheme.type.meta,
+                color = colors.inkMuted,
+            )
+            Spacer(Modifier.height(MiraSpacing.lg))
+            SectionLabel("Video")
+            Spacer(Modifier.height(MiraSpacing.md))
+            Row(horizontalArrangement = Arrangement.spacedBy(MiraSpacing.sm)) {
+                CaptureQuality.entries.forEach { quality ->
+                    Chip(
+                        text = quality.label,
+                        selected = state.videoQuality == quality,
+                        onClick = { actions.onVideoQualityChange(quality) },
+                    )
+                }
+            }
+            Spacer(Modifier.height(MiraSpacing.xl))
+            SectionLabel("Photo")
+            Spacer(Modifier.height(MiraSpacing.md))
+            Row(horizontalArrangement = Arrangement.spacedBy(MiraSpacing.sm)) {
+                CaptureQuality.entries.forEach { quality ->
+                    Chip(
+                        text = quality.label,
+                        selected = state.photoQuality == quality,
+                        onClick = { actions.onPhotoQualityChange(quality) },
+                    )
                 }
             }
         }

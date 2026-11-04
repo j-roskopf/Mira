@@ -7,6 +7,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import com.joetr.mira.feature.day.DayEntriesSheet
 import androidx.compose.runtime.Composable
@@ -26,6 +27,7 @@ import androidx.navigationevent.NavigationEventInfo
 import androidx.navigationevent.compose.NavigationBackHandler
 import androidx.navigationevent.compose.rememberNavigationEventState
 import com.joetr.mira.di.AppGraph
+import com.joetr.mira.domain.CaptureQuality
 import com.joetr.mira.domain.Entry
 import com.joetr.mira.domain.LocalDateKey
 import com.joetr.mira.domain.MonthKey
@@ -53,12 +55,15 @@ import com.joetr.mira.navigation.TopLevelDestination
 import com.joetr.mira.navigation.YearKey
 import com.joetr.mira.navigation.parseWebRoute
 import com.joetr.mira.ui.components.MiraConfirmDialog
+import com.joetr.mira.ui.layout.LocalBottomBarHeight
 import com.joetr.mira.ui.layout.MiraContentWidth
 import com.joetr.mira.ui.motion.LocalNavAnimatedVisibilityScope
 import com.joetr.mira.ui.motion.LocalSharedTransitionScope
-import com.joetr.mira.ui.motion.navSharedElementTransitionSpec
+import com.joetr.mira.ui.motion.NavDirection
 import com.joetr.mira.ui.motion.miraDateTransition
+import com.joetr.mira.ui.motion.miraEditorTransition
 import com.joetr.mira.ui.motion.miraHierarchyTransition
+import com.joetr.mira.ui.motion.miraPageTransition
 import com.joetr.mira.ui.theme.MiraAccent
 import com.joetr.mira.ui.theme.MiraTheme
 import kotlinx.coroutines.launch
@@ -71,6 +76,8 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
 
     val themeMode by graph.settings.observeThemeMode().collectAsState(ThemeMode.SYSTEM)
     val accentName by graph.settings.observeAccent().collectAsState("EMBER")
+    val videoQuality by graph.settings.observeVideoQuality().collectAsState(CaptureQuality.MEDIUM)
+    val photoQuality by graph.settings.observePhotoQuality().collectAsState(CaptureQuality.MEDIUM)
     val session by graph.session.observeSession()
         .collectAsState(SessionState.LocalPending(""))
     val pendingUpdateInstallConfirmation by graph.updates.pendingInstallConfirmation.collectAsState()
@@ -94,6 +101,8 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
         backStack.dropLast(1).lastOrNull() ?: CalendarKey(current.date.take(7))
     } else current
     var refreshVersion by remember { mutableStateOf(0) }
+    // Set by every stack mutation so the shared page transition knows which way to travel.
+    var navDirection by remember { mutableStateOf(NavDirection.Forward) }
 
     var selectedDate by remember { mutableStateOf<LocalDateKey?>(null) }
     var activity by remember { mutableStateOf<Map<LocalDateKey, Int>>(emptyMap()) }
@@ -127,7 +136,10 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
 
     val navigationState = rememberNavigationEventState(currentInfo = NavigationEventInfo.None)
     NavigationBackHandler(state = navigationState, isBackEnabled = backStack.size > 1) {
-        if (backStack.size > 1) backStack.removeAt(backStack.lastIndex)
+        if (backStack.size > 1) {
+            navDirection = NavDirection.Backward
+            backStack.removeAt(backStack.lastIndex)
+        }
     }
 
     MiraTheme(darkTheme = dark, accent = MiraAccent.fromName(accentName), motionEnabled = motionEnabled) {
@@ -142,19 +154,25 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
                     selected = screenKey.topLevel(),
                     accentCanvas = screenKey is CalendarKey || screenKey is YearKey,
                     editorSurface = screenKey is ComposeKey,
-                    onCompose = { backStack.add(ComposeKey(date = clock.today().value)) },
+                    onCompose = {
+                        navDirection = NavDirection.Forward
+                        backStack.add(ComposeKey(date = clock.today().value))
+                    },
                     onNavigate = { destination ->
                         // Returning to the calendar always lands on today, even from another month.
                         if (destination == TopLevelDestination.Calendar) {
                             selectedDate = clock.today()
                         }
+                        navDirection = NavDirection.Crossfade
                         backStack.clear()
                         backStack.add(destination.rootKey())
                     },
                 ) {
                     val dateTransition = miraDateTransition()
                     val hierarchyTransition = miraHierarchyTransition()
-                    val defaultTransition = navSharedElementTransitionSpec()
+                    val pageTransition = miraPageTransition(navDirection)
+                    val editorTransition = miraEditorTransition(navDirection != NavDirection.Backward)
+                    val bottomBarHeight = LocalBottomBarHeight.current
                     AnimatedContent(
                         targetState = screenKey,
                         contentKey = { if (it is CalendarKey) CalendarKey::class else it },
@@ -165,7 +183,8 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
                                 from is YearKey && to is YearKey -> dateTransition(to.year.compareTo(from.year))
                                 from is CalendarKey && to is YearKey -> hierarchyTransition(false)
                                 from is YearKey && to is CalendarKey -> hierarchyTransition(true)
-                                else -> defaultTransition()
+                                to is ComposeKey || from is ComposeKey -> editorTransition
+                                else -> pageTransition
                             }
                         },
                         label = "screen",
@@ -174,7 +193,12 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
                             LocalNavAnimatedVisibilityScope provides this@AnimatedContent,
                         ) {
                             MiraContentWidth(
-                                Modifier.fillMaxSize(),
+                                // Each route reserves the bar itself, so the bar can slide away
+                                // without re-measuring the screen underneath it. The editor paints
+                                // edge-to-edge and opts out.
+                                Modifier
+                                    .fillMaxSize()
+                                    .padding(bottom = if (key is ComposeKey) 0.dp else bottomBarHeight),
                                 maxWidth = when (key) {
                                     is CalendarKey -> 1200.dp
                                     // Spatial screens and the editor fill the window rather than
@@ -194,16 +218,25 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
                                 showComposeButton = maxWidth >= 600.dp,
                                 activity = activity,
                                 timeline = timeline,
-                                onNavigate = { backStack.add(it) },
+                                onNavigate = {
+                                    navDirection = NavDirection.Forward
+                                    backStack.add(it)
+                                },
                                 onBack = {
-                                    if (backStack.size > 1) backStack.removeAt(backStack.lastIndex)
+                                    if (backStack.size > 1) {
+                                        navDirection = NavDirection.Backward
+                                        backStack.removeAt(backStack.lastIndex)
+                                    }
                                 },
                                 onReplaceTop = { replacement ->
+                                    navDirection = NavDirection.Crossfade
                                     backStack[backStack.lastIndex] = replacement
                                 },
                                 onSelectDate = { selectedDate = it },
                                 onRefresh = ::refresh,
                                 refreshVersion = refreshVersion,
+                                videoQuality = videoQuality,
+                                photoQuality = photoQuality,
                             )
                             }
                         }
@@ -237,11 +270,18 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
                     error = error,
                     onRetry = { retry++ },
                     onDismiss = {
+                        navDirection = NavDirection.Backward
                         if (backStack.size > 1) backStack.removeAt(backStack.lastIndex)
                         else backStack[0] = CalendarKey(date.value.take(7))
                     },
-                    onEntryClick = { backStack.add(ComposeKey(entryId = it.id, date = date.value)) },
-                    onCompose = { backStack.add(ComposeKey(date = date.value)) },
+                    onEntryClick = {
+                        navDirection = NavDirection.Forward
+                        backStack.add(ComposeKey(entryId = it.id, date = date.value))
+                    },
+                    onCompose = {
+                        navDirection = NavDirection.Forward
+                        backStack.add(ComposeKey(date = date.value))
+                    },
                 )
             }
             pendingUpdateInstallConfirmation?.let { update ->
@@ -275,6 +315,8 @@ private fun Screen(
     onSelectDate: (LocalDateKey) -> Unit,
     onRefresh: () -> Unit,
     refreshVersion: Int,
+    videoQuality: CaptureQuality,
+    photoQuality: CaptureQuality,
 ) {
     val scope = rememberCoroutineScope()
 
@@ -423,6 +465,8 @@ private fun Screen(
                     "video" -> CaptureKind.VIDEO
                     else -> null
                 },
+                videoQuality = videoQuality,
+                photoQuality = photoQuality,
                 onBodyChange = { body = it },
                 onDateClick = {},
                 onCaptureFinished = { result ->

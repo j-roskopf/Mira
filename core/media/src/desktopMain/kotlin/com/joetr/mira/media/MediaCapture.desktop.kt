@@ -31,6 +31,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.RandomAccessFile
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicBoolean
@@ -101,6 +102,8 @@ internal class DesktopMediaRecorderController(
         "mira-capture-shutdown",
     ).also { Runtime.getRuntime().addShutdownHook(it) }
     private var outputFile: File? = null
+    private var amplitudeFile: File? = null
+    @Volatile private var currentAmplitude: Float = 0f
     private var startedAt: Long = 0
     private var currentKind: CaptureKind = CaptureKind.AUDIO
     private val stderrLines = mutableListOf<String>()
@@ -131,6 +134,8 @@ internal class DesktopMediaRecorderController(
             val extension = if (launchKind == CaptureKind.VIDEO) "mp4" else "m4a"
             val file = File.createTempFile("mira-capture-", ".$extension").apply { deleteOnExit() }
             outputFile = file
+            amplitudeFile = File.createTempFile("mira-amplitude-", ".txt").apply { deleteOnExit() }
+            currentAmplitude = 0f
 
             if (launch(launchKind, file, pixelFormat = null, request = request)) return
             if (generation.get() != request) return
@@ -222,6 +227,7 @@ internal class DesktopMediaRecorderController(
         startedAt = System.currentTimeMillis()
         _state.value = RecordingState.Recording(0)
 
+        amplitudeFile?.let { meter -> scope.launch { meterAmplitude(meter, started) } }
         scope.launch { tickElapsed(started) }
         scope.launch { watchForDeath(started) }
         return true
@@ -240,6 +246,7 @@ internal class DesktopMediaRecorderController(
         // Linux opens video and audio as two separate inputs; macOS and Windows as one.
         audioInputIndex = if (desktopOs == DesktopOs.LINUX) 1 else 0,
         videoSettings = videoSettings,
+        amplitudeFilePath = amplitudeFile?.absolutePath,
     )
 
     override suspend fun stop() {
@@ -288,6 +295,8 @@ internal class DesktopMediaRecorderController(
             )
         } finally {
             if (process === running) process = null
+            amplitudeFile?.delete()
+            amplitudeFile = null
         }
     }
 
@@ -469,6 +478,9 @@ internal class DesktopMediaRecorderController(
         previewSettings = null
         outputFile?.delete()
         outputFile = null
+        amplitudeFile?.delete()
+        amplitudeFile = null
+        currentAmplitude = 0f
         previewFrame.value = null
         previewJpeg = null
         _state.value = RecordingState.Idle
@@ -480,11 +492,49 @@ internal class DesktopMediaRecorderController(
         runCatching { Runtime.getRuntime().removeShutdownHook(shutdownHook) }
     }
 
+    /**
+     * Follows the level metadata FFmpeg's `astats` filter appends to [file].
+     *
+     * FFmpeg has no live amplitude callback, so the capture command prints per-frame RMS levels to
+     * a side file with `direct=1` (unbuffered), and this tails it while the process runs. Levels
+     * are dBFS; they map to 0f..1f the same way iOS does, with -60 dB treated as silence.
+     */
+    private suspend fun meterAmplitude(file: File, active: Process) = withContext(Dispatchers.IO) {
+        var offset = 0L
+        val pending = StringBuilder()
+        val buffer = ByteArray(64 * 1024)
+        while (process === active && active.isAlive) {
+            runCatching {
+                RandomAccessFile(file, "r").use { reader ->
+                    val length = reader.length()
+                    if (length > offset) {
+                        reader.seek(offset)
+                        while (offset < length) {
+                            val wanted = minOf(buffer.size.toLong(), length - offset).toInt()
+                            val read = reader.read(buffer, 0, wanted)
+                            if (read <= 0) break
+                            offset += read
+                            pending.append(String(buffer, 0, read, Charsets.UTF_8))
+                            val end = pending.lastIndexOf('\n')
+                            if (end >= 0) {
+                                pending.substring(0, end).lineSequence()
+                                    .lastOrNull { it.startsWith(RMS_LEVEL_KEY) }
+                                    ?.let { line -> currentAmplitude = decibelsToAmplitude(line.substringAfter('=')) }
+                                pending.delete(0, end + 1)
+                            }
+                        }
+                    }
+                }
+            }
+            delay(60)
+        }
+    }
+
     private suspend fun tickElapsed(active: Process) {
         while (scope.isActive && process === active && _state.value is RecordingState.Recording) {
             val elapsed = System.currentTimeMillis() - startedAt
             if (_state.value is RecordingState.Recording) {
-                _state.value = RecordingState.Recording(elapsed)
+                _state.value = RecordingState.Recording(elapsed, currentAmplitude)
             }
             if (elapsed >= CaptureLimits.MAX_DURATION_MS) {
                 stop()
@@ -653,6 +703,7 @@ internal fun buildCaptureCommand(
     audioInputIndex: Int,
     durationSeconds: Long = CaptureLimits.MAX_DURATION_MS / 1000,
     videoSettings: VideoCaptureSettings = VideoCaptureSettings(),
+    amplitudeFilePath: String? = null,
 ): List<String> = buildList {
     add(binary)
     add("-hide_banner")
@@ -665,18 +716,21 @@ internal fun buildCaptureCommand(
     add(durationSeconds.toString())
 
     if (kind == CaptureKind.VIDEO) {
-        add("-filter_complex")
-        add(
+        val videoChain =
             "[0:v]${videoFilter(videoSettings)},split=2[rec][prev];" +
                 "[rec]format=yuv420p[vrec];" +
-                "[prev]scale=$PREVIEW_WIDTH:-2,format=yuvj420p[vprev]",
-        )
+                "[prev]scale=$PREVIEW_WIDTH:-2,format=yuvj420p[vprev]"
+        val audioChain = amplitudeFilePath?.let {
+            "[$audioInputIndex:a]${amplitudeFilter(it)}[aout]"
+        }
+        add("-filter_complex")
+        add(if (audioChain == null) videoChain else "$videoChain;$audioChain")
         add("-map")
         add("[vrec]")
         add("-map")
         add("[vprev]")
         add("-map")
-        add("$audioInputIndex:a")
+        add(if (audioChain == null) "$audioInputIndex:a" else "[aout]")
 
         addAll(videoEncoderArgs(videoSettings.quality.bitrate))
         // AVFoundation can report its microsecond time base as a 1,000,000 fps rate.
@@ -688,6 +742,11 @@ internal fun buildCaptureCommand(
         add("mjpeg")
         add("-q:v:1")
         add("6")
+    }
+
+    if (kind == CaptureKind.AUDIO && amplitudeFilePath != null) {
+        add("-af")
+        add(amplitudeFilter(amplitudeFilePath))
     }
 
     add("-c:a")
@@ -713,6 +772,42 @@ internal fun buildCaptureCommand(
 
 /** Width of the MJPEG preview branch; height follows the camera's aspect ratio. */
 internal const val PREVIEW_WIDTH: Int = 640
+
+/**
+ * The audio filter that produces live levels.
+ *
+ * `astats` writes RMS/peak dBFS per frame into metadata, and `ametadata` prints it. `direct=1` is
+ * essential: without it FFmpeg block-buffers the file and nothing appears until the recording
+ * ends, which would make the meter a decoration rather than a live level.
+ */
+internal fun amplitudeFilter(path: String): String =
+    "astats=metadata=1:reset=1,ametadata=mode=print:key=lavfi.astats.Overall.RMS_level:" +
+        "direct=1:file=${escapeFilterPath(path)}"
+
+/**
+ * Escapes a filesystem path for use inside an FFmpeg filter argument.
+ *
+ * The filtergraph parser treats `:`, `\` and `'` as syntax, so a Windows temp path like
+ * `C:\Users\...` is otherwise read as an option boundary. Forward slashes are accepted by FFmpeg
+ * on every platform.
+ */
+internal fun escapeFilterPath(path: String): String =
+    path.replace('\\', '/').replace(":", "\\:").replace("'", "\\'")
+
+/** Metadata key carrying the per-frame RMS level in dBFS. */
+internal const val RMS_LEVEL_KEY: String = "lavfi.astats.Overall.RMS_level="
+
+/**
+ * Maps a dBFS reading to the 0f..1f range the recorder state and meter bar use.
+ *
+ * -60 dB is treated as silence and 0 dB as full scale, matching iOS. `-inf`/`nan` (digital
+ * silence) and anything outside the window clamp to the ends rather than producing a NaN bar.
+ */
+internal fun decibelsToAmplitude(value: String): Float {
+    val decibels = value.toFloatOrNull() ?: return 0f
+    if (!decibels.isFinite()) return 0f
+    return ((decibels + 60f) / 60f).coerceIn(0f, 1f)
+}
 
 /**
  * The recording-branch video encoder.

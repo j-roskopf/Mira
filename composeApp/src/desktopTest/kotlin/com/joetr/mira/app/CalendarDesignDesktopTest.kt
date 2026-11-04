@@ -3,6 +3,7 @@ package com.joetr.mira.app
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
@@ -23,6 +24,7 @@ import com.joetr.mira.feature.calendar.CalendarScreen
 import com.joetr.mira.feature.day.DayEntriesSheet
 import com.joetr.mira.navigation.AdaptiveScaffold
 import com.joetr.mira.navigation.TopLevelDestination
+import com.joetr.mira.ui.layout.LocalBottomBarHeight
 import com.joetr.mira.ui.layout.LocalWindowChromeInsets
 import com.joetr.mira.ui.theme.MiraAccent
 import com.joetr.mira.ui.theme.MiraTheme
@@ -50,6 +52,7 @@ class CalendarDesignDesktopTest {
                                 MonthKey("2026-10"), LocalDateKey("2026-10-31"),
                                 mapOf(LocalDateKey("2026-10-12") to 1, LocalDateKey("2026-10-20") to 3),
                                 null, {}, {}, {}, { composed = true },
+                                modifier = Modifier.padding(bottom = LocalBottomBarHeight.current),
                                 showComposeButton = width >= 600,
                             )
                         }

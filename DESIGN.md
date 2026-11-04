@@ -255,7 +255,8 @@ generous space above it. Nothing else. No illustration, no button; the `+` is al
 Opens as a sheet at 92% height on phones. A date field at the top (defaults to today, tappable to
 move the entry). Then the Literata text field, immediately focused, no placeholder chrome beyond a
 faint *"Write…"*. A bottom bar with three thin-line affordances — text / mic / video — and a Save.
-Audio and video capture expand in place within the sheet; they do not push a new screen.
+Audio capture expands in place within the sheet. Photo and video hand off to the system camera on
+phones; on desktop and web, where there is no system camera, they expand in place instead.
 
 On desktop the editor is not a card. It fills the available window in a single canvas tone — the
 same dark base as the rest of the content area, with no lighter sheet floating inside it — while
