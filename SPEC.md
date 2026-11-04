@@ -185,10 +185,14 @@ than 24h in the future on apply.
 
 | Platform | Implementation | Output |
 |---|---|---|
-| Android | `MediaRecorder` (audio), CameraX `Recorder` (video) | m4a / mp4 |
-| iOS | `AVAudioRecorder`, `AVCaptureMovieFileOutput` | m4a / mp4 |
-| Web | `MediaRecorder` → webm → **ffmpeg.wasm** transcode | m4a / mp4 |
-| Desktop | **bundled FFmpeg subprocess** (`avfoundation` / `dshow` / `v4l2`+`pulse`) | m4a / mp4 |
+| Android | `MediaRecorder` (audio), system camera app (photo/video) | m4a / jpg / mp4 |
+| iOS | `AVAudioRecorder` (audio), `UIImagePickerController` (photo/video) | m4a / jpg / mp4 |
+| Web | `MediaRecorder` → webm → **ffmpeg.wasm** transcode | m4a / jpg / mp4 |
+| Desktop | **bundled FFmpeg subprocess** (`avfoundation` / `dshow` / `v4l2`+`pulse`) | m4a / jpg / mp4 |
+
+On Android and iOS, photos and videos are captured by the platform camera UI so flash, zoom,
+timers, and camera switching are native; iOS re-containers the picker's QuickTime video to mp4 with
+`AVAssetExportSession`.
 
 Everything lands as **mp4/H.264+AAC or m4a/AAC**, from every platform. Nothing is transcoded
 server-side, there are no Cloud Functions, and media recorded anywhere plays everywhere.
@@ -205,7 +209,10 @@ stream on stdout, decoded into Compose frames. A photo is a single tap that snap
 frame; only one process ever holds the camera.
 
 **Capture limits:** video H.264 at three tiers — 360p / 350 kbps, 720p / 1.2 Mbps (default), and
-1080p / 2.5 Mbps; audio 64 kbps mono AAC; 10 minutes maximum with a soft warning at 5.
+1080p / 2.5 Mbps; audio 64 kbps mono AAC; 10 minutes maximum with a soft warning at 5. The global
+Low / Medium / High defaults for video and photo live in Settings and both start at Medium. Native
+mobile capture maps them to the closest camera-app control; photos are resized and re-encoded to
+the chosen tier. Desktop and web no longer duplicate a quality picker in the capture surface.
 
 ### Playback
 

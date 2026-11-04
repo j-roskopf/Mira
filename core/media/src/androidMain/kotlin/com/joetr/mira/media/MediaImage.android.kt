@@ -50,7 +50,7 @@ private fun fitLongEdge(bitmap: Bitmap, maxLongEdge: Int): Bitmap {
     return scaled
 }
 
-private fun applyExifOrientation(bytes: ByteArray, bitmap: Bitmap): Bitmap {
+internal fun applyExifOrientation(bytes: ByteArray, bitmap: Bitmap): Bitmap {
     val orientation = runCatching {
         ExifInterface(ByteArrayInputStream(bytes)).getAttributeInt(
             ExifInterface.TAG_ORIENTATION,

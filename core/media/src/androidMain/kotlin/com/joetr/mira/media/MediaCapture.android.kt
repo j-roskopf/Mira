@@ -40,11 +40,14 @@ import com.joetr.mira.platform.requestAndroidPermissions
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -104,6 +107,7 @@ internal class AndroidMediaRecorderController : MediaRecorderController {
     private var outputFile: File? = null
     private var startedAt: Long = 0
     private var currentKind: CaptureKind = CaptureKind.AUDIO
+    private var audioTicker: Job? = null
 
     override fun configureVideo(settings: VideoCaptureSettings) {
         check(
@@ -167,6 +171,7 @@ internal class AndroidMediaRecorderController : MediaRecorderController {
             }
             audioRecorder = recorder
             _state.value = RecordingState.Recording(0)
+            audioTicker = scope.launch { tickAudioElapsed() }
             return
         }
 
@@ -256,11 +261,35 @@ internal class AndroidMediaRecorderController : MediaRecorderController {
         )
     }
 
+    /**
+     * `MediaRecorder` has no progress callback, unlike CameraX's video recorder — so audio needs
+     * its own clock. [MediaRecorder.getMaxAmplitude] piggybacks on the same poll to drive the live
+     * waveform, scaled from its 0..32767 range down to 0f..1f.
+     */
+    private suspend fun tickAudioElapsed() {
+        while (scope.isActive && _state.value is RecordingState.Recording) {
+            delay(100)
+            val recorder = audioRecorder ?: return
+            if (_state.value !is RecordingState.Recording) return
+            val elapsed = System.currentTimeMillis() - startedAt
+            val amplitude = runCatching { recorder.maxAmplitude }.getOrDefault(0)
+                .div(32767f)
+                .coerceIn(0f, 1f)
+            _state.value = RecordingState.Recording(elapsed, amplitude)
+            if (elapsed >= CaptureLimits.MAX_DURATION_MS) {
+                stop()
+                return
+            }
+        }
+    }
+
     override suspend fun stop() {
         if (currentKind == CaptureKind.PHOTO) return
         val elapsed = System.currentTimeMillis() - startedAt
         val finalize = finalizeSignal
         finalizeSignal = null
+        audioTicker?.cancel()
+        audioTicker = null
         if (currentKind == CaptureKind.VIDEO) _state.value = RecordingState.Finalizing
         withContext(Dispatchers.IO) {
             audioRecorder?.runCatching {
@@ -298,6 +327,8 @@ internal class AndroidMediaRecorderController : MediaRecorderController {
     }
 
     override fun cancel() {
+        audioTicker?.cancel()
+        audioTicker = null
         audioRecorder?.runCatching {
             stop()
             release()

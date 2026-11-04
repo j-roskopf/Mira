@@ -1,5 +1,6 @@
 package com.joetr.mira.feature.search
 
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -36,6 +38,7 @@ import com.joetr.mira.ui.components.EntryTagLine
 import com.joetr.mira.ui.components.SearchField
 import com.joetr.mira.ui.components.SectionLabel
 import com.joetr.mira.ui.displayDayMonth
+import com.joetr.mira.ui.theme.MiraMotion
 import com.joetr.mira.ui.theme.MiraSpacing
 import com.joetr.mira.ui.theme.MiraTheme
 
@@ -71,6 +74,7 @@ public fun SearchScreen(
         modifier = modifier
             .fillMaxSize()
             .background(colors.canvas)
+            .imePadding()
             .padding(horizontal = MiraSpacing.gutter),
     ) {
         Spacer(Modifier.height(MiraSpacing.lg))
@@ -135,7 +139,20 @@ public fun SearchScreen(
                 Spacer(Modifier.height(MiraSpacing.md))
                 LazyColumn(contentPadding = PaddingValues(bottom = MiraSpacing.giant)) {
                     items(results, key = { it.id }) { entry ->
-                        ResultRow(entry, query) { onEntryClick(entry) }
+                        ResultRow(
+                            entry = entry,
+                            query = query,
+                            onClick = { onEntryClick(entry) },
+                            modifier = if (MiraTheme.motionEnabled) {
+                                Modifier.animateItem(
+                                    fadeInSpec = tween(MiraMotion.STANDARD_MS),
+                                    placementSpec = tween(MiraMotion.STANDARD_MS),
+                                    fadeOutSpec = tween(MiraMotion.QUICK_MS),
+                                )
+                            } else {
+                                Modifier
+                            },
+                        )
                     }
                 }
             }
@@ -144,10 +161,15 @@ public fun SearchScreen(
 }
 
 @Composable
-private fun ResultRow(entry: Entry, query: String, onClick: () -> Unit) {
+private fun ResultRow(
+    entry: Entry,
+    query: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val colors = MiraTheme.colors
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
             .padding(vertical = MiraSpacing.md),

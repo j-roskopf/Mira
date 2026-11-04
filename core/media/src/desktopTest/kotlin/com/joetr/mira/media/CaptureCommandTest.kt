@@ -120,6 +120,86 @@ class CaptureCommandTest {
     }
 
     @Test
+    fun audioMeteringWritesLiveLevels() {
+        assumeTrue("FFmpeg is not available", ffmpeg != null)
+        val output = File.createTempFile("mira-capture-test-", ".m4a").apply { delete() }
+        val levels = File.createTempFile("mira-amplitude-test-", ".txt")
+        try {
+            val command = buildCaptureCommand(
+                binary = ffmpeg!!,
+                kind = CaptureKind.AUDIO,
+                outputPath = output.absolutePath,
+                inputArgs = listOf("-f", "lavfi", "-i", "sine=frequency=440"),
+                audioInputIndex = 0,
+                durationSeconds = 2,
+                amplitudeFilePath = levels.absolutePath,
+            )
+            val result = run(command)
+            assertEquals("ffmpeg failed: ${result.stderr}", 0, result.exitCode)
+
+            val level = levels.readLines()
+                .lastOrNull { it.startsWith(RMS_LEVEL_KEY) }
+                ?.substringAfter('=')
+            assertTrue("no RMS metadata in ${levels.readText()}", level != null)
+            // A full-scale sine sits well above silence, so the bar must not read as flat.
+            assertTrue("sine metered as $level", decibelsToAmplitude(level!!) > 0.05f)
+        } finally {
+            output.delete()
+            levels.delete()
+        }
+    }
+
+    @Test
+    fun videoMeteringKeepsThePreviewAndAudioStreamsIntact() {
+        assumeTrue("FFmpeg is not available", ffmpeg != null)
+        val output = File.createTempFile("mira-capture-test-", ".mp4").apply { delete() }
+        val levels = File.createTempFile("mira-amplitude-test-", ".txt")
+        try {
+            val command = buildCaptureCommand(
+                binary = ffmpeg!!,
+                kind = CaptureKind.VIDEO,
+                outputPath = output.absolutePath,
+                inputArgs = lavfiInputs,
+                audioInputIndex = 1,
+                durationSeconds = 2,
+                amplitudeFilePath = levels.absolutePath,
+            )
+            val result = run(command)
+            assertEquals("ffmpeg failed: ${result.stderr}", 0, result.exitCode)
+            assertTrue("no mp4 written: ${result.stderr}", output.length() > 0)
+            assertTrue("expected preview frames", countJpegFrames(result.stdout) > 10)
+            assertTrue("no RMS metadata", levels.readLines().any { it.startsWith(RMS_LEVEL_KEY) })
+        } finally {
+            output.delete()
+            levels.delete()
+        }
+    }
+
+    /** Windows temp paths contain a drive colon the filtergraph parser would read as syntax. */
+    @Test
+    fun amplitudeFilterEscapesWindowsPaths() {
+        val filter = amplitudeFilter("C:\\Users\\me\\AppData\\Local\\Temp\\mira.txt")
+        assertTrue(filter, filter.contains("file=C\\:/Users/me/AppData/Local/Temp/mira.txt"))
+    }
+
+    /** Printing every astats key would grow the file faster than the meter can tail it. */
+    @Test
+    fun amplitudeFilterPrintsOnlyTheRmsKey() {
+        val filter = amplitudeFilter("/tmp/mira.txt")
+        assertTrue(filter, filter.contains("key=lavfi.astats.Overall.RMS_level"))
+    }
+
+    @Test
+    fun decibelMappingTreatsSilenceAndFullScaleAsTheEnds() {
+        assertEquals(0f, decibelsToAmplitude("-inf"), 0f)
+        assertEquals(0f, decibelsToAmplitude("nan"), 0f)
+        assertEquals(0f, decibelsToAmplitude("-60"), 0f)
+        assertEquals(1f, decibelsToAmplitude("0"), 0f)
+        assertEquals(1f, decibelsToAmplitude("12"), 0f)
+        assertEquals(0.5f, decibelsToAmplitude("-30"), 0.001f)
+    }
+
+    @Test
     fun framingPreviewStreamsMjpegWithoutAudioOrMuxer() {
         val command = buildPreviewCommand(
             binary = "ffmpeg",

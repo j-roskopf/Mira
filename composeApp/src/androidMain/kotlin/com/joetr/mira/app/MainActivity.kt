@@ -11,6 +11,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import com.joetr.mira.di.createMiraAppGraph
 import com.joetr.mira.media.dispatchAndroidMediaPickerResult
+import com.joetr.mira.media.dispatchAndroidNativeCameraResult
 import com.joetr.mira.platform.AndroidContextHolder
 import com.joetr.mira.platform.ShareIntentHolder
 import com.joetr.mira.platform.dispatchAndroidActivityResult
@@ -52,6 +53,7 @@ public class MainActivity : ComponentActivity() {
         super.onActivityResult(requestCode, resultCode, data)
         dispatchAndroidActivityResult(requestCode, resultCode, data)
         dispatchAndroidMediaPickerResult(requestCode, resultCode, data)
+        dispatchAndroidNativeCameraResult(requestCode, resultCode, data)
     }
 
     override fun onNewIntent(intent: Intent) {

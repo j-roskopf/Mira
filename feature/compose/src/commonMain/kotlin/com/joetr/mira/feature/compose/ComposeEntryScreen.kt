@@ -1,6 +1,7 @@
 package com.joetr.mira.feature.compose
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
@@ -19,17 +20,22 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -47,8 +53,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.movableContentOf
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -72,12 +79,14 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.joetr.mira.domain.Attachment
+import com.joetr.mira.domain.CaptureQuality
 import com.joetr.mira.domain.LocalDateKey
 import com.joetr.mira.media.CameraFacing
 import com.joetr.mira.media.CameraPreview
 import com.joetr.mira.media.CaptureKind
 import com.joetr.mira.media.CaptureLimits
 import com.joetr.mira.media.CaptureResult
+import com.joetr.mira.media.captureWithNativeCamera
 import com.joetr.mira.media.MediaRecorderController
 import com.joetr.mira.media.MediaSource
 import com.joetr.mira.media.RecordingState
@@ -86,6 +95,7 @@ import com.joetr.mira.media.VideoAspectRatio
 import com.joetr.mira.media.VideoCaptureSettings
 import com.joetr.mira.media.VideoQuality
 import com.joetr.mira.media.supportsCapture
+import com.joetr.mira.media.supportsNativeCapture
 import com.joetr.mira.ui.components.CircleIconButton
 import com.joetr.mira.ui.components.PillButton
 import com.joetr.mira.ui.components.RecordButton
@@ -99,10 +109,19 @@ import com.joetr.mira.ui.theme.MiraRadii
 import com.joetr.mira.ui.theme.MiraSizes
 import com.joetr.mira.ui.theme.MiraSpacing
 import com.joetr.mira.ui.theme.MiraTheme
+import kotlin.math.sqrt
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /** The reading measure shared by the desktop header and the writing column. */
 private val EditorMeasureWidth: Dp = 720.dp
+
+/** Seeds the in-app capture settings on desktop and web from the global default. */
+private fun CaptureQuality.toVideoQuality(): VideoQuality = when (this) {
+    CaptureQuality.LOW -> VideoQuality.DATA_SAVER
+    CaptureQuality.MEDIUM -> VideoQuality.STANDARD
+    CaptureQuality.HIGH -> VideoQuality.HIGH
+}
 
 /**
  * Writing an entry.
@@ -128,6 +147,8 @@ public fun ComposeEntryScreen(
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
     initialCapture: CaptureKind? = null,
+    videoQuality: CaptureQuality = CaptureQuality.MEDIUM,
+    photoQuality: CaptureQuality = CaptureQuality.MEDIUM,
     onDelete: (() -> Unit)? = null,
     saving: Boolean = false,
     deleting: Boolean = false,
@@ -138,6 +159,7 @@ public fun ComposeEntryScreen(
     onRemoveTag: (String) -> Unit = {},
 ) {
     val colors = MiraTheme.colors
+    val motionEnabled = MiraTheme.motionEnabled
     val scope = rememberCoroutineScope()
     val focusRequester = remember { FocusRequester() }
     val body = initialBody
@@ -153,13 +175,19 @@ public fun ComposeEntryScreen(
     }
     var activeCapture by remember { mutableStateOf(initialCapture) }
     var cameraOpen by remember {
-        mutableStateOf(initialCapture == CaptureKind.VIDEO || initialCapture == CaptureKind.PHOTO)
+        mutableStateOf(
+            initialCapture != null &&
+                (initialCapture == CaptureKind.VIDEO || initialCapture == CaptureKind.PHOTO) &&
+                !supportsNativeCapture(initialCapture),
+        )
     }
     // Attachments live in a bottom sheet opened from the floating bar; a newly captured or picked
     // one opens that sheet so the new item is never hidden behind an unlabelled icon.
     var showAttachments by remember { mutableStateOf(false) }
     var tagsOpen by remember { mutableStateOf(false) }
-    var videoSettings by remember { mutableStateOf(VideoCaptureSettings()) }
+    var videoSettings by remember {
+        mutableStateOf(VideoCaptureSettings(quality = videoQuality.toVideoQuality()))
+    }
     val configurableVideo = recorder.supportsVideoSettings
 
     val state by recorder.state.collectAsState()
@@ -170,10 +198,25 @@ public fun ComposeEntryScreen(
     }
 
     LaunchedEffect(Unit) {
-        if (initialCapture == null) {
-            runCatching { focusRequester.requestFocus() }
-        } else if (initialCapture == CaptureKind.AUDIO) {
-            recorder.start(initialCapture)
+        when {
+            // Let the editor settle before the IME starts resizing the page; opening both at once
+            // made the bottom bar climb while the route transition was still running.
+            initialCapture == null -> {
+                if (motionEnabled) delay(MiraMotion.STANDARD_MS.toLong())
+                runCatching { focusRequester.requestFocus() }
+            }
+            initialCapture == CaptureKind.AUDIO -> recorder.start(initialCapture)
+            supportsNativeCapture(initialCapture) -> {
+                val result = captureWithNativeCamera(
+                    initialCapture,
+                    if (initialCapture == CaptureKind.VIDEO) videoQuality else photoQuality,
+                )
+                activeCapture = null
+                if (result != null) {
+                    showAttachments = true
+                    onCaptureFinished(result)
+                }
+            }
         }
     }
 
@@ -190,6 +233,7 @@ public fun ComposeEntryScreen(
     }
 
     fun beginCapture(kind: CaptureKind) {
+        if (activeCapture != null) return
         activeCapture = kind
         when (kind) {
             // Audio stays inline; there is nothing to frame.
@@ -199,11 +243,28 @@ public fun ComposeEntryScreen(
                     currentState == RecordingState.Finalizing ||
                     currentState is RecordingState.Recording
                 ) {
+                    activeCapture = null
                     return@launch
                 }
                 recorder.start(kind)
             }
-            CaptureKind.VIDEO, CaptureKind.PHOTO -> cameraOpen = true
+            // Photos and videos leave the app for the system camera where one exists. The custom
+            // preview below is only for platforms that do not have one, such as desktop and web.
+            CaptureKind.VIDEO, CaptureKind.PHOTO -> if (supportsNativeCapture(kind)) {
+                scope.launch {
+                    val result = captureWithNativeCamera(
+                        kind,
+                        if (kind == CaptureKind.VIDEO) videoQuality else photoQuality,
+                    )
+                    activeCapture = null
+                    if (result != null) {
+                        showAttachments = true
+                        onCaptureFinished(result)
+                    }
+                }
+            } else {
+                cameraOpen = true
+            }
         }
     }
 
@@ -243,8 +304,10 @@ public fun ComposeEntryScreen(
             .fillMaxSize()
             .background(colors.canvas),
     ) {
+        // The page itself shrinks with the keyboard; the floating bar is a sibling so it can track
+        // the IME with a single union inset instead of being padded twice.
         Column(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().imePadding(),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             EditorTopBar(
@@ -308,8 +371,7 @@ public fun ComposeEntryScreen(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .imePadding()
-                .navigationBarsPadding()
+                .windowInsetsPadding(WindowInsets.ime.union(WindowInsets.navigationBars))
                 .padding(horizontal = MiraSpacing.gutter, vertical = MiraSpacing.sm),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
@@ -409,7 +471,6 @@ public fun ComposeEntryScreen(
             kind = captureKind,
             controller = recorder,
             settings = videoSettings,
-            qualities = if (configurableVideo) recorder.supportedQualities else emptyList(),
             aspectRatios = if (configurableVideo) recorder.supportedAspectRatios else emptyList(),
             showCameraFacing = configurableVideo && recorder.supportsCameraFacing,
             settingsEnabled = state != RecordingState.Preparing &&
@@ -506,7 +567,6 @@ private fun CameraCaptureScreen(
     kind: CaptureKind,
     controller: MediaRecorderController,
     settings: VideoCaptureSettings,
-    qualities: List<VideoQuality>,
     aspectRatios: List<VideoAspectRatio>,
     showCameraFacing: Boolean,
     settingsEnabled: Boolean,
@@ -550,7 +610,6 @@ private fun CameraCaptureScreen(
                         kind = kind,
                         recordingState = recordingState,
                         settings = settings,
-                        qualities = qualities,
                         aspectRatios = aspectRatios,
                         showCameraFacing = showCameraFacing,
                         settingsEnabled = settingsEnabled,
@@ -578,7 +637,6 @@ private fun CameraCaptureScreen(
                         kind = kind,
                         recordingState = recordingState,
                         settings = settings,
-                        qualities = qualities,
                         aspectRatios = aspectRatios,
                         showCameraFacing = showCameraFacing,
                         settingsEnabled = settingsEnabled,
@@ -608,7 +666,6 @@ private fun CameraCaptureScreen(
                         kind = kind,
                         recordingState = recordingState,
                         settings = settings,
-                        qualities = qualities,
                         aspectRatios = aspectRatios,
                         showCameraFacing = showCameraFacing,
                         settingsEnabled = settingsEnabled,
@@ -670,7 +727,6 @@ private fun CaptureControls(
     kind: CaptureKind,
     recordingState: RecordingState,
     settings: VideoCaptureSettings,
-    qualities: List<VideoQuality>,
     aspectRatios: List<VideoAspectRatio>,
     showCameraFacing: Boolean,
     settingsEnabled: Boolean,
@@ -703,7 +759,6 @@ private fun CaptureControls(
             RailShutter(kind, recordingState, recording != null, busy, onShutter)
             SideSettings(
                 settings = settings,
-                qualities = qualities,
                 aspectRatios = aspectRatios,
                 showCameraFacing = showCameraFacing,
                 enabled = settingsEnabled,
@@ -719,10 +774,9 @@ private fun CaptureControls(
             verticalArrangement = Arrangement.spacedBy(MiraSpacing.sm),
         ) {
             CaptureStatus(kind, recordingState)
-            if (qualities.isNotEmpty() || aspectRatios.isNotEmpty() || showCameraFacing) {
+            if (aspectRatios.isNotEmpty() || showCameraFacing) {
                 PreviewSettings(
                     settings = settings,
-                    qualities = qualities,
                     aspectRatios = aspectRatios,
                     showCameraFacing = showCameraFacing,
                     enabled = settingsEnabled,
@@ -763,17 +817,16 @@ private fun RowScope.RailShutter(
     }
 }
 
-/** Aspect, quality, and camera buttons as one vertical strip hugging the rail's outer edge. */
+/** Aspect and camera buttons as one vertical strip hugging the rail's outer edge. */
 @Composable
 private fun SideSettings(
     settings: VideoCaptureSettings,
-    qualities: List<VideoQuality>,
     aspectRatios: List<VideoAspectRatio>,
     showCameraFacing: Boolean,
     enabled: Boolean,
     onChange: (VideoCaptureSettings) -> Unit,
 ) {
-    if (qualities.isEmpty() && aspectRatios.isEmpty() && !showCameraFacing) return
+    if (aspectRatios.isEmpty() && !showCameraFacing) return
     val size = 34.dp
     val iconSize = 16.dp
     Column(
@@ -789,16 +842,6 @@ private fun SideSettings(
                 size = size,
                 iconSize = iconSize,
                 onClick = { onChange(settings.copy(aspectRatio = aspectRatio)) },
-            )
-        }
-        qualities.forEach { quality ->
-            QualityChoice(
-                quality = quality,
-                selected = settings.quality == quality,
-                enabled = enabled,
-                size = size,
-                iconSize = iconSize,
-                onClick = { onChange(settings.copy(quality = quality)) },
             )
         }
         if (showCameraFacing) {
@@ -885,7 +928,6 @@ private fun ShutterButton(
 @Composable
 private fun PreviewSettings(
     settings: VideoCaptureSettings,
-    qualities: List<VideoQuality>,
     aspectRatios: List<VideoAspectRatio>,
     showCameraFacing: Boolean,
     enabled: Boolean,
@@ -915,38 +957,26 @@ private fun PreviewSettings(
                 }
             }
         }
-        if (qualities.isNotEmpty() || showCameraFacing) {
+        if (showCameraFacing) {
             Row(horizontalArrangement = Arrangement.spacedBy(spacing)) {
-                qualities.forEach { quality ->
-                    QualityChoice(
-                        quality = quality,
-                        selected = settings.quality == quality,
-                        enabled = enabled,
-                        size = buttonSize,
-                        iconSize = iconSize,
-                        onClick = { onChange(settings.copy(quality = quality)) },
-                    )
-                }
-                if (showCameraFacing) {
-                    PreviewChoice(
-                        icon = MiraIcons.Camera,
-                        contentDescription = "Back camera",
-                        selected = settings.facing == CameraFacing.BACK,
-                        enabled = enabled,
-                        size = buttonSize,
-                        iconSize = iconSize,
-                        onClick = { onChange(settings.copy(facing = CameraFacing.BACK)) },
-                    )
-                    PreviewChoice(
-                        icon = MiraIcons.CameraFront,
-                        contentDescription = "Front camera",
-                        selected = settings.facing == CameraFacing.FRONT,
-                        enabled = enabled,
-                        size = buttonSize,
-                        iconSize = iconSize,
-                        onClick = { onChange(settings.copy(facing = CameraFacing.FRONT)) },
-                    )
-                }
+                PreviewChoice(
+                    icon = MiraIcons.Camera,
+                    contentDescription = "Back camera",
+                    selected = settings.facing == CameraFacing.BACK,
+                    enabled = enabled,
+                    size = buttonSize,
+                    iconSize = iconSize,
+                    onClick = { onChange(settings.copy(facing = CameraFacing.BACK)) },
+                )
+                PreviewChoice(
+                    icon = MiraIcons.CameraFront,
+                    contentDescription = "Front camera",
+                    selected = settings.facing == CameraFacing.FRONT,
+                    enabled = enabled,
+                    size = buttonSize,
+                    iconSize = iconSize,
+                    onClick = { onChange(settings.copy(facing = CameraFacing.FRONT)) },
+                )
             }
         }
     }
@@ -984,38 +1014,6 @@ private fun AspectRatioChoice(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun QualityChoice(
-    quality: VideoQuality,
-    selected: Boolean,
-    enabled: Boolean,
-    size: Dp,
-    iconSize: Dp,
-    onClick: () -> Unit,
-) {
-    val tooltipState = rememberTooltipState(isPersistent = false)
-    TooltipBox(
-        positionProvider = TooltipDefaults.rememberTooltipPositionProvider(TooltipAnchorPosition.Above),
-        tooltip = {
-            PlainTooltip {
-                Text(quality.explanation, style = MiraTheme.type.meta)
-            }
-        },
-        state = tooltipState,
-    ) {
-        PreviewChoice(
-            icon = quality.previewIcon(),
-            contentDescription = "Quality: ${quality.label}",
-            selected = selected,
-            enabled = enabled,
-            size = size,
-            iconSize = iconSize,
-            onClick = onClick,
-        )
-    }
-}
-
 @Composable
 private fun PreviewChoice(
     icon: MiraIconPainter,
@@ -1044,12 +1042,6 @@ private fun PreviewChoice(
     }
 }
 
-private fun VideoQuality.previewIcon(): MiraIconPainter = when (this) {
-    VideoQuality.DATA_SAVER -> MiraIcons.QualityDataSaver
-    VideoQuality.STANDARD -> MiraIcons.QualityStandard
-    VideoQuality.HIGH -> MiraIcons.QualityHigh
-}
-
 private fun VideoAspectRatio.previewIcon(): MiraIconPainter = when (this) {
     VideoAspectRatio.ORIGINAL -> MiraIcons.AspectOriginal
     VideoAspectRatio.LANDSCAPE -> MiraIcons.AspectLandscape
@@ -1063,13 +1055,6 @@ private val VideoAspectRatio.explanation: String
         VideoAspectRatio.LANDSCAPE -> "Landscape 16:9 — wide frame, the standard video shape"
         VideoAspectRatio.PORTRAIT -> "Portrait 9:16 — tall frame, like a phone held upright"
         VideoAspectRatio.SQUARE -> "Square 1:1 — equal width and height"
-    }
-
-private val VideoQuality.explanation: String
-    get() = when (this) {
-        VideoQuality.DATA_SAVER -> "360p — lowest resolution and bitrate, for the smallest files"
-        VideoQuality.STANDARD -> "720p — a balance of file size and sharpness"
-        VideoQuality.HIGH -> "1080p — sharper video at the cost of larger files"
     }
 
 /**
@@ -1108,11 +1093,14 @@ private fun FloatingActionBar(
         Row(
             modifier = pill
                 .widthIn(min = 248.dp)
-                .padding(horizontal = MiraSpacing.sm, vertical = MiraSpacing.xs),
+                .padding(horizontal = MiraSpacing.md, vertical = MiraSpacing.sm),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(MiraSpacing.sm),
+            horizontalArrangement = Arrangement.spacedBy(MiraSpacing.md),
         ) {
-            Column(Modifier.weight(1f)) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(MiraSpacing.xs),
+            ) {
                 Text(
                     text = when {
                         failure != null -> failure.message
@@ -1133,6 +1121,13 @@ private fun FloatingActionBar(
                     },
                     maxLines = 2,
                 )
+                if (recording != null) {
+                    LiveWaveform(
+                        amplitude = recording.amplitude,
+                        elapsedMs = recording.elapsedMs,
+                        modifier = Modifier.fillMaxWidth().height(28.dp),
+                    )
+                }
             }
             CircleIconButton(
                 icon = MiraIcons.Close,
@@ -1199,6 +1194,49 @@ private fun FloatingActionBar(
                     contentDescription = "View attachments",
                     badgeCount = attachments.size,
                     onClick = onAttachmentsClick,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * A live level meter, not a decorative one: each bar is a real sample of [amplitude] as it arrives
+ * from the platform recorder, scrolling left as new samples land on the right. Nothing here is
+ * synthesized — a silent mic draws a flat line.
+ */
+@Composable
+private fun LiveWaveform(amplitude: Float, elapsedMs: Long, modifier: Modifier = Modifier) {
+    BoxWithConstraints(modifier) {
+        // Bars have a fixed visual width, so a wide desktop pill gets more of them instead of
+        // stretching the same 28 samples into long blocks.
+        val gap = 2.dp
+        val barWidth = 3.dp
+        val barCount = (((maxWidth + gap) / (barWidth + gap)).toInt()).coerceIn(16, 160)
+        val levels = remember(barCount) { mutableStateListOf(*FloatArray(barCount).toTypedArray()) }
+        // Keyed on the clock, not the level: silence is a constant 0f, and a meter that stops
+        // scrolling whenever the room is quiet reads as a frozen recording.
+        LaunchedEffect(elapsedMs, barCount) {
+            levels.removeAt(0)
+            levels.add(amplitude.coerceIn(0f, 1f))
+        }
+        val colors = MiraTheme.colors
+        Row(
+            modifier = Modifier.fillMaxSize(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(gap),
+        ) {
+            levels.forEach { level ->
+                val height by animateFloatAsState(targetValue = level, label = "waveformBar")
+                // A straight 0f..1f amplitude reads as nearly flat for normal speech, which rarely
+                // pins the meter — sqrt pushes quieter samples up so the bars are still legible.
+                val boosted = sqrt(height.coerceIn(0f, 1f))
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight(fraction = (0.18f + boosted * 0.82f).coerceIn(0.18f, 1f))
+                        .clip(RoundedCornerShape(1.dp))
+                        .background(colors.accent),
                 )
             }
         }

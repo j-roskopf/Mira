@@ -1,5 +1,12 @@
 package com.joetr.mira.navigation
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.ui.semantics.Role
@@ -22,7 +29,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.only
@@ -35,6 +41,7 @@ import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.NavigationRailItemDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.movableContentOf
 import androidx.compose.runtime.remember
@@ -48,9 +55,12 @@ import androidx.compose.ui.unit.dp
 import com.joetr.mira.ui.icons.MiraIcon
 import com.joetr.mira.ui.icons.MiraIconPainter
 import com.joetr.mira.ui.icons.MiraIcons
+import com.joetr.mira.ui.layout.LocalBottomBarHeight
 import com.joetr.mira.ui.layout.LocalWindowChromeInsets
 import com.joetr.mira.ui.layout.miraSafeArea
+import com.joetr.mira.ui.theme.MiraMotion
 import com.joetr.mira.ui.theme.MiraSpacing
+import com.joetr.mira.ui.theme.MiraTheme
 
 @Composable
 public fun AdaptiveScaffold(
@@ -83,7 +93,7 @@ private fun SidebarLayout(
     content: @Composable () -> Unit,
 ) {
     // Paint each column before applying insets so its colour reaches behind window chrome.
-    val canvas = if (accentCanvas) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.background
+    val canvas = scaffoldCanvas(accentCanvas)
     Row(
         Modifier
             .fillMaxSize()
@@ -137,7 +147,7 @@ private fun RailLayout(
     accentCanvas: Boolean,
     content: @Composable () -> Unit,
 ) {
-    val canvas = if (accentCanvas) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.background
+    val canvas = scaffoldCanvas(accentCanvas)
     Row(
         Modifier
             .fillMaxSize()
@@ -160,6 +170,22 @@ private fun RailLayout(
     }
 }
 
+/** Accent canvases cross-fade so calendar -> editor does not flash a different shell tone. */
+@Composable
+private fun scaffoldCanvas(accentCanvas: Boolean): Color {
+    val target = if (accentCanvas) {
+        MaterialTheme.colorScheme.primary
+    } else {
+        MaterialTheme.colorScheme.background
+    }
+    if (!MiraTheme.motionEnabled) return target
+    return animateColorAsState(
+        targetValue = target,
+        animationSpec = tween(MiraMotion.STANDARD_MS),
+        label = "scaffoldCanvas",
+    ).value
+}
+
 @Composable
 private fun BottomBarLayout(
     selected: TopLevelDestination,
@@ -171,68 +197,90 @@ private fun BottomBarLayout(
 ) {
     // The editor paints its own canvas, including behind the system bars and IME, so the shell
     // keeps the same dark base instead of introducing a second tone around it.
-    val canvas = when {
-        accentCanvas -> MaterialTheme.colorScheme.primary
-        else -> MaterialTheme.colorScheme.background
-    }
+    val canvas = scaffoldCanvas(accentCanvas)
     val bar = MaterialTheme.colorScheme.surface
-    val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
-    Column(Modifier.fillMaxSize().background(canvas).imePadding()) {
-        Box(Modifier.weight(1f).fillMaxWidth()
-            .windowInsetsPadding(LocalWindowChromeInsets.current)
-            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))) {
-            content()
-        }
-        if (!keyboardVisible) {
-            Box(Modifier.fillMaxWidth()) {
-                // A continuous raised crest cradles the circular action, like the reference.
-                Canvas(Modifier.matchParentSize()) {
-                    val top = 32.dp.toPx()
-                    val topCorner = 8.dp.toPx()
-                    val center = size.width / 2
-                    val shoulder = 54.dp.toPx()
-                    val path = Path().apply {
-                        moveTo(0f, top + topCorner)
-                        quadraticTo(0f, top, topCorner, top)
-                        lineTo(center - shoulder, top)
-                        cubicTo(center - 34.dp.toPx(), top, center - 36.dp.toPx(), 0f, center, 0f)
-                        cubicTo(center + 36.dp.toPx(), 0f, center + 34.dp.toPx(), top, center + shoulder, top)
-                        lineTo(size.width - topCorner, top)
-                        quadraticTo(size.width, top, size.width, top + topCorner)
-                        lineTo(size.width, size.height)
-                        lineTo(0f, size.height)
-                        close()
+    val density = LocalDensity.current
+    // Tall enough for the bar to sit above the system gesture area. Provided to content so each
+    // route can reserve the same space without the scaffold resizing when the bar hides.
+    val barHeight = with(density) {
+        WindowInsets.navigationBars.getBottom(density).toDp()
+    } + 108.dp
+    val keyboardVisible = WindowInsets.ime.getBottom(density) > 0
+    CompositionLocalProvider(LocalBottomBarHeight provides barHeight) {
+        Box(Modifier.fillMaxSize().background(canvas)) {
+            Box(Modifier.fillMaxSize()
+                .windowInsetsPadding(LocalWindowChromeInsets.current)
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))) {
+                content()
+            }
+            // The bar is overlaid, not stacked. The content keeps its height (and scroll position)
+            // while the bar slides away, so the calendar never re-measures mid-transition.
+            AnimatedVisibility(
+                visible = !editorSurface && !keyboardVisible,
+                modifier = Modifier.align(Alignment.BottomCenter),
+                enter = if (MiraTheme.motionEnabled) {
+                    fadeIn(tween(MiraMotion.STANDARD_MS)) +
+                        slideInVertically(tween(MiraMotion.STANDARD_MS)) { it / 3 }
+                } else {
+                    fadeIn(tween(0))
+                },
+                exit = if (MiraTheme.motionEnabled) {
+                    fadeOut(tween(MiraMotion.QUICK_MS)) +
+                        slideOutVertically(tween(MiraMotion.QUICK_MS)) { it / 3 }
+                } else {
+                    fadeOut(tween(0))
+                },
+            ) {
+                Box(Modifier.fillMaxWidth()) {
+                    // A continuous raised crest cradles the circular action, like the reference.
+                    Canvas(Modifier.matchParentSize()) {
+                        val top = 32.dp.toPx()
+                        val topCorner = 8.dp.toPx()
+                        val center = size.width / 2
+                        val shoulder = 54.dp.toPx()
+                        val path = Path().apply {
+                            moveTo(0f, top + topCorner)
+                            quadraticTo(0f, top, topCorner, top)
+                            lineTo(center - shoulder, top)
+                            cubicTo(center - 34.dp.toPx(), top, center - 36.dp.toPx(), 0f, center, 0f)
+                            cubicTo(center + 36.dp.toPx(), 0f, center + 34.dp.toPx(), top, center + shoulder, top)
+                            lineTo(size.width - topCorner, top)
+                            quadraticTo(size.width, top, size.width, top + topCorner)
+                            lineTo(size.width, size.height)
+                            lineTo(0f, size.height)
+                            close()
+                        }
+                        drawPath(path, bar)
                     }
-                    drawPath(path, bar)
-                }
-                // Insets protect controls while the painted bar extends behind system chrome.
-                Row(Modifier.fillMaxWidth()
-                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
-                    .navigationBarsPadding()
-                    .height(108.dp).padding(top = 32.dp, bottom = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically) {
-                    destinations.forEachIndexed { index, dest ->
-                        if (index == 2) Spacer(Modifier.width(76.dp))
-                        val active = dest.topLevel == selected
-                        val tint = if (active) activeNavigationTint() else MaterialTheme.colorScheme.onSurfaceVariant
-                        Column(
-                            Modifier.weight(1f)
-                                .selectable(selected = active, role = Role.Tab, onClick = { onNavigate(dest.topLevel) })
-                                .semantics { contentDescription = dest.label }
-                                .padding(vertical = 10.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                        ) {
-                            MiraIcon(dest.icon, tint = tint, size = 24.dp)
-                            Spacer(Modifier.height(4.dp))
-                            // Reserve the same label space so inactive icons stay aligned.
-                            Box(Modifier.height(16.dp), contentAlignment = Alignment.Center) {
-                                if (active) Text(dest.label, color = tint, style = MaterialTheme.typography.labelSmall)
+                    // Insets protect controls while the painted bar extends behind system chrome.
+                    Row(Modifier.fillMaxWidth()
+                        .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
+                        .navigationBarsPadding()
+                        .height(108.dp).padding(top = 32.dp, bottom = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically) {
+                        destinations.forEachIndexed { index, dest ->
+                            if (index == 2) Spacer(Modifier.width(76.dp))
+                            val active = dest.topLevel == selected
+                            val tint = if (active) activeNavigationTint() else MaterialTheme.colorScheme.onSurfaceVariant
+                            Column(
+                                Modifier.weight(1f)
+                                    .selectable(selected = active, role = Role.Tab, onClick = { onNavigate(dest.topLevel) })
+                                    .semantics { contentDescription = dest.label }
+                                    .padding(vertical = 10.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                            ) {
+                                MiraIcon(dest.icon, tint = tint, size = 24.dp)
+                                Spacer(Modifier.height(4.dp))
+                                // Reserve the same label space so inactive icons stay aligned.
+                                Box(Modifier.height(16.dp), contentAlignment = Alignment.Center) {
+                                    if (active) Text(dest.label, color = tint, style = MaterialTheme.typography.labelSmall)
+                                }
                             }
                         }
                     }
+                    MiraFab(MiraIcons.Plus, "New entry", onCompose,
+                        Modifier.align(Alignment.TopCenter).padding(top = 10.dp))
                 }
-                MiraFab(MiraIcons.Plus, "New entry", onCompose,
-                    Modifier.align(Alignment.TopCenter).padding(top = 10.dp))
             }
         }
     }

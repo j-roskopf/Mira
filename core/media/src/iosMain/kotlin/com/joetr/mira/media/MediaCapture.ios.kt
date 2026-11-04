@@ -8,9 +8,17 @@ import androidx.compose.ui.interop.UIKitView
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.usePinned
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import platform.AVFAudio.AVAudioRecorder
 import platform.AVFAudio.AVAudioSession
 import platform.AVFAudio.AVAudioSessionCategoryPlayAndRecord
@@ -136,6 +144,9 @@ internal class IosMediaRecorderController : MediaRecorderController {
     private var startedAt: Long = 0
     private var currentKind: CaptureKind = CaptureKind.AUDIO
     private var photoResult: CompletableDeferred<NSData?>? = null
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var audioTicker: Job? = null
 
     private val recordingDelegate = object : NSObject(), AVCaptureFileOutputRecordingDelegateProtocol {
         override fun captureOutput(
@@ -263,6 +274,7 @@ internal class IosMediaRecorderController : MediaRecorderController {
             }
             audioRecorder = recorder
             _state.value = RecordingState.Recording(0)
+            audioTicker = scope.launch { tickAudioElapsed() }
             return
         }
 
@@ -310,9 +322,33 @@ internal class IosMediaRecorderController : MediaRecorderController {
         )
     }
 
+    /**
+     * `AVAudioRecorder` has no progress delegate, unlike the movie file output — so audio needs its
+     * own clock. Metering was already enabled in [start]; this just polls it, converting the
+     * decibel reading (roughly -60dB silence to 0dB peak) into 0f..1f for the live waveform.
+     */
+    private suspend fun tickAudioElapsed() {
+        while (scope.isActive && _state.value is RecordingState.Recording) {
+            delay(100)
+            val recorder = audioRecorder ?: return
+            if (_state.value !is RecordingState.Recording) return
+            val elapsed = nowMillis() - startedAt
+            recorder.updateMeters()
+            val decibels = recorder.averagePowerForChannel(0uL)
+            val amplitude = ((decibels + 60f) / 60f).coerceIn(0f, 1f)
+            _state.value = RecordingState.Recording(elapsed, amplitude)
+            if (elapsed >= CaptureLimits.MAX_DURATION_MS) {
+                stop()
+                return
+            }
+        }
+    }
+
     override suspend fun stop() {
         if (currentKind == CaptureKind.PHOTO) return
         val elapsed = nowMillis() - startedAt
+        audioTicker?.cancel()
+        audioTicker = null
         audioRecorder?.stop()
         audioRecorder = null
         movieOutput?.stopRecording()
@@ -339,6 +375,8 @@ internal class IosMediaRecorderController : MediaRecorderController {
     }
 
     override fun cancel() {
+        audioTicker?.cancel()
+        audioTicker = null
         audioRecorder?.stop()
         audioRecorder?.deleteRecording()
         audioRecorder = null
@@ -357,6 +395,7 @@ internal class IosMediaRecorderController : MediaRecorderController {
         videoInput = null
         movieOutput = null
         photoOutput = null
+        scope.cancel()
     }
 
     private fun VideoQuality.iosPreset(): String? = when (this) {

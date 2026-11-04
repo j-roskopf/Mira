@@ -33,7 +33,14 @@ OAuth device flow, which needs no client secret, and search runs locally.
 | | Android | iOS | Desktop | Web |
 |---|---|---|---|---|
 | Audio | `MediaRecorder` | `AVAudioRecorder` | FFmpeg subprocess | `MediaRecorder` + ffmpeg.wasm |
-| Video | CameraX `Recorder` | `AVCaptureMovieFileOutput` | FFmpeg subprocess | `MediaRecorder` + ffmpeg.wasm |
+| Photo | System camera | `UIImagePickerController` | FFmpeg snapshot | Camera preview + canvas |
+| Video | System camera | `UIImagePickerController` | FFmpeg subprocess | `MediaRecorder` + ffmpeg.wasm |
+
+Photo and video on phones are handed to the platform's own camera UI, so flash, zoom, timers, and
+the front/back switch come from the OS rather than being rebuilt in Compose. iOS exports the
+picker's QuickTime video to mp4 before it enters the archive. Default video and photo quality
+(Low / Medium / High, both defaulting to Medium) is chosen in Settings; photos are resized and
+re-encoded to match, and video uses the closest recording preset each platform exposes.
 
 Everything lands as mp4/H.264+AAC or m4a/AAC from every platform, so media recorded anywhere plays
 everywhere — a voice note recorded in Chrome still opens on an iPhone years later.

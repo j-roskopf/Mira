@@ -27,6 +27,7 @@ import com.joetr.mira.data.archive.GitHubAuthorizationException
 import com.joetr.mira.data.archive.GitHubArchive
 import com.joetr.mira.data.archive.ImportFailedException
 import com.joetr.mira.di.AppGraph
+import com.joetr.mira.domain.CaptureQuality
 import com.joetr.mira.domain.SessionState
 import com.joetr.mira.domain.SyncState
 import com.joetr.mira.domain.ThemeMode
@@ -63,6 +64,8 @@ internal fun SettingsRoute(
     val includeMedia by graph.settings.observeIncludeMediaInArchive().collectAsState(false)
     val videoUnmetered by graph.settings.observeVideoUploadOnUnmeteredOnly().collectAsState(true)
     val cacheCap by graph.settings.observeMediaCacheCapBytes().collectAsState(0L)
+    val videoQuality by graph.settings.observeVideoQuality().collectAsState(CaptureQuality.MEDIUM)
+    val photoQuality by graph.settings.observePhotoQuality().collectAsState(CaptureQuality.MEDIUM)
 
     var localBytes by remember { mutableStateOf(0L) }
     var orphanCount by remember { mutableStateOf<Int?>(null) }
@@ -108,6 +111,8 @@ internal fun SettingsRoute(
             deleting = deleting,
             dataMessage = dataMessage,
             dataMessageIsError = dataMessageIsError,
+            videoQuality = videoQuality,
+            photoQuality = photoQuality,
         ),
         actions = SettingsActions(
             onBack = onBack,
@@ -245,6 +250,8 @@ internal fun SettingsRoute(
                     confirmDeleteAll = true
                 }
             },
+            onVideoQualityChange = { scope.launch { graph.settings.setVideoQuality(it) } },
+            onPhotoQualityChange = { scope.launch { graph.settings.setPhotoQuality(it) } },
         ),
     )
 

@@ -2,6 +2,7 @@ package com.joetr.mira.data.settings
 
 import app.cash.sqldelight.async.coroutines.awaitAsOneOrNull
 import com.joetr.mira.db.MiraDatabase
+import com.joetr.mira.domain.CaptureQuality
 import com.joetr.mira.domain.ThemeMode
 import com.joetr.mira.domain.UserSettingsRepository
 import dev.zacsweers.metro.AppScope
@@ -28,6 +29,8 @@ public class DefaultUserSettingsRepository(
     private val mediaCacheCap = MutableStateFlow(DEFAULT_CACHE_CAP_BYTES)
     private val videoUnmeteredOnly = MutableStateFlow(true)
     private val includeMediaInArchive = MutableStateFlow(false)
+    private val videoQuality = MutableStateFlow(CaptureQuality.MEDIUM)
+    private val photoQuality = MutableStateFlow(CaptureQuality.MEDIUM)
 
     private var loaded = false
 
@@ -42,6 +45,8 @@ public class DefaultUserSettingsRepository(
             videoUnmeteredOnly.value = read(KEY_VIDEO_UNMETERED)?.toBooleanStrictOrNull() ?: true
             includeMediaInArchive.value =
                 read(KEY_ARCHIVE_MEDIA)?.toBooleanStrictOrNull() ?: false
+            videoQuality.value = read(KEY_VIDEO_QUALITY).toCaptureQuality(CaptureQuality.MEDIUM)
+            photoQuality.value = read(KEY_PHOTO_QUALITY).toCaptureQuality(CaptureQuality.MEDIUM)
         }
     }
 
@@ -82,6 +87,23 @@ public class DefaultUserSettingsRepository(
         write(KEY_ARCHIVE_MEDIA, enabled.toString())
     }
 
+    override fun observeVideoQuality(): Flow<CaptureQuality> = videoQuality.asStateFlow()
+
+    override suspend fun setVideoQuality(quality: CaptureQuality) {
+        videoQuality.value = quality
+        write(KEY_VIDEO_QUALITY, quality.name)
+    }
+
+    override fun observePhotoQuality(): Flow<CaptureQuality> = photoQuality.asStateFlow()
+
+    override suspend fun setPhotoQuality(quality: CaptureQuality) {
+        photoQuality.value = quality
+        write(KEY_PHOTO_QUALITY, quality.name)
+    }
+
+    private fun String?.toCaptureQuality(fallback: CaptureQuality): CaptureQuality =
+        CaptureQuality.entries.firstOrNull { it.name == this } ?: fallback
+
     private suspend fun read(key: String): String? = withContext(Dispatchers.Default) {
         queries.getSetting(key).awaitAsOneOrNull()?.takeIf { it.isNotBlank() }
     }
@@ -96,6 +118,8 @@ public class DefaultUserSettingsRepository(
         const val KEY_CACHE_CAP = "media_cache_cap_bytes"
         const val KEY_VIDEO_UNMETERED = "video_upload_unmetered_only"
         const val KEY_ARCHIVE_MEDIA = "archive_include_media"
+        const val KEY_VIDEO_QUALITY = "capture_video_quality"
+        const val KEY_PHOTO_QUALITY = "capture_photo_quality"
 
         const val DEFAULT_ACCENT = "EMBER"
 

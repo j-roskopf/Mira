@@ -1,6 +1,7 @@
 package com.joetr.mira.ui.components
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.getValue
@@ -13,6 +14,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -78,7 +80,12 @@ public fun SectionLabel(text: String, modifier: Modifier = Modifier) {
     )
 }
 
-/** A surface that floats on the canvas. No elevation, no border — lightness alone. */
+/**
+ * A surface that floats on the canvas. No elevation, no border — lightness alone.
+ *
+ * A tap settles the card to 0.98x and back — the only feedback a flat surface can give without
+ * elevation or a border.
+ */
 @Composable
 public fun MiraCard(
     modifier: Modifier = Modifier,
@@ -86,12 +93,20 @@ public fun MiraCard(
     content: @Composable () -> Unit,
 ) {
     val colors = MiraTheme.colors
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed && onClick != null && MiraTheme.motionEnabled) 0.98f else 1f,
+        animationSpec = tween(MiraMotion.QUICK_MS),
+        label = "card-press-scale",
+    )
     Box(
         modifier = modifier
             .fillMaxWidth()
+            .scale(scale)
             .clip(RoundedCornerShape(MiraRadii.card))
             .background(colors.surface)
-            .let { if (onClick != null) it.clickable(onClick = onClick) else it }
+            .let { if (onClick != null) it.clickable(interactionSource = interactionSource, onClick = onClick) else it }
             .padding(MiraSpacing.lg),
     ) {
         content()

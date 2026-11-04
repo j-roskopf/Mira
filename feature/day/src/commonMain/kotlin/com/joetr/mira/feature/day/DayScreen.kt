@@ -1,5 +1,6 @@
 package com.joetr.mira.feature.day
 
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,6 +28,7 @@ import com.joetr.mira.ui.components.SectionLabel
 import com.joetr.mira.ui.icons.MiraIcons
 import com.joetr.mira.ui.motion.sharedDayTitle
 import com.joetr.mira.ui.motion.sharedEntryCard
+import com.joetr.mira.ui.theme.MiraMotion
 import com.joetr.mira.ui.theme.MiraSpacing
 import com.joetr.mira.ui.theme.MiraTheme
 
@@ -108,7 +110,17 @@ public fun DayScreen(
                         EntryCard(
                             entry = entry,
                             onClick = { onEntryClick(entry) },
-                            modifier = Modifier.sharedEntryCard(entry.id),
+                            modifier = Modifier.sharedEntryCard(entry.id).let {
+                                if (MiraTheme.motionEnabled) {
+                                    it.animateItem(
+                                        fadeInSpec = tween(MiraMotion.STANDARD_MS),
+                                        placementSpec = tween(MiraMotion.STANDARD_MS),
+                                        fadeOutSpec = tween(MiraMotion.QUICK_MS),
+                                    )
+                                } else {
+                                    it
+                                }
+                            },
                         )
                     }
                 }

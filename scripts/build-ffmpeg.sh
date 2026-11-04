@@ -141,6 +141,10 @@ CONFIGURE_FLAGS=(
   --enable-filter=aresample
   --enable-filter=anull
   --enable-filter=null
+  # Live recording levels: astats computes RMS/peak dBFS and ametadata prints it to a side file
+  # while the capture process runs, which is what drives the meter on the desktop recorder.
+  --enable-filter=astats
+  --enable-filter=ametadata
 
   --enable-parser=h264
   --enable-parser=hevc

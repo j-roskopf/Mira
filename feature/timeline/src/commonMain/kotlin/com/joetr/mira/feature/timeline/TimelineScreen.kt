@@ -1,5 +1,6 @@
 package com.joetr.mira.feature.timeline
 
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -35,6 +36,7 @@ import com.joetr.mira.ui.components.SectionLabel
 import com.joetr.mira.ui.displayName
 import com.joetr.mira.ui.formatTimestamp
 import com.joetr.mira.ui.shortName
+import com.joetr.mira.ui.theme.MiraMotion
 import com.joetr.mira.ui.theme.MiraSpacing
 import com.joetr.mira.ui.theme.MiraTheme
 
@@ -105,6 +107,15 @@ public fun TimelineScreen(
                     isLast = index == monthEntries.lastIndex,
                     isToday = entry.localDate == today,
                     onClick = { onEntryClick(entry) },
+                    modifier = if (MiraTheme.motionEnabled) {
+                        Modifier.animateItem(
+                            fadeInSpec = tween(MiraMotion.STANDARD_MS),
+                            placementSpec = tween(MiraMotion.STANDARD_MS),
+                            fadeOutSpec = tween(MiraMotion.QUICK_MS),
+                        )
+                    } else {
+                        Modifier
+                    },
                 )
             }
         }
@@ -122,13 +133,14 @@ private fun TimelineRow(
     isLast: Boolean,
     isToday: Boolean,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val colors = MiraTheme.colors
     val railColor = colors.inkFaint.copy(alpha = 0.45f)
     val date = entry.localDate
 
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .height(IntrinsicSize.Min)
             .clickable(onClick = onClick),
