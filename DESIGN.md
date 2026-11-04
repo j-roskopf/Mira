@@ -94,9 +94,11 @@ dark:   L_anchor = 0.28,  C_anchor = 0.022
 light:  L_anchor = 0.93,  C_anchor = 0.016
 ```
 
-Step 0 is a day with one entry. Step 4 is a day at or above the busy threshold. A day with **zero**
-entries draws no circle at all — just the numeral in `inkFaint`. That absence is what makes a
-consistent month read as a constellation instead of a grid.
+Step 0 is a day with one entry. Step 4 is a day at or above the busy threshold. The year view
+still paints a day as a ramp-coloured dot. On the month grid, a written day is the numeral over a
+small row of pips — one per entry, capped at five — while a day with **zero** entries is just the
+numeral in `inkFaint`. That absence is what makes a consistent month read as a constellation
+instead of a grid, without turning busy days into heavy filled discs.
 
 The busy threshold is **adaptive**: the 90th percentile of entries-per-day over the visible month,
 clamped to a minimum of 3. A month where you wrote once a day should still show variation, and a
@@ -234,11 +236,10 @@ is listed beneath it in bold uppercase hugging the left edge, and the current mo
 pill in `ink` with `canvas`-coloured text. The grid then loses its month title and takes the full
 remaining width and height.
 
-On that wide grid the month reads as a constellation rather than a uniform type wall. Both the
-heatmap step and the circle diameter encode activity: a one-entry day is a small disc, a busy day
-swells toward 64dp, and an unwritten day is only a faint numeral. Today and the selection always
-draw at full size so their ring and fill stay legible. The same drag-to-page gesture still works,
-and the rail follows the settled month.
+On that wide grid the month reads as a constellation rather than a uniform type wall. Written days
+carry a pip per entry, while an unwritten day is only a faint numeral. Today draws a ring and the
+selection draws a filled disc, so those states stay legible without competing with the count pips.
+The same drag-to-page gesture still works, and the rail follows the settled month.
 
 ### Day
 

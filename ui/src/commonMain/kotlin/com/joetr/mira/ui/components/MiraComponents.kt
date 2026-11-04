@@ -39,7 +39,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.semantics.contentDescription
@@ -189,10 +188,9 @@ public fun AttachmentDots(entry: Entry, modifier: Modifier = Modifier) {
 /**
  * One day in the calendar heatmap.
  *
- * [rampStep] of -1 means no entries, and draws no circle at all — only the numeral, faintly. That
- * absence is what makes a month you journalled read as a constellation instead of a grid. A tiny
- * dot below the numeral marks every written day, so a single-entry day stays legible even where its
- * ramp step sits close to the canvas colour.
+ * Days carry no filled disc. A written day is the numeral over a small row of up to five pips —
+ * one per entry — so the calendar stays a typographic grid and the count is legible without a
+ * heavy bubble. [rampStep] of -1 means no entries: only the numeral, faintly.
  */
 @Composable
 public fun HeatmapDay(
@@ -202,23 +200,24 @@ public fun HeatmapDay(
     isSelected: Boolean,
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
+    entryCount: Int = if (rampStep >= 0) rampStep + 1 else 0,
     circleSize: Dp = MiraSizes.dayCircle,
     numeralStyle: TextStyle = MiraTheme.type.dayNumeral,
 ) {
     val colors = MiraTheme.colors
-    val fill = rampStep.takeIf { it >= 0 }?.let { colors.heatmap.getOrNull(it) }
     val targetTextColor = when {
         isSelected -> colors.onAccent
-        fill != null -> if (fill.luminance() > 0.179f) Color(0xFF0A0A0B) else Color.White
+        entryCount > 0 || isToday -> colors.ink
         else -> colors.inkFaint
     }
     val effects = if (MiraTheme.motionEnabled) MaterialTheme.motionScheme.fastEffectsSpec<Color>() else snap()
     val textColor by animateColorAsState(targetTextColor, effects, label = "day-ink")
     val background by animateColorAsState(
-        if (isSelected) colors.accent else fill ?: Color.Transparent,
+        if (isSelected) colors.accent else Color.Transparent,
         effects,
         label = "day-selection",
     )
+    val pipColor = if (isSelected) colors.onAccent else colors.accent
     Box(
         modifier = modifier
             .sizeIn(minWidth = MiraSizes.touchTarget, minHeight = MiraSizes.touchTarget)
@@ -237,16 +236,24 @@ public fun HeatmapDay(
                 style = numeralStyle,
                 color = textColor,
             )
-            if (fill != null) {
-                val dotSize = (circleSize.value * 0.06f).coerceIn(3f, 6f).dp
-                val dotPadding = (circleSize.value * 0.08f).coerceIn(4f, 8f).dp
-                Box(
-                    Modifier
+            if (entryCount > 0) {
+                val pipSize = (circleSize.value * 0.055f).coerceIn(2.5f, 4f).dp
+                val pipGap = (circleSize.value * 0.045f).coerceIn(2f, 3.5f).dp
+                val pipPadding = (circleSize.value * 0.12f).coerceIn(5f, 8f).dp
+                Row(
+                    modifier = Modifier
                         .align(Alignment.BottomCenter)
-                        .padding(bottom = dotPadding)
-                        .size(dotSize)
-                        .background(textColor, CircleShape),
-                )
+                        .padding(bottom = pipPadding),
+                    horizontalArrangement = Arrangement.spacedBy(pipGap),
+                ) {
+                    repeat(entryCount.coerceAtMost(5)) {
+                        Box(
+                            Modifier
+                                .size(pipSize)
+                                .background(pipColor, CircleShape),
+                        )
+                    }
+                }
             }
         }
     }
