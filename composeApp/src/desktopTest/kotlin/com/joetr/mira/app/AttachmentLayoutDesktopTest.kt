@@ -4,9 +4,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.isRoot
+import androidx.compose.ui.test.onLast
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.runDesktopComposeUiTest
@@ -53,15 +54,18 @@ class AttachmentLayoutDesktopTest {
             }
             // Capture controls only exist when FFmpeg is bundled; CI runs without it.
             val captureSupported = supportsCapture(CaptureKind.AUDIO)
-            onNodeWithText("1 video · 2 voice notes").assertIsDisplayed()
-            onNodeWithContentDescription("Expand attachments").performClick()
-            onNodeWithText("Video 1").assertIsDisplayed()
+            onNodeWithContentDescription("View attachments").assertIsDisplayed()
             onNodeWithContentDescription("Save entry").assertIsDisplayed()
             if (captureSupported) onNodeWithContentDescription("Record audio").assertIsDisplayed()
-            onRoot().captureRoboImage("src/desktopTest/resources/roborazzi/Attachments_${width}.png")
+
+            onNodeWithContentDescription("View attachments").performClick()
+            onNodeWithText("ATTACHMENTS · 3").assertIsDisplayed()
+            onNodeWithText("1 video · 2 voice notes").assertIsDisplayed()
+            onNodeWithText("Video 1").assertIsDisplayed()
+            onAllNodes(isRoot()).onLast().captureRoboImage("src/desktopTest/resources/roborazzi/Attachments_${width}.png")
+
             onNodeWithContentDescription("Remove Voice note 3").performScrollTo().assertIsDisplayed().performClick()
             runOnIdle { assertEquals(listOf("video", "audio"), attachments.value.map { it.id }) }
             onNodeWithContentDescription("Remove Voice note 2").performScrollTo().assertIsDisplayed()
-            if (captureSupported) onNodeWithContentDescription("Record audio").assertIsDisplayed()
         }
 }

@@ -177,9 +177,11 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
                                 Modifier.fillMaxSize(),
                                 maxWidth = when (key) {
                                     is CalendarKey -> 1200.dp
-                                    // A full-bleed screen, not a reading page — it shouldn't be
-                                    // squeezed into the text measure the way entry content is.
+                                    // Spatial screens and the editor fill the window rather than
+                                    // being squeezed into the reading measure.
+                                    is YearKey -> Dp.Infinity
                                     is AuthKey -> Dp.Infinity
+                                    is ComposeKey -> Dp.Infinity
                                     else -> 720.dp
                                 },
                             ) {

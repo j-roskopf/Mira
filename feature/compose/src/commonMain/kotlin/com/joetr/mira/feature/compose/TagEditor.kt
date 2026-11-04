@@ -48,9 +48,11 @@ import com.joetr.mira.ui.theme.MiraTheme
 /**
  * Tags for an entry, kept as quiet chrome below the writing.
  *
- * Existing tags are pills; a single `+ Tag` opens an inline field without taking the writer away
- * from the page. Recently used tags appear as suggestions while that field is open, so the common
- * case is one tap rather than typing the same word again.
+ * Existing tags are pills; a single `+ New tag` opens an inline field without taking the writer
+ * away from the page. When the tray is opened on an entry with no tags yet, it goes straight to
+ * the field instead of showing an empty chip row, so the first tag is one step away instead of
+ * two. Recently used tags appear as suggestions while that field is open, so the common case is
+ * one tap rather than typing the same word again.
  */
 @Composable
 internal fun TagEditor(
@@ -61,7 +63,9 @@ internal fun TagEditor(
     modifier: Modifier = Modifier,
 ) {
     val colors = MiraTheme.colors
-    var editing by remember { mutableStateOf(false) }
+    // With no tags yet, opening the tray goes straight to the field so the first tag doesn't
+    // need a second tap. The tray itself is only opened on demand.
+    var editing by remember { mutableStateOf(tags.isEmpty()) }
     var draft by remember { mutableStateOf("") }
     val focusRequester = remember { FocusRequester() }
 
@@ -203,6 +207,6 @@ private fun AddTagChip(onClick: () -> Unit) {
         horizontalArrangement = Arrangement.spacedBy(MiraSpacing.xs),
     ) {
         MiraIcon(MiraIcons.Tag, tint = colors.inkMuted, size = 13.dp)
-        Text("Tag", style = MiraTheme.type.meta, color = colors.inkMuted)
+        Text("New tag", style = MiraTheme.type.meta, color = colors.inkMuted)
     }
 }

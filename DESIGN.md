@@ -121,7 +121,7 @@ The rule: **if the user typed it, it is Literata. If the app says it, it is Inte
 | `dayDate` | Inter Tight | 11 / 14 | Medium | +1.6, UPPER | `30 OCT 2026` beneath it |
 | `sectionLabel` | Inter Tight | 10 / 14 | Bold | +1.8, UPPER | `ENTRIES`, `ATTACHMENTS`, `ALL DAY` |
 | `yearNav` | Inter Tight | 11 / 16 | Medium | +1.2, UPPER | `JAN FEB MAR` month strip |
-| `dayNumeral` | Inter Tight | 13 / 13 | Medium | 0 | Numbers inside heatmap circles |
+| `dayNumeral` | Inter Tight | 15 / 15 | Medium | 0 | Numbers inside heatmap circles |
 | `weekdayHead` | Inter Tight | 10 / 12 | Medium | +1.0, UPPER | `SU M TU W TH F SA` |
 | `uiBody` | Inter Tight | 15 / 22 | Regular | 0 | Body text the app speaks: settings, explanations |
 | `entryBody` | **Literata** | 16 / 26 | Regular | 0 | The journal text itself |
@@ -153,9 +153,9 @@ happily run a line of journal text across a 2560px monitor; `MiraContentWidth` (
 | Spacing scale | 2 / 4 / 8 / 12 / 16 / 20 / 24 / 32 / 48 / 64 |
 | Phone gutter | 20dp |
 | Desktop gutter | 32dp, content capped at 720dp |
-| Day circle | 34dp diameter, 6dp grid gap |
+| Day circle | 44dp diameter, 6dp grid gap |
 | Card padding | 16dp, 20dp for the reading view |
-| Min touch target | 44dp, even where the visual is 34dp |
+| Min touch target | 44dp, even where the visual is smaller |
 
 Gaps between stacked entry cards: **8dp**. Between sections: **32dp**. The jump from 8 to 32 is what
 replaces dividers — if sections ever feel merged, the section gap has drifted, not the need for a
@@ -228,6 +228,18 @@ attachment, chevron, close, cloud-pending, cloud-done, github, download.
 The year strip is the whole navigator — tap a month to jump, tap the year to open the year view.
 No month arrows, no dropdown.
 
+On a wide canvas (800dp or more) the navigator leaves the page header and becomes a vertical rail
+to the left of the grid, directly beside the app navigation: the year sits at the top, every month
+is listed beneath it in bold uppercase hugging the left edge, and the current month is a filled
+pill in `ink` with `canvas`-coloured text. The grid then loses its month title and takes the full
+remaining width and height.
+
+On that wide grid the month reads as a constellation rather than a uniform type wall. Both the
+heatmap step and the circle diameter encode activity: a one-entry day is a small disc, a busy day
+swells toward 64dp, and an unwritten day is only a faint numeral. Today and the selection always
+draw at full size so their ring and fill stay legible. The same drag-to-page gesture still works,
+and the rail follows the settled month.
+
 ### Day
 
 Header: `TUESDAY` / `30 OCT 2026` centred, back-chevron left, `+` in a circle right. Then
@@ -240,10 +252,15 @@ generous space above it. Nothing else. No illustration, no button; the `+` is al
 
 ### Compose sheet
 
-Opens as a sheet at 92% height. A date field at the top (defaults to today, tappable to move the
-entry). Then the Literata text field, immediately focused, no placeholder chrome beyond a faint
-*"Write…"*. A bottom bar with three thin-line affordances — text / mic / video — and a Save. Audio
-and video capture expand in place within the sheet; they do not push a new screen.
+Opens as a sheet at 92% height on phones. A date field at the top (defaults to today, tappable to
+move the entry). Then the Literata text field, immediately focused, no placeholder chrome beyond a
+faint *"Write…"*. A bottom bar with three thin-line affordances — text / mic / video — and a Save.
+Audio and video capture expand in place within the sheet; they do not push a new screen.
+
+On desktop the editor is not a card. It fills the available window in a single canvas tone — the
+same dark base as the rest of the content area, with no lighter sheet floating inside it — while
+the writing column stays capped to the 720dp measure so lines do not run the full width of a wide
+monitor.
 
 ### Timeline
 
@@ -261,9 +278,13 @@ Results reuse timeline rows with the matched term in accent. Empty state shows r
 
 ### Year view
 
-12 month blocks, each a mini heatmap of bare circles without numerals, 8dp per day. Tapping a month
-drills into the calendar. This is the one screen that is purely ornamental, and it should be the
-best-looking thing in the app.
+12 month blocks, each a mini heatmap of bare circles without numerals, 8dp per day on phones.
+Tapping a month drills into the calendar. This is the one screen that is purely ornamental, and it
+should be the best-looking thing in the app.
+
+On a wide canvas the year view is not capped to the reading measure. It fills the window: 2 columns
+on compact, 3 from 700dp, 4 from 1100dp, with the day dots scaling to fill their column (up to
+28dp). The year view is spatial chrome, like the month calendar, not reading content.
 
 ### Settings
 
@@ -278,7 +299,9 @@ Storage (usage readout, cache cap, pinned years, orphan sweep), About (version, 
 The design is identical everywhere except where a platform forces a difference:
 
 - **Desktop** — reading content capped at 720dp and centred. The home calendar expands to
-  1200dp, with taller week rows and 56dp day markers when its available width reaches 800dp.
+  1200dp and, once its available width reaches 800dp, moves the month navigator into a left rail
+  with taller week rows and day markers that scale up to 64dp with matching numerals. The year
+  view is full-bleed: it fills the window and reflows to 3 or 4 month columns with scaled dots.
   Short windows scroll the calendar. Keyboard: `⌘N` new entry, `⌘F` search,
   `⌘[`/`⌘]` month paging.
 - **Web** — identical to desktop. No media kept locally, so attachment tiles always show the

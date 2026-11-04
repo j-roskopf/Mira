@@ -32,6 +32,9 @@ public fun MonthKey.shortName(): String = MONTHS_SHORT[monthNumber - 1]
 
 public fun monthShortName(month: Int): String = MONTHS_SHORT[month - 1]
 
+/** `January` for the desktop month rail, where the whole name fits. */
+public fun monthName(month: Int): String = MONTHS[month - 1]
+
 /** `TUESDAY` for the day-screen title. */
 public fun LocalDateKey.weekdayUpper(): String =
     WEEKDAYS[toLocalDate().dayOfWeek.isoDayNumber - 1].uppercase()

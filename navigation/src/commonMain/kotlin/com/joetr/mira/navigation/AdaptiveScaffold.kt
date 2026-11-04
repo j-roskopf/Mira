@@ -169,8 +169,9 @@ private fun BottomBarLayout(
     editorSurface: Boolean,
     content: @Composable () -> Unit,
 ) {
+    // The editor paints its own canvas, including behind the system bars and IME, so the shell
+    // keeps the same dark base instead of introducing a second tone around it.
     val canvas = when {
-        editorSurface -> MaterialTheme.colorScheme.surface
         accentCanvas -> MaterialTheme.colorScheme.primary
         else -> MaterialTheme.colorScheme.background
     }

@@ -42,6 +42,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -187,6 +188,7 @@ public fun HeatmapDay(
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
     circleSize: Dp = MiraSizes.dayCircle,
+    numeralStyle: TextStyle = MiraTheme.type.dayNumeral,
 ) {
     val colors = MiraTheme.colors
     val fill = rampStep.takeIf { it >= 0 }?.let { colors.heatmap.getOrNull(it) }
@@ -217,15 +219,17 @@ public fun HeatmapDay(
         ) {
             Text(
                 text = day.toString(),
-                style = MiraTheme.type.dayNumeral,
+                style = numeralStyle,
                 color = textColor,
             )
             if (fill != null) {
+                val dotSize = (circleSize.value * 0.06f).coerceIn(3f, 6f).dp
+                val dotPadding = (circleSize.value * 0.08f).coerceIn(4f, 8f).dp
                 Box(
                     Modifier
                         .align(Alignment.BottomCenter)
-                        .padding(bottom = 4.dp)
-                        .size(3.dp)
+                        .padding(bottom = dotPadding)
+                        .size(dotSize)
                         .background(textColor, CircleShape),
                 )
             }
