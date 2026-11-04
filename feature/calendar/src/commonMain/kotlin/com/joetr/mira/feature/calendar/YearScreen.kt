@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -20,6 +21,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.Dp
 import com.joetr.mira.domain.DayActivity
 import com.joetr.mira.domain.LocalDateKey
 import com.joetr.mira.domain.MonthKey
@@ -58,75 +60,92 @@ public fun YearScreen(
         val totalEntries = remember(activity) { activity.sumOf { it.entryCount } }
         val daysWritten = remember(activity) { activity.count { it.entryCount > 0 } }
 
-        Column(
-            modifier = modifier
-                .fillMaxSize()
-                .background(colors.canvas)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = MiraSpacing.gutter),
+        BoxWithConstraints(
+            modifier = modifier.fillMaxSize().background(colors.canvas),
         ) {
-            Spacer(Modifier.height(MiraSpacing.lg))
-
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                CircleIconButton(MiraIcons.Back, "Back", onClick = onBack)
-                Spacer(Modifier.weight(1f))
-                Text(
-                    text = (year - 1).toString(),
-                    style = MiraTheme.type.yearNav,
-                    color = colors.inkFaint,
-                    modifier = Modifier
-                        .clickable { onYearChange(year - 1) }
-                        .padding(MiraSpacing.sm),
-                )
-                Text(
-                    text = year.toString(),
-                    style = MiraTheme.type.monthTitle,
-                    color = colors.ink,
-                    modifier = Modifier.padding(horizontal = MiraSpacing.md),
-                )
-                Text(
-                    text = (year + 1).toString(),
-                    style = MiraTheme.type.yearNav,
-                    color = colors.inkFaint,
-                    modifier = Modifier
-                        .clickable { onYearChange(year + 1) }
-                        .padding(MiraSpacing.sm),
-                )
-                Spacer(Modifier.weight(1f))
-                Spacer(Modifier.size(MiraSizes.touchTarget))
+            val wide = maxWidth >= 700.dp
+            val columns = when {
+                maxWidth >= 1100.dp -> 4
+                wide -> 3
+                else -> 2
             }
+            val horizontalPadding = if (wide) MiraSpacing.gutterWide else MiraSpacing.gutter
+            val dotGap = if (wide) 5.dp else 3.dp
+            val columnGap = if (wide) MiraSpacing.xxl else MiraSpacing.lg
+            val columnWidth = (maxWidth - horizontalPadding * 2 - columnGap * (columns - 1)) / columns
+            val dotSize = ((columnWidth - dotGap * 6) / 7).coerceIn(MiraSizes.yearDot, 28.dp)
 
-            Spacer(Modifier.height(MiraSpacing.sm))
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = horizontalPadding),
+            ) {
+                Spacer(Modifier.height(if (wide) MiraSpacing.xxl else MiraSpacing.lg))
 
-            Text(
-                text = "$daysWritten DAYS · $totalEntries ENTRIES",
-                style = MiraTheme.type.dayDate,
-                color = colors.inkMuted,
-            )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircleIconButton(MiraIcons.Back, "Back", onClick = onBack)
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        text = (year - 1).toString(),
+                        style = MiraTheme.type.yearNav,
+                        color = colors.inkFaint,
+                        modifier = Modifier
+                            .clickable { onYearChange(year - 1) }
+                            .padding(MiraSpacing.sm),
+                    )
+                    Text(
+                        text = year.toString(),
+                        style = MiraTheme.type.monthTitle,
+                        color = colors.ink,
+                        modifier = Modifier.padding(horizontal = MiraSpacing.md),
+                    )
+                    Text(
+                        text = (year + 1).toString(),
+                        style = MiraTheme.type.yearNav,
+                        color = colors.inkFaint,
+                        modifier = Modifier
+                            .clickable { onYearChange(year + 1) }
+                            .padding(MiraSpacing.sm),
+                    )
+                    Spacer(Modifier.weight(1f))
+                    Spacer(Modifier.size(MiraSizes.touchTarget))
+                }
 
-            Spacer(Modifier.height(MiraSpacing.sectionGap))
+                Spacer(Modifier.height(MiraSpacing.sm))
 
-            (1..12).chunked(3).forEach { row ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(MiraSpacing.lg),
-                ) {
-                    row.forEach { monthNumber ->
-                        val month = MonthKey.of(year, monthNumber)
-                        Box(Modifier.weight(1f)) {
-                            MiniMonth(
-                                month = month,
-                                counts = byDate,
-                                busyThreshold = threshold,
-                                onClick = { onMonthClick(month) },
-                            )
+                Text(
+                    text = "$daysWritten DAYS · $totalEntries ENTRIES",
+                    style = MiraTheme.type.dayDate,
+                    color = colors.inkMuted,
+                )
+
+                Spacer(Modifier.height(if (wide) MiraSpacing.huge else MiraSpacing.sectionGap))
+
+                (1..12).chunked(columns).forEach { row ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(columnGap),
+                    ) {
+                        row.forEach { monthNumber ->
+                            val month = MonthKey.of(year, monthNumber)
+                            Box(Modifier.weight(1f)) {
+                                MiniMonth(
+                                    month = month,
+                                    counts = byDate,
+                                    busyThreshold = threshold,
+                                    dotSize = dotSize,
+                                    dotGap = dotGap,
+                                    onClick = { onMonthClick(month) },
+                                )
+                            }
                         }
                     }
+                    Spacer(Modifier.height(if (wide) MiraSpacing.xxxl else MiraSpacing.xxl))
                 }
-                Spacer(Modifier.height(MiraSpacing.xxl))
-            }
 
-            Spacer(Modifier.height(MiraSpacing.giant))
+                Spacer(Modifier.height(MiraSpacing.giant))
+            }
         }
     }
 }
@@ -136,6 +155,8 @@ private fun MiniMonth(
     month: MonthKey,
     counts: Map<LocalDateKey, Int>,
     busyThreshold: Int,
+    dotSize: Dp,
+    dotGap: Dp,
     onClick: () -> Unit,
 ) {
     val colors = MiraTheme.colors
@@ -150,9 +171,9 @@ private fun MiniMonth(
             color = colors.inkMuted,
         )
         Spacer(Modifier.height(MiraSpacing.sm))
-        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(dotGap)) {
             repeat(rows) { row ->
-                Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(dotGap)) {
                     repeat(7) { column ->
                         val index = row * 7 + column
                         val day = index - leading + 1
@@ -163,14 +184,14 @@ private fun MiniMonth(
                             val step = heatmapStep(counts[date] ?: 0, busyThreshold)
                             Box(
                                 Modifier
-                                    .size(MiraSizes.yearDot)
+                                    .size(dotSize)
                                     .background(
                                         color = colors.heatmap.getOrNull(step) ?: colors.surface,
                                         shape = CircleShape,
                                     ),
                             )
                         } else {
-                            Box(Modifier.size(MiraSizes.yearDot))
+                            Box(Modifier.size(dotSize))
                         }
                     }
                 }

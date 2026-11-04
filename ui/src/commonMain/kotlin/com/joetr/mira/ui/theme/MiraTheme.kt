@@ -122,7 +122,7 @@ public object MiraRadii {
 
 public object MiraSizes {
     /** Heatmap day circle. */
-    public val dayCircle: Dp = 34.dp
+    public val dayCircle: Dp = 44.dp
     public val dayGap: Dp = 6.dp
 
     /** Year-view day dot. */
@@ -212,7 +212,7 @@ private fun miraTypeScale(ui: FontFamily, reading: FontFamily): MiraTypeScale = 
         fontWeight = FontWeight.Medium, letterSpacing = 1.2.sp,
     ),
     dayNumeral = TextStyle(
-        fontFamily = ui, fontSize = 13.sp, lineHeight = 13.sp,
+        fontFamily = ui, fontSize = 15.sp, lineHeight = 15.sp,
         fontWeight = FontWeight.Medium,
     ),
     weekdayHead = TextStyle(

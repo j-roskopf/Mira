@@ -4,8 +4,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertTextEquals
-import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
@@ -43,8 +43,8 @@ class EntryEditingDesktopTest {
             }
         }
         runOnIdle { body.value = "Previously saved note" }
-        onNode(hasSetTextAction()).assertTextEquals("Previously saved note")
-        onNode(hasSetTextAction()).performTextReplacement("Updated note")
+        onNodeWithTag("entry-body").assertTextEquals("Previously saved note")
+        onNodeWithTag("entry-body").performTextReplacement("Updated note")
         onNodeWithContentDescription("Save changes").performClick()
         runOnIdle { assertEquals("Updated note", saved) }
     }
@@ -83,6 +83,7 @@ class EntryEditingDesktopTest {
             }
         }
 
+        onNodeWithContentDescription("Tags").performClick()
         onNodeWithContentDescription("Add tag").performClick()
         onNodeWithContentDescription("Tag name").performTextInput("travel")
         onNodeWithContentDescription("Add tag").performClick()

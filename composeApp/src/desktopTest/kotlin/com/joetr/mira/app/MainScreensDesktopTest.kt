@@ -73,6 +73,16 @@ class MainScreensDesktopTest {
     @Test fun yearDark() = capture("Year_dark", dark = true) { YearSample() }
     @Test fun yearLight() = capture("Year_light", dark = false) { YearSample() }
 
+    @Test fun yearWideDark() =
+        capture("YearWide_dark", dark = true, width = 1400, height = 950, contentWidth = Dp.Infinity) {
+            YearSample()
+        }
+
+    @Test fun yearWideLight() =
+        capture("YearWide_light", dark = false, width = 1400, height = 950, contentWidth = Dp.Infinity) {
+            YearSample()
+        }
+
     @Test fun dayDark() = capture("Day_dark", dark = true) { DaySample() }
     @Test fun dayLight() = capture("Day_light", dark = false) { DaySample() }
 
