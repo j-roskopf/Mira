@@ -104,7 +104,10 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
     // Set by every stack mutation so the shared page transition knows which way to travel.
     var navDirection by remember { mutableStateOf(NavDirection.Forward) }
 
-    var selectedDate by remember { mutableStateOf<LocalDateKey?>(null) }
+    // The calendar only highlights a day while its sheet is on the stack, so dismissing the sheet
+    // clears the highlight without any extra state to keep in sync.
+    val selectedDate = backStack.lastOrNull { it is DayKey }
+        ?.let { LocalDateKey((it as DayKey).date) }
     var activity by remember { mutableStateOf<Map<LocalDateKey, Int>>(emptyMap()) }
     var timeline by remember { mutableStateOf<List<Entry>>(emptyList()) }
 
@@ -160,9 +163,6 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
                     },
                     onNavigate = { destination ->
                         // Returning to the calendar always lands on today, even from another month.
-                        if (destination == TopLevelDestination.Calendar) {
-                            selectedDate = clock.today()
-                        }
                         navDirection = NavDirection.Crossfade
                         backStack.clear()
                         backStack.add(destination.rootKey())
@@ -232,7 +232,6 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
                                     navDirection = NavDirection.Crossfade
                                     backStack[backStack.lastIndex] = replacement
                                 },
-                                onSelectDate = { selectedDate = it },
                                 onRefresh = ::refresh,
                                 refreshVersion = refreshVersion,
                                 videoQuality = videoQuality,
@@ -312,7 +311,6 @@ private fun Screen(
     onNavigate: (Any) -> Unit,
     onBack: () -> Unit,
     onReplaceTop: (Any) -> Unit,
-    onSelectDate: (LocalDateKey) -> Unit,
     onRefresh: () -> Unit,
     refreshVersion: Int,
     videoQuality: CaptureQuality,
@@ -329,7 +327,6 @@ private fun Screen(
             showComposeButton = showComposeButton,
             onMonthChange = { onReplaceTop(CalendarKey(it.value)) },
             onDayClick = { date ->
-                onSelectDate(date)
                 if ((activity[date] ?: 0) == 0) {
                     onNavigate(ComposeKey(date = date.value))
                 } else {

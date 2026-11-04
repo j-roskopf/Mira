@@ -111,7 +111,7 @@ private fun GalleryContent(modifier: Modifier = Modifier) {
                 }
             }
             Text(
-                "Step -1 draws no circle at all — that absence is the point.",
+                "Each pip is one entry, capped at five. Step -1 draws no pips at all.",
                 style = MiraTheme.type.meta,
                 color = colors.inkMuted,
             )

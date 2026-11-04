@@ -87,15 +87,15 @@ private fun rowsAcross(from: MonthKey, to: MonthKey): Int {
 }
 
 /**
- * The home screen: a month of circles whose colour is how much you wrote.
+ * The home screen: a month of numerals, with a small pip per entry beneath each written day.
  *
- * A day with no entries draws no circle at all, only a faint numeral — so a month you journalled
- * reads as a constellation and a month you did not reads as empty. That contrast is the whole
- * point of the screen.
+ * A day with no entries keeps only a faint numeral — so a month you journalled reads as a
+ * constellation and a month you did not reads as empty. That contrast is the whole point of the
+ * screen.
  *
  * On a wide canvas the year-and-month navigator moves out of the page header and into a rail on
- * the left, letting the grid own the full height and width. The grid scales its circles and
- * numerals to the space it is given instead of staying pinned to phone sizes.
+ * the left, letting the grid own the full height and width. The grid scales its numerals and pips
+ * to the space it is given instead of staying pinned to phone sizes.
  */
 @Composable
 public fun CalendarScreen(
@@ -328,9 +328,9 @@ private fun DesktopMonthRail(
  * The wide-canvas grid. Unlike the compact pager it carries no month title — the rail already
  * names the month — so every vertical pixel goes to the days.
  *
- * The month reads as a constellation: busy days become larger discs, quiet days stay small, and
- * unwritten days are bare numerals. Size and colour both encode the same data, which gives the
- * grid a shape instead of a uniform typographic wall.
+ * The month reads as a constellation: written days carry a row of pips, while unwritten days are
+ * bare numerals. The pip count is the day's entry count, which gives the grid a shape without
+ * turning every day into a filled disc.
  */
 @Composable
 private fun DesktopMonthPager(
@@ -506,20 +506,10 @@ private fun MonthGrid(
                             val count = activity[date] ?: 0
                             val step = heatmapStep(count, busyThreshold)
                             val isMarked = date == today || date == selected
-                            val hasEntries = step >= 0
-                            // Activity sets the bubble size on the wide grid; today and the
-                            // selection stay full-size so their ring/fill always reads.
-                            val diameter = if (activitySized && hasEntries && !isMarked) {
-                                daySize * (0.66f + 0.085f * step)
-                            } else {
-                                daySize
-                            }
+                            // Activity is carried by the pip row, so every numeral keeps the same
+                            // size; today and the selection get a slightly larger one.
                             val style = if (activitySized) {
-                                val factor = when {
-                                    isMarked -> 0.30f
-                                    !hasEntries -> 0.22f
-                                    else -> (0.66f + 0.085f * step) * 0.30f
-                                }
+                                val factor = if (isMarked) 0.30f else 0.24f
                                 numeralStyle.copy(
                                     fontSize = (daySize.value * factor).sp,
                                     lineHeight = (daySize.value * factor).sp,
@@ -529,9 +519,10 @@ private fun MonthGrid(
                             }
                             HeatmapDay(
                                 day = dayNumber,
-                                circleSize = diameter,
+                                circleSize = daySize,
                                 numeralStyle = style,
                                 rampStep = step,
+                                entryCount = count,
                                 isToday = date == today,
                                 isSelected = date == selected,
                                 onClick = { onDayClick(date) },
