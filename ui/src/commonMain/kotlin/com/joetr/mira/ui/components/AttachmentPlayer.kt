@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -176,7 +177,17 @@ public fun VideoAttachmentTile(
                 surface(Modifier.fillMaxWidth().fillMaxHeight())
             }
             if (state.preparing) {
-                Text("Loading recording…", color = Color.White, style = MiraTheme.type.meta)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(MiraSpacing.sm),
+                ) {
+                    CircularProgressIndicator(
+                        color = Color.White,
+                        strokeWidth = 2.dp,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Text("Loading recording…", color = Color.White, style = MiraTheme.type.meta)
+                }
             }
             if (!state.playing && !state.preparing) {
                 Box(

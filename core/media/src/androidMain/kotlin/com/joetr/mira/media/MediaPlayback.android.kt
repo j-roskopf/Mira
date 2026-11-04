@@ -15,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.viewinterop.AndroidView
 import com.joetr.mira.platform.AndroidContextHolder
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -43,14 +44,18 @@ internal class AndroidMediaPlayerController : MediaPlayerController {
     private val _state = MutableStateFlow(PlaybackState())
     override val state: StateFlow<PlaybackState> = _state.asStateFlow()
 
-    private var surface: Surface? = null
+    @Volatile private var surface: Surface? = null
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var player: MediaPlayer? = null
     private var tempFile: File? = null
 
+    /** Bumped by [release] so an in-flight load cannot publish state after it was cancelled. */
+    @Volatile private var loadGeneration: Int = 0
+
     override suspend fun load(source: MediaSource, kind: CaptureKind) {
         release()
+        val generation = loadGeneration
         _state.value = PlaybackState(preparing = true)
 
         val path = withContext(Dispatchers.IO) { resolvePath(source) }
@@ -59,34 +64,57 @@ internal class AndroidMediaPlayerController : MediaPlayerController {
             return
         }
 
-        val created = runCatching {
-            MediaPlayer().apply {
-                setDataSource(path)
-                surface?.let { setSurface(it) }
-                setOnCompletionListener {
-                    _state.value = _state.value.copy(playing = false, ended = true)
+        // MediaPlayer's data-source setup and prepare both block — `prepare()` until the first
+        // frame is decoded, and `setDataSource()` on a remote URL until the network responds.
+        // Doing either on the caller's (main) thread freezes the UI, so hand the work to IO and
+        // wait for the async prepare callback instead.
+        val prepared = CompletableDeferred<MediaPlayer?>()
+        val created = withContext(Dispatchers.IO) {
+            runCatching {
+                MediaPlayer().apply {
+                    setDataSource(path)
+                    surface?.let { setSurface(it) }
+                    setOnCompletionListener {
+                        if (generation == loadGeneration) {
+                            _state.value = _state.value.copy(playing = false, ended = true)
+                        }
+                    }
+                    setOnErrorListener { _, what, _ ->
+                        if (generation == loadGeneration) {
+                            _state.value = PlaybackState(errorMessage = "Playback failed ($what)")
+                        }
+                        prepared.complete(null)
+                        true
+                    }
+                    setOnPreparedListener { prepared.complete(this) }
+                    prepareAsync()
                 }
-                setOnErrorListener { _, what, _ ->
-                    _state.value = PlaybackState(errorMessage = "Playback failed ($what)")
-                    true
-                }
-                prepare()
-            }
-        }.getOrNull()
+            }.getOrNull()
+        }
 
+        if (generation != loadGeneration) {
+            created?.runCatching { release() }
+            return
+        }
         if (created == null) {
             _state.value = PlaybackState(errorMessage = "Could not open this recording")
             return
         }
 
         player = created
+        // The surface may have attached while the player was still being created; make sure the
+        // prepared player picks up whichever surface is current before the first frame arrives.
+        surface?.let { created.setSurface(it) }
+        val ready = prepared.await() ?: return
+        if (generation != loadGeneration) return
+
         val (videoWidth, videoHeight) = if (kind == CaptureKind.VIDEO) {
             withContext(Dispatchers.IO) { videoDimensions(path) }
         } else {
             0 to 0
         }
         _state.value = PlaybackState(
-            durationMs = created.duration.toLong().coerceAtLeast(0),
+            durationMs = ready.duration.toLong().coerceAtLeast(0),
             videoWidth = videoWidth,
             videoHeight = videoHeight,
         )
@@ -111,10 +139,8 @@ internal class AndroidMediaPlayerController : MediaPlayerController {
     }
 
     override fun release() {
-        player?.runCatching {
-            stop()
-            release()
-        }
+        loadGeneration++
+        player?.runCatching { release() }
         player = null
         tempFile?.delete()
         tempFile = null
