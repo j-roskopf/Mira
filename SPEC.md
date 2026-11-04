@@ -269,6 +269,13 @@ controlled archive. Nothing is ever read back from GitHub into the app.
 enters it at `github.com/login/device`. Scope `repo` for private repositories. Works identically on
 all five platforms, including wasm, where redirect-based OAuth is painful.
 
+**Shared target, per-device credential.** The repository and branch live at
+`users/{uid}/meta/archive` with an `enabled` flag, so connecting on one device makes the target
+visible on every device signed into the same account. The `repo`-scoped OAuth token is **never**
+written to Firestore; each device authorizes once through device flow and keeps the token in local
+`app_settings`. A device that sees a target without a local token offers "Connect this device".
+Disabling the archive writes `enabled: false`, which clears the target on all devices.
+
 **Transport: the Git Data API**, not a git binary — there is no git on iOS or in a browser. Create
 blobs → create tree → create commit → update ref, from `commonMain` over the existing Ktor stack.
 One commit per push covering N entries.

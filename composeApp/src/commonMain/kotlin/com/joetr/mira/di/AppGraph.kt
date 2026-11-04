@@ -84,6 +84,7 @@ public class AppGraph(
         media = media,
         httpClient = httpClient,
         scope = scope,
+        firebase = firebase,
     )
 
     public val exportService: ExportService = ExportService(
@@ -116,12 +117,16 @@ public class AppGraph(
         } else {
             syncService.syncNow()
         }
+        archive.refreshSharedConfig()
         updates.checkForUpdates()
     }
 
     init {
         AppLifecycleObserver.onForeground = {
-            scope.launch { syncService.syncIfStale() }
+            scope.launch {
+                syncService.syncIfStale()
+                archive.refreshSharedConfig()
+            }
         }
     }
 

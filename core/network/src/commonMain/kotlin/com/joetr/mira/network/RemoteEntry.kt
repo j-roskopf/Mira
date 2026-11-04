@@ -28,3 +28,16 @@ public data class FirestoreEntryDocument(
     val id: String,
     val entry: RemoteEntryRow,
 )
+
+/**
+ * The account-wide GitHub archive target, stored at `users/{uid}/meta/archive`.
+ *
+ * Deliberately holds no credential: the OAuth access token stays on each device, because a
+ * `repo`-scoped token in Firestore would grant write access to every repository the user owns.
+ * [enabled] lets one device turn the archive off for the whole account.
+ */
+public data class RemoteArchiveConfig(
+    val enabled: Boolean,
+    val repoSlug: String?,
+    val branch: String = "main",
+)

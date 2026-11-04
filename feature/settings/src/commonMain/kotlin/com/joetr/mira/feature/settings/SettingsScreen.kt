@@ -87,6 +87,8 @@ public data class SettingsActions(
     val onDeleteAllData: () -> Unit,
     val onVideoQualityChange: (CaptureQuality) -> Unit = {},
     val onPhotoQualityChange: (CaptureQuality) -> Unit = {},
+    val onAuthorizeGitHub: () -> Unit = {},
+    val onRemoveArchiveTarget: () -> Unit = {},
 )
 
 @Composable
@@ -270,25 +272,36 @@ public fun SettingsScreen(
             SectionLabel("GitHub archive")
             Spacer(Modifier.height(MiraSpacing.sm))
             Text(
-                text = if (state.archiveConnected) {
-                    "Backing up to ${state.archiveRepo}. Every edit is a commit, so each entry " +
-                        "file carries its own history."
-                } else {
-                    "Keep a plain-text copy of your journal in a private repository you own."
+                text = when {
+                    state.archiveConnected ->
+                        "Backing up to ${state.archiveRepo}. Every edit is a commit, so each entry " +
+                            "file carries its own history."
+                    state.archiveRepo != null ->
+                        "GitHub archive is set up on your account as ${state.archiveRepo}. " +
+                            "Connect this device to start backing up from it."
+                    else ->
+                        "Keep a plain-text copy of your journal in a private repository you own."
                 },
                 style = MiraTheme.type.uiBody,
                 color = colors.inkMuted,
             )
             Spacer(Modifier.height(MiraSpacing.md))
             Column(verticalArrangement = Arrangement.spacedBy(MiraSpacing.sm)) {
-                if (state.archiveConnected) {
-                    PillButton(if (state.archivePushing) "Backing up…" else "Back up now", onClick = {
-                        if (!state.archivePushing) actions.onBackUpNow()
-                    }, filled = false)
-                    state.archiveError?.let { Text(it, color = colors.error, style = MiraTheme.type.uiBody) }
-                    PillButton("Disconnect GitHub", onClick = actions.onDisconnectGitHub, filled = false)
-                } else {
-                    PillButton("Connect GitHub", onClick = actions.onConnectGitHub)
+                when {
+                    state.archiveConnected -> {
+                        PillButton(if (state.archivePushing) "Backing up…" else "Back up now", onClick = {
+                            if (!state.archivePushing) actions.onBackUpNow()
+                        }, filled = false)
+                        state.archiveError?.let { Text(it, color = colors.error, style = MiraTheme.type.uiBody) }
+                        PillButton("Disconnect this device", onClick = actions.onDisconnectGitHub, filled = false)
+                    }
+                    state.archiveRepo != null -> {
+                        PillButton("Connect this device", onClick = actions.onAuthorizeGitHub)
+                        PillButton("Remove archive target", onClick = actions.onRemoveArchiveTarget, filled = false)
+                    }
+                    else -> {
+                        PillButton("Connect GitHub", onClick = actions.onConnectGitHub)
+                    }
                 }
             }
             if (state.archiveConnected) {

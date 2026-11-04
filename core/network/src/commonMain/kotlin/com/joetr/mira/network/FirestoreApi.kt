@@ -2,6 +2,7 @@ package com.joetr.mira.network
 
 import com.joetr.mira.platform.MiraConfig
 import io.ktor.client.HttpClient
+import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -14,6 +15,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -204,4 +206,67 @@ public class FirestoreApi(
 
     private fun documentName(ownerId: String, entryId: String): String =
         "projects/$projectId/databases/(default)/documents/users/$ownerId/entries/$entryId"
+
+    /**
+     * Reads the account-wide archive target, or null when it has never been published.
+     *
+     * A missing document is expected: devices that connected before this metadata existed
+     * bootstrap it from their local target on the first refresh.
+     */
+    public suspend fun readArchiveConfig(
+        idToken: String,
+        ownerId: String,
+    ): RemoteArchiveConfig? {
+        val responseText = try {
+            httpClient.get("$base/users/$ownerId/meta/archive") {
+                header("Authorization", "Bearer $idToken")
+            }.bodyAsText()
+        } catch (error: Throwable) {
+            if (error.isFirestoreNotFound()) return null
+            throw error
+        }
+        val fields = runCatching {
+            json.parseToJsonElement(responseText).jsonObject["fields"]?.jsonObject
+        }.getOrNull() ?: return null
+        return RemoteArchiveConfig(
+            enabled = fields["enabled"]?.jsonObject?.get("booleanValue")
+                ?.jsonPrimitive?.content?.toBooleanStrictOrNull() ?: false,
+            repoSlug = fields["repoSlug"]?.jsonObject?.get("stringValue")
+                ?.jsonPrimitive?.contentOrNull,
+            branch = fields["branch"]?.jsonObject?.get("stringValue")
+                ?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: "main",
+        )
+    }
+
+    /** Publishes the account-wide archive target. Never writes the GitHub access token. */
+    public suspend fun writeArchiveConfig(
+        idToken: String,
+        ownerId: String,
+        config: RemoteArchiveConfig,
+    ) {
+        val fields = buildJsonObject {
+            put("enabled", buildJsonObject { put("booleanValue", JsonPrimitive(config.enabled)) })
+            config.repoSlug?.let {
+                put("repoSlug", buildJsonObject { put("stringValue", JsonPrimitive(it)) })
+            }
+            put("branch", buildJsonObject { put("stringValue", JsonPrimitive(config.branch)) })
+        }
+        commit(
+            idToken,
+            listOf(
+                buildJsonObject {
+                    put(
+                        "update",
+                        buildJsonObject {
+                            put("name", JsonPrimitive(metaDocumentName(ownerId, "archive")))
+                            put("fields", fields)
+                        },
+                    )
+                },
+            ),
+        )
+    }
+
+    private fun metaDocumentName(ownerId: String, document: String): String =
+        "projects/$projectId/databases/(default)/documents/users/$ownerId/meta/$document"
 }

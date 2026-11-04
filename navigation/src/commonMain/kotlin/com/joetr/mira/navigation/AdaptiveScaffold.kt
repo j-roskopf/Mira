@@ -198,7 +198,12 @@ private fun BottomBarLayout(
     // The editor paints its own canvas, including behind the system bars and IME, so the shell
     // keeps the same dark base instead of introducing a second tone around it.
     val canvas = scaffoldCanvas(accentCanvas)
-    val bar = MaterialTheme.colorScheme.surface
+    val barTarget = if (accentCanvas) MaterialTheme.colorScheme.surface else canvas
+    val bar = if (MiraTheme.motionEnabled) {
+        animateColorAsState(barTarget, tween(MiraMotion.STANDARD_MS), label = "bottomBar").value
+    } else {
+        barTarget
+    }
     val density = LocalDensity.current
     // Tall enough for the bar to sit above the system gesture area. Provided to content so each
     // route can reserve the same space without the scaffold resizing when the bar hides.
