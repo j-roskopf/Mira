@@ -45,7 +45,12 @@ internal fun Entries.toRemoteRow(): RemoteEntryRow = RemoteEntryRow(
     createdTz = created_tz,
     updatedAt = updated_at,
     body = body,
-    attachments = decodeAttachments(attachments).map { it.toRemote() },
+    // Only publish attachments whose bytes are already in Storage. If an upload failed we still
+    // push the text now and republish the entry once the attachment lands, so another device
+    // never receives a reference it cannot open.
+    attachments = decodeAttachments(attachments)
+        .filter { it.isUploaded && it.storagePath.isNotBlank() }
+        .map { it.toRemote() },
     tags = decodeTags(tags),
     deleted = deleted == 1L,
 )

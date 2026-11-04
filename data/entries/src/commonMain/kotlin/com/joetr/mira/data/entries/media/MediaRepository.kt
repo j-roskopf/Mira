@@ -16,6 +16,7 @@ import com.joetr.mira.platform.currentTimeMillis
 import com.joetr.mira.platform.detectImageMimeType
 import com.joetr.mira.platform.isJpegImage
 import com.joetr.mira.platform.resizeImage
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -86,47 +87,78 @@ public class MediaRepository(
         val session = firebase.sessionForSync() ?: return 0
         // One-time repair for video recorded while HEVC capture was briefly enabled. Requeue the
         // local originals so the normal upload path re-encodes them to H.264 for every client.
-        if (supportsVideoNormalization) requeueNonPortableVideos()
+        // A failure here is a repair failure, not a reason to skip the uploads below.
+        if (supportsVideoNormalization) {
+            try {
+                requeueNonPortableVideos()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // Retried on the next run.
+            }
+        }
         val staged = io { queries.selectUnuploadedBlobs().awaitAsList() }
         var uploaded = 0
 
         for (blob in staged) {
-            val entry = entries.entry(blob.entry_id) ?: continue
-            val attachment = entry.attachments.firstOrNull { it.id == blob.id } ?: continue
-            if (attachment.kind == AttachmentKind.VIDEO && !includeVideo) continue
+            // One bad attachment must not stop the rest. Anything that fails stays unuploaded in
+            // the outbox and is retried on the next sync.
+            val didUpload = try {
+                val entry = entries.entry(blob.entry_id) ?: continue
+                val attachment = entry.attachments.firstOrNull { it.id == blob.id } ?: continue
+                if (attachment.kind == AttachmentKind.VIDEO && !includeVideo) continue
 
-            val bytes = readBytes(blob.id) ?: continue
-            val payload = uploadPayloadFor(attachment, bytes)
-            val objectName = firebase.storage.mediaPath(
-                ownerId = ownerId,
-                entryId = entry.id,
-                attachmentId = attachment.id,
-                extension = extensionFor(payload.mime),
-            )
-            val result = runCatching {
-                firebase.storage.upload(session.idToken, objectName, payload.bytes, payload.mime)
-            }.getOrNull() ?: continue
+                val bytes = readBytes(blob.id) ?: continue
+                val payload = uploadPayloadFor(attachment, bytes)
+                val objectName = firebase.storage.mediaPath(
+                    ownerId = ownerId,
+                    entryId = entry.id,
+                    attachmentId = attachment.id,
+                    extension = extensionFor(payload.mime),
+                )
+                val result = try {
+                    firebase.storage.upload(session.idToken, objectName, payload.bytes, payload.mime)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    null
+                } ?: continue
 
-            val updated = entry.copy(
-                attachments = entry.attachments.map {
-                    if (it.id != attachment.id) {
-                        it
-                    } else {
-                        it.copy(
-                            storagePath = result.storagePath,
-                            url = result.downloadUrl,
-                            mime = payload.mime,
-                            state = AttachmentState.UPLOADED,
-                        )
-                    }
-                },
-            )
-            entries.save(updated)
-            io { queries.markBlobUploaded(blob.id) }
-            uploaded++
+                val updated = entry.copy(
+                    attachments = entry.attachments.map {
+                        if (it.id != attachment.id) {
+                            it
+                        } else {
+                            it.copy(
+                                storagePath = result.storagePath,
+                                url = result.downloadUrl,
+                                mime = payload.mime,
+                                state = AttachmentState.UPLOADED,
+                            )
+                        }
+                    },
+                )
+                entries.save(updated)
+                io { queries.markBlobUploaded(blob.id) }
+                true
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                false
+            }
+            if (didUpload) uploaded++
         }
 
-        if (uploaded > 0) enforceRetention()
+        // Eviction is housekeeping; never let it fail an otherwise successful upload run.
+        if (uploaded > 0) {
+            try {
+                enforceRetention()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // Keep the bytes; the next run will try again.
+            }
+        }
         return uploaded
     }
 
@@ -180,6 +212,11 @@ public class MediaRepository(
 
     public suspend fun localBytesUsed(): Long = io {
         queries.totalBlobBytes().awaitAsOneOrNull() ?: 0L
+    }
+
+    /** Attachments on live entries whose bytes have not reached Storage yet. */
+    public suspend fun pendingUploadCount(): Int = io {
+        queries.countPendingUploads().awaitAsOneOrNull()?.toInt() ?: 0
     }
 
     /** Deletes every locally cached or staged media file, including unattached captures. */

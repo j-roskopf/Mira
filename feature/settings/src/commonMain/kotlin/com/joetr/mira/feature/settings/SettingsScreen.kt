@@ -14,9 +14,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -223,23 +225,45 @@ public fun SettingsScreen(
         }
 
         Section("Sync") {
+            val syncStatus = state.syncState.status
+            val pendingEntries = state.syncState.pendingCount
+            val pendingMedia = state.syncState.pendingMediaCount
+            val syncing = syncStatus == SyncStatus.SYNCING
+            val statusText = when (syncStatus) {
+                SyncStatus.SYNCED -> "Everything is synced"
+                SyncStatus.SYNCING -> when {
+                    pendingMedia > 0 -> attachmentsLabel("Uploading", pendingMedia) + "…"
+                    else -> "Syncing…"
+                }
+                SyncStatus.PENDING -> when {
+                    pendingEntries > 0 && pendingMedia > 0 ->
+                        "$pendingEntries entries and ${attachmentsLabel("", pendingMedia)} waiting to sync"
+                    pendingMedia > 0 -> attachmentsLabel("", pendingMedia) + " waiting to upload"
+                    else -> "$pendingEntries waiting to sync"
+                }
+                SyncStatus.ERROR -> state.syncState.errorMessage ?: "Sync failed"
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
+                if (syncing) {
+                    CircularProgressIndicator(
+                        color = colors.accent,
+                        strokeWidth = 2.dp,
+                        modifier = Modifier.size(16.dp),
+                    )
+                    Spacer(Modifier.width(MiraSpacing.sm))
+                }
                 Text(
-                    text = when (state.syncState.status) {
-                        SyncStatus.SYNCED -> "Everything is synced"
-                        SyncStatus.SYNCING -> "Syncing…"
-                        SyncStatus.PENDING -> "${state.syncState.pendingCount} waiting to sync"
-                        SyncStatus.ERROR -> state.syncState.errorMessage ?: "Sync failed"
-                    },
+                    text = statusText,
                     style = MiraTheme.type.uiBody,
-                    color = if (state.syncState.status == SyncStatus.ERROR) {
-                        colors.error
-                    } else {
-                        colors.inkMuted
-                    },
+                    color = if (syncStatus == SyncStatus.ERROR) colors.error else colors.inkMuted,
                     modifier = Modifier.weight(1f),
                 )
-                PillButton("Sync now", onClick = actions.onSyncNow, filled = false)
+                PillButton(
+                    text = if (syncing) "Syncing…" else "Sync now",
+                    onClick = actions.onSyncNow,
+                    filled = false,
+                    enabled = !syncing,
+                )
             }
 
             Spacer(Modifier.height(MiraSpacing.xl))
@@ -432,6 +456,11 @@ public fun SettingsScreen(
 
         Spacer(Modifier.height(MiraSpacing.giant))
     }
+}
+
+private fun attachmentsLabel(prefix: String, count: Int): String {
+    val noun = if (count == 1) "attachment" else "attachments"
+    return if (prefix.isBlank()) "$count $noun" else "$prefix $count $noun"
 }
 
 @Composable

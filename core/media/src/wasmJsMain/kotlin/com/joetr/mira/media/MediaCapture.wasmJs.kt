@@ -4,11 +4,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -38,6 +40,11 @@ public actual fun createMediaRecorderController(): MediaRecorderController =
  */
 internal class WebMediaRecorderController : MediaRecorderController {
 
+    // The feed is a DOM <video> element stacked above the Compose canvas, so the canvas-drawn
+    // controls have to live outside its bounds instead of floating on top of it.
+    override val previewFillsViewport: Boolean = false
+    override val previewIsPlatformView: Boolean = true
+
     private val _state = MutableStateFlow<RecordingState>(RecordingState.Idle)
     override val state: StateFlow<RecordingState> = _state.asStateFlow()
 
@@ -55,13 +62,29 @@ internal class WebMediaRecorderController : MediaRecorderController {
         startedAt = currentTimeMs()
 
         if (kind == CaptureKind.PHOTO) {
-            val started = startWebPhotoPreview()
-            if (started == null) {
+            // A photo is a single action, not a recording: snapshot the framing preview that is
+            // already open and emit it right away, matching the desktop and native cameras.
+            val preview = startWebPhotoPreview()
+            if (preview == null) {
                 _state.value = RecordingState.Failed("Camera permission was declined")
                 return
             }
-            handle = started
-            _state.value = RecordingState.Recording(0)
+            _state.value = RecordingState.Finalizing
+            val photo = capturePhotoFromPreview(preview)
+            if (photo == null || photo.isEmpty()) {
+                _state.value = RecordingState.Failed("Could not take a photo. Please try again.")
+                return
+            }
+            _state.value = RecordingState.Finished(
+                CaptureResult(
+                    kind = CaptureKind.PHOTO,
+                    path = null,
+                    bytes = photo,
+                    mime = "image/jpeg",
+                    sizeBytes = photo.size.toLong(),
+                    durationMs = 0,
+                ),
+            )
             return
         }
 
@@ -99,29 +122,8 @@ internal class WebMediaRecorderController : MediaRecorderController {
         ticker?.cancel()
         ticker = null
 
-        if (currentKind == CaptureKind.PHOTO) {
-            _state.value = RecordingState.Finalizing
-            val photo = capturePhotoFromPreview(active)
-            handle = null
-            if (photo == null || photo.isEmpty()) {
-                _state.value = RecordingState.Failed("Could not take a photo. Please try again.")
-                return
-            }
-            _state.value = RecordingState.Finished(
-                CaptureResult(
-                    kind = CaptureKind.PHOTO,
-                    path = null,
-                    bytes = photo,
-                    mime = "image/jpeg",
-                    sizeBytes = photo.size.toLong(),
-                    durationMs = 0,
-                ),
-            )
-            return
-        }
-
         val elapsed = (currentTimeMs() - startedAt).toLong()
-        _state.value = RecordingState.Preparing
+        _state.value = RecordingState.Finalizing
 
         val bytes = stopWebRecording(active)
         handle = null
@@ -163,6 +165,13 @@ internal class WebMediaRecorderController : MediaRecorderController {
         cancel()
         scope.cancel()
     }
+
+    /** Surfaces a denied camera permission from the framing preview, before the shutter is ever used. */
+    internal fun onPreviewFailed() {
+        if (_state.value is RecordingState.Idle) {
+            _state.value = RecordingState.Failed("Camera permission was declined")
+        }
+    }
 }
 
 /**
@@ -180,8 +189,19 @@ public actual fun CameraPreview(
 ) {
     // The preview is a <video> element positioned by the JS side; Compose reserves the space.
     val id = remember { nextPreviewId++ }
+    // Compose's web density is the device pixel ratio, so boundsInWindow() is in physical pixels.
+    // positionWebPreview() takes CSS pixels, so convert before handing the bounds over.
+    val density = LocalDensity.current.density
+    // Open the camera as soon as the capture screen mounts, so the user sees the feed and the
+    // browser asks for permission before the shutter — not after tapping record.
+    LaunchedEffect(id) {
+        if (startWebPreview() == null) {
+            (controller as? WebMediaRecorderController)?.onPreviewFailed()
+        }
+    }
     DisposableEffect(id) {
         onDispose {
+            cancelWebPreview()
             previewBounds.remove(id)
             previewBounds.values.lastOrNull()?.let { bounds ->
                 positionWebPreview(bounds[0], bounds[1], bounds[2], bounds[3])
@@ -194,10 +214,10 @@ public actual fun CameraPreview(
             .onGloballyPositioned { coordinates ->
                 val bounds = coordinates.boundsInWindow()
                 val values = listOf(
-                    bounds.left.toDouble(),
-                    bounds.top.toDouble(),
-                    bounds.width.toDouble(),
-                    bounds.height.toDouble(),
+                    bounds.left.toDouble() / density,
+                    bounds.top.toDouble() / density,
+                    bounds.width.toDouble() / density,
+                    bounds.height.toDouble() / density,
                 )
                 previewBounds[id] = values
                 positionWebPreview(values[0], values[1], values[2], values[3])

@@ -9,6 +9,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.platform.LocalDensity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -37,6 +38,10 @@ internal class WebMediaPlayerController : MediaPlayerController {
     private val elementId = "mira-player-${nextPlayerId()}"
     private var loaded = false
 
+    // The Compose surface is laid out before load() finishes, so its bounds have to be remembered
+    // and replayed once the element exists. onGloballyPositioned will not fire again on its own.
+    private var bounds: Bounds? = null
+
     override suspend fun load(source: MediaSource, kind: CaptureKind) {
         release()
         _state.value = PlaybackState(preparing = true)
@@ -55,6 +60,7 @@ internal class WebMediaPlayerController : MediaPlayerController {
 
         createPlayerElement(elementId, url, kind == CaptureKind.VIDEO)
         loaded = true
+        bounds?.let { applyBounds(it) }
 
         var durationMs = 0L
         repeat(40) {
@@ -93,7 +99,13 @@ internal class WebMediaPlayerController : MediaPlayerController {
     }
 
     internal fun position(x: Double, y: Double, width: Double, height: Double) {
-        if (loaded) positionPlayerElement(elementId, x, y, width, height)
+        val next = Bounds(x, y, width, height)
+        bounds = next
+        if (loaded) applyBounds(next)
+    }
+
+    private fun applyBounds(bounds: Bounds) {
+        positionPlayerElement(elementId, bounds.x, bounds.y, bounds.width, bounds.height)
     }
 
     private suspend fun trackPosition() {
@@ -113,6 +125,13 @@ internal class WebMediaPlayerController : MediaPlayerController {
     }
 }
 
+private data class Bounds(
+    val x: Double,
+    val y: Double,
+    val width: Double,
+    val height: Double,
+)
+
 private var playerCounter = 0
 
 private fun nextPlayerId(): Int = ++playerCounter
@@ -123,6 +142,9 @@ public actual fun VideoSurface(
     modifier: Modifier,
 ) {
     val webController = controller as? WebMediaPlayerController
+    // Compose's web density is the device pixel ratio, so boundsInWindow() is in physical pixels.
+    // The element is positioned with CSS pixels, which is that value divided by the density.
+    val density = LocalDensity.current.density
 
     Box(
         modifier
@@ -131,10 +153,10 @@ public actual fun VideoSurface(
             .onGloballyPositioned { coordinates ->
                 val bounds = coordinates.boundsInWindow()
                 webController?.position(
-                    bounds.left.toDouble(),
-                    bounds.top.toDouble(),
-                    bounds.width.toDouble(),
-                    bounds.height.toDouble(),
+                    bounds.left.toDouble() / density,
+                    bounds.top.toDouble() / density,
+                    bounds.width.toDouble() / density,
+                    bounds.height.toDouble() / density,
                 )
             },
     )

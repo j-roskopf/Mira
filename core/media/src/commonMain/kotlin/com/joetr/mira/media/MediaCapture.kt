@@ -110,6 +110,16 @@ public interface MediaRecorderController {
     public val previewFillsViewport: Boolean get() = true
 
     /**
+     * Whether the live preview is a platform view layered above the Compose canvas rather than
+     * pixels drawn into it.
+     *
+     * Web renders the camera as a real DOM `<video>` element on top of the canvas, so any
+     * canvas-drawn chrome — the close button, the shutter bar — would be hidden behind it. Those
+     * platforms keep the preview in its own region with the controls outside it.
+     */
+    public val previewIsPlatformView: Boolean get() = false
+
+    /**
      * Whether rotating the device changes the shape [CameraPreview] is laid out in, so the capture
      * screen should move its controls to the side when that shape goes wide.
      *

@@ -654,13 +654,30 @@ private fun CameraCaptureScreen(
                         .fillMaxSize()
                         .background(Color.Black),
                 ) {
+                    // A DOM-backed preview (web) covers anything Compose draws over it, so the
+                    // close button gets its own row above the feed rather than floating on it.
+                    if (controller.previewIsPlatformView) {
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .statusBarsPadding()
+                                .padding(horizontal = MiraSpacing.sm),
+                        ) {
+                            CaptureCloseButton(onDismiss, Modifier.align(Alignment.CenterEnd))
+                        }
+                    }
                     Box(
                         Modifier
                             .weight(1f)
                             .fillMaxWidth(),
                         contentAlignment = Alignment.Center,
                     ) {
-                        CapturePreview(controller, settings, onDismiss)
+                        CapturePreview(
+                            controller = controller,
+                            settings = settings,
+                            onDismiss = onDismiss,
+                            showClose = !controller.previewIsPlatformView,
+                        )
                     }
                     CaptureControls(
                         kind = kind,
@@ -689,6 +706,7 @@ private fun CapturePreview(
     settings: VideoCaptureSettings,
     onDismiss: () -> Unit,
     closeAlignment: Alignment = Alignment.TopEnd,
+    showClose: Boolean = true,
 ) {
     val shape = settings.aspectRatio.ratio
     Box(
@@ -705,7 +723,7 @@ private fun CapturePreview(
                 settings = settings,
             )
         }
-        CaptureCloseButton(onDismiss, Modifier.align(closeAlignment))
+        if (showClose) CaptureCloseButton(onDismiss, Modifier.align(closeAlignment))
     }
 }
 
