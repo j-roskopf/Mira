@@ -8,11 +8,12 @@ import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
 import com.joetr.mira.platform.AndroidContextHolder
+import com.joetr.mira.platform.AndroidRequestCodes
+import com.joetr.mira.platform.launchAndroidActivityForResult
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.io.File
 import kotlin.coroutines.resume
 
-private const val PICK_MEDIA_REQUEST_CODE = 0x4D52
 private const val MAX_PICK_ITEMS = 50
 
 private var pendingPickResult: ((List<CaptureResult>) -> Unit)? = null
@@ -43,15 +44,19 @@ public actual suspend fun pickMedia(allowMultiple: Boolean): List<CaptureResult>
             }
         }
         activity.runOnUiThread {
-            @Suppress("DEPRECATION")
-            activity.startActivityForResult(intent, PICK_MEDIA_REQUEST_CODE)
+            if (!launchAndroidActivityForResult(intent, AndroidRequestCodes.PICK_MEDIA) &&
+                pendingPickResult === callback
+            ) {
+                pendingPickResult = null
+                callback(emptyList())
+            }
         }
     }
 }
 
 /** Routes the activity's result back to the awaiting [pickMedia] call. */
 public fun dispatchAndroidMediaPickerResult(requestCode: Int, resultCode: Int, data: Intent?) {
-    if (requestCode != PICK_MEDIA_REQUEST_CODE) return
+    if (requestCode != AndroidRequestCodes.PICK_MEDIA) return
     val callback = pendingPickResult ?: return
     pendingPickResult = null
     if (resultCode != Activity.RESULT_OK || data == null) {

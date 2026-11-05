@@ -147,6 +147,7 @@ public fun ComposeEntryScreen(
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
     initialCapture: CaptureKind? = null,
+    initialAttachmentsOpen: Boolean = false,
     videoQuality: CaptureQuality = CaptureQuality.MEDIUM,
     photoQuality: CaptureQuality = CaptureQuality.MEDIUM,
     onDelete: (() -> Unit)? = null,
@@ -183,7 +184,7 @@ public fun ComposeEntryScreen(
     }
     // Attachments live in a bottom sheet opened from the floating bar; a newly captured or picked
     // one opens that sheet so the new item is never hidden behind an unlabelled icon.
-    var showAttachments by remember { mutableStateOf(false) }
+    var showAttachments by remember { mutableStateOf(initialAttachmentsOpen) }
     var tagsOpen by remember { mutableStateOf(false) }
     var videoSettings by remember {
         mutableStateOf(VideoCaptureSettings(quality = videoQuality.toVideoQuality()))
@@ -202,8 +203,10 @@ public fun ComposeEntryScreen(
             // Let the editor settle before the IME starts resizing the page; opening both at once
             // made the bottom bar climb while the route transition was still running.
             initialCapture == null -> {
-                if (motionEnabled) delay(MiraMotion.STANDARD_MS.toLong())
-                runCatching { focusRequester.requestFocus() }
+                if (!initialAttachmentsOpen) {
+                    if (motionEnabled) delay(MiraMotion.STANDARD_MS.toLong())
+                    runCatching { focusRequester.requestFocus() }
+                }
             }
             initialCapture == CaptureKind.AUDIO -> recorder.start(initialCapture)
             supportsNativeCapture(initialCapture) -> {

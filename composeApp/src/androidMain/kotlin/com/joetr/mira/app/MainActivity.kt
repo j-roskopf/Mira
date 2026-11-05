@@ -9,10 +9,12 @@ import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import com.joetr.mira.di.createMiraAppGraph
 import com.joetr.mira.media.dispatchAndroidMediaPickerResult
 import com.joetr.mira.media.dispatchAndroidNativeCameraResult
 import com.joetr.mira.platform.AndroidContextHolder
+import com.joetr.mira.platform.AndroidRequestCodes
 import com.joetr.mira.platform.ShareIntentHolder
 import com.joetr.mira.platform.dispatchAndroidActivityResult
 import com.joetr.mira.platform.dispatchAndroidPermissionResult
@@ -34,26 +36,31 @@ public class MainActivity : ComponentActivity() {
         )
         AndroidContextHolder.application = applicationContext
         AndroidContextHolder.activity = this
+        registerActivityResultLaunchers()
         handleShareIntent(intent)
         val graph = runBlocking { createMiraAppGraph() }
         registerLifecycleObserver()
         setContent { App(graph) }
     }
 
-    override fun onRequestPermissionsResult(
-        requestCode: Int,
-        permissions: Array<String>,
-        grantResults: IntArray,
-    ) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        dispatchAndroidPermissionResult(requestCode, permissions, grantResults)
-    }
-
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        dispatchAndroidActivityResult(requestCode, resultCode, data)
-        dispatchAndroidMediaPickerResult(requestCode, resultCode, data)
-        dispatchAndroidNativeCameraResult(requestCode, resultCode, data)
+    private fun registerActivityResultLaunchers() {
+        val requestCodes = listOf(
+            AndroidRequestCodes.EXPORT_FILE,
+            AndroidRequestCodes.IMPORT_FILE,
+            AndroidRequestCodes.PICK_MEDIA,
+            AndroidRequestCodes.CAPTURE_PHOTO,
+            AndroidRequestCodes.CAPTURE_VIDEO,
+        )
+        AndroidContextHolder.activityResultLaunchers = requestCodes.associateWith { requestCode ->
+            registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+                dispatchAndroidActivityResult(requestCode, result.resultCode, result.data)
+                dispatchAndroidMediaPickerResult(requestCode, result.resultCode, result.data)
+                dispatchAndroidNativeCameraResult(requestCode, result.resultCode, result.data)
+            }
+        }
+        AndroidContextHolder.permissionLauncher = registerForActivityResult(
+            ActivityResultContracts.RequestMultiplePermissions(),
+        ) { grants -> dispatchAndroidPermissionResult(grants) }
     }
 
     override fun onNewIntent(intent: Intent) {

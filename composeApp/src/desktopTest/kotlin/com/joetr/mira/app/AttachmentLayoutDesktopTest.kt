@@ -28,6 +28,30 @@ class AttachmentLayoutDesktopTest {
     @Test fun mixedAttachmentsWide() = verifyAttachments(1000, 800, true)
     @Test fun mixedAttachmentsCompact() = verifyAttachments(390, 780, false)
 
+    @Test fun sheetOpensOnArrivalFromMedia() = runDesktopComposeUiTest(width = 1000, height = 800) {
+        val attachments = listOf(
+            Attachment("photo", AttachmentKind.IMAGE, "", mime = "image/jpeg"),
+            Attachment("audio", AttachmentKind.AUDIO, "", mime = "audio/mp4", durationMs = 4000),
+        )
+        setContent {
+            MiraTheme(darkTheme = false, motionEnabled = false) {
+                val recorder = remember { createMediaRecorderController() }
+                ComposeEntryScreen(
+                    date = LocalDateKey("2026-10-31"),
+                    initialBody = "Reached from the media archive.",
+                    recorder = recorder,
+                    attachments = attachments,
+                    sourceFor = { null },
+                    onRemoveAttachment = {},
+                    onBodyChange = {}, onDateClick = {}, onCaptureFinished = {}, onMediaPicked = {},
+                    onSave = {}, onCancel = {},
+                    initialAttachmentsOpen = true,
+                )
+            }
+        }
+        onNodeWithText("ATTACHMENTS · 2").assertIsDisplayed()
+    }
+
     private fun verifyAttachments(width: Int, height: Int, dark: Boolean) =
         runDesktopComposeUiTest(width = width, height = height) {
             val attachments = mutableStateOf(listOf(

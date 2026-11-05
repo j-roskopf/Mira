@@ -20,17 +20,23 @@ public data class EntryKey(val id: String)
 
 /**
  * Compose sheet. [entryId] null creates a new entry; [date] seeds the date field and defaults to
- * today. [initialCapture] opens straight into audio or video capture.
+ * today. [initialCapture] opens straight into audio or video capture. [attachmentsOpen] opens the
+ * attachment sheet on arrival, used when the entry was reached from the media archive.
  */
 @Serializable
 public data class ComposeKey(
     val entryId: String? = null,
     val date: String? = null,
     val initialCapture: String? = null,
+    val attachmentsOpen: Boolean = false,
 )
 
 @Serializable
 public data object TimelineKey
+
+/** Every photo, video and voice note in the journal, grouped by the day it belongs to. */
+@Serializable
+public data object MediaKey
 
 @Serializable
 public data class SearchKey(val query: String? = null)

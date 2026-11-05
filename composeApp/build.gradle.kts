@@ -102,6 +102,7 @@ kotlin {
             implementation(project(":feature:day"))
             implementation(project(":feature:compose"))
             implementation(project(":feature:timeline"))
+            implementation(project(":feature:media"))
             implementation(project(":feature:search"))
             implementation(project(":feature:settings"))
             implementation(libs.compose.runtime)

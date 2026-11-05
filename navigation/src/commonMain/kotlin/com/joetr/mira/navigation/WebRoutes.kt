@@ -8,7 +8,8 @@ private val YEAR = Regex("""^\d{4}$""")
  * Maps a browser path onto a navigation key.
  *
  * `/` or `/calendar` → current month, `/calendar/2026-10` → that month,
- * `/day/2026-10-30`, `/entry/<id>`, `/year/2026`, `/timeline`, `/search?q=` , `/settings`.
+ * `/day/2026-10-30`, `/entry/<id>`, `/year/2026`, `/timeline`, `/media`, `/search?q=` ,
+ * `/settings`.
  */
 public fun parseWebRoute(path: String): Any? {
     val segments = path.trim('/').split('/').filter { it.isNotBlank() }
@@ -19,6 +20,7 @@ public fun parseWebRoute(path: String): Any? {
         "entry" -> segments.getOrNull(1)?.let { EntryKey(it) }
         "year" -> segments.getOrNull(1)?.takeIf { YEAR.matches(it) }?.let { YearKey(it.toInt()) }
         "timeline" -> TimelineKey
+        "media" -> MediaKey
         "search" -> SearchKey(segments.getOrNull(1))
         "settings" -> SettingsKey
         // A bare `YYYY-MM-DD` is a day; a bare `YYYY-MM` is a month. Shareable shorthand.
@@ -37,6 +39,7 @@ public fun webRouteFor(key: Any): String = when (key) {
     is EntryKey -> "/entry/${key.id}"
     is YearKey -> "/year/${key.year}"
     TimelineKey -> "/timeline"
+    MediaKey -> "/media"
     is SearchKey -> key.query?.let { "/search/$it" } ?: "/search"
     SettingsKey -> "/settings"
     else -> "/"

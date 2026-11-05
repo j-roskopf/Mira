@@ -20,6 +20,8 @@ kotlin {
                 implementation(project(":domain"))
                 implementation(project(":core:platform"))
                 implementation(libs.coroutines.core)
+                implementation(libs.coil.core)
+                implementation(libs.coil.compose)
             }
         }
         androidMain {

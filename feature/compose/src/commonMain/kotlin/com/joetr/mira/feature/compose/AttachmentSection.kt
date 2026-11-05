@@ -1,6 +1,5 @@
 package com.joetr.mira.feature.compose
 
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
@@ -27,7 +26,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -39,7 +37,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
@@ -50,12 +47,12 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.joetr.mira.domain.Attachment
 import com.joetr.mira.domain.AttachmentKind
+import com.joetr.mira.media.AttachmentImage
+import com.joetr.mira.media.AttachmentImageState
 import com.joetr.mira.media.CaptureKind
 import com.joetr.mira.media.MediaSource
 import com.joetr.mira.media.VideoSurface
 import com.joetr.mira.media.createMediaPlayerController
-import com.joetr.mira.media.decodePhoto
-import com.joetr.mira.media.readBytesForDisplay
 import com.joetr.mira.ui.components.AttachmentPlaybackState
 import com.joetr.mira.ui.components.AudioAttachmentRow
 import com.joetr.mira.ui.components.CircleIconButton
@@ -69,9 +66,7 @@ import com.joetr.mira.ui.theme.MiraRadii
 import com.joetr.mira.ui.theme.MiraSpacing
 import com.joetr.mira.ui.theme.MiraTheme
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /**
  * Playable attachments for the entry being written, presented as a bottom sheet.
@@ -385,14 +380,9 @@ private fun MediaAttachment(
 /**
  * A photo attachment: a static thumbnail, no scrubber — tap it to view full screen.
  *
- * Decoded through [decodePhoto] rather than a network image loader, since the
- * bytes already come from [sourceFor] exactly the way audio and video playback already resolve
- * them; a [MediaSource.Remote] (not yet cached locally) shows the same "unavailable" message
- * playback already shows in that case, rather than fetching over the network here too.
- *
- * Thumbnails are decoded to the on-screen tile size (and full-screen to the window) on a
- * background dispatcher — phone JPEGs are often 12 MP, and keeping those bitmaps in the
- * composition made Android entry open and attachment scrolling unusable.
+ * Loaded through [AttachmentImage], which uses Coil for fetching and caching and decodes through
+ * the platform's native photo decoder. Grid tiles and the full-screen view use separate cache keys
+ * so one does not evict the other from the memory cache.
  */
 @Composable
 private fun ImageAttachmentTile(
@@ -401,53 +391,29 @@ private fun ImageAttachmentTile(
     modifier: Modifier = Modifier,
 ) {
     val colors = MiraTheme.colors
-    val density = LocalDensity.current
-    // The sheet is capped at 720.dp wide; decode just enough pixels for that box at the current density.
-    val thumbMaxPx = with(density) { 720.dp.roundToPx() }.coerceAtLeast(1)
-    val window = LocalWindowInfo.current.containerSize
-    val fullMaxPx = maxOf(window.width, window.height, thumbMaxPx).coerceAtMost(2048)
-
-    var thumb by remember(attachment.id) { mutableStateOf<ImageBitmap?>(null) }
-    var full by remember(attachment.id) { mutableStateOf<ImageBitmap?>(null) }
-    var failed by remember(attachment.id) { mutableStateOf(false) }
+    var loadState by remember(attachment.id) { mutableStateOf(AttachmentImageState.Idle) }
     var expanded by remember(attachment.id) { mutableStateOf(false) }
-
-    LaunchedEffect(attachment.id, thumbMaxPx) {
-        thumb = null
-        full = null
-        failed = false
-        val decoded = withContext(Dispatchers.Default) {
-            val bytes = runCatching { sourceFor(attachment)?.readBytesForDisplay() }.getOrNull()
-            bytes?.let { decodePhoto(it, thumbMaxPx) }
-        }
-        thumb = decoded
-        failed = decoded == null
-    }
-
-    LaunchedEffect(expanded, attachment.id, fullMaxPx) {
-        if (!expanded || full != null) return@LaunchedEffect
-        full = withContext(Dispatchers.Default) {
-            val bytes = runCatching { sourceFor(attachment)?.readBytesForDisplay() }.getOrNull()
-            bytes?.let { decodePhoto(it, fullMaxPx) }
-        } ?: thumb
-    }
+    val loaded = loadState == AttachmentImageState.Success
+    val failed = loadState == AttachmentImageState.Error
 
     Box(
         modifier = modifier
             .aspectRatio(4f / 3f)
             .clip(RoundedCornerShape(MiraRadii.media))
             .background(colors.surfaceSunken)
-            .clickable(enabled = thumb != null, onClickLabel = "View photo") { expanded = true },
+            .clickable(enabled = loaded, onClickLabel = "View photo") { expanded = true },
         contentAlignment = Alignment.Center,
     ) {
-        val current = thumb
+        AttachmentImage(
+            attachment = attachment,
+            sourceFor = sourceFor,
+            contentDescription = "Photo attachment",
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Crop,
+            cacheKey = "attachment-thumb",
+            onState = { loadState = it },
+        )
         when {
-            current != null -> Image(
-                bitmap = current,
-                contentDescription = "Photo attachment",
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop,
-            )
             failed -> Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(MiraSpacing.xs),
@@ -455,34 +421,49 @@ private fun ImageAttachmentTile(
                 MiraIcon(MiraIcons.Photo, tint = colors.inkFaint, size = 22.dp)
                 Text("Photo unavailable", style = MiraTheme.type.meta, color = colors.inkMuted)
             }
-            else -> CircularProgressIndicator(color = colors.accent, modifier = Modifier.size(24.dp))
+            !loaded -> CircularProgressIndicator(color = colors.accent, modifier = Modifier.size(24.dp))
         }
     }
 
     if (expanded) {
-        val shown = full ?: thumb
-        if (shown != null) {
-            FullScreenImage(bitmap = shown, onDismiss = { expanded = false })
-        }
+        FullScreenImage(
+            attachment = attachment,
+            sourceFor = sourceFor,
+            onDismiss = { expanded = false },
+        )
     }
 }
 
 @Composable
-private fun FullScreenImage(bitmap: ImageBitmap, onDismiss: () -> Unit) {
+private fun FullScreenImage(
+    attachment: Attachment,
+    sourceFor: suspend (Attachment) -> MediaSource?,
+    onDismiss: () -> Unit,
+) {
+    var loadState by remember(attachment.id) { mutableStateOf(AttachmentImageState.Idle) }
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
         Box(
-            Modifier.fillMaxSize().background(Color.Black),
+            Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+                .clickable(onClickLabel = "Close photo", onClick = onDismiss),
             contentAlignment = Alignment.Center,
         ) {
-            Image(
-                bitmap = bitmap,
+            AttachmentImage(
+                attachment = attachment,
+                sourceFor = sourceFor,
                 contentDescription = "Photo attachment",
-                modifier = Modifier.fillMaxSize().clickable(onClickLabel = "Close photo", onClick = onDismiss),
+                modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Fit,
+                cacheKey = "attachment-full",
+                onState = { loadState = it },
             )
+            if (loadState != AttachmentImageState.Success) {
+                CircularProgressIndicator(color = Color.White)
+            }
             CircleIconButton(
                 icon = MiraIcons.Close,
                 contentDescription = "Close photo",

@@ -54,13 +54,23 @@ public class EntryRepository(
                 .associate { LocalDateKey(it.local_date) to it.entry_count.toInt() }
         }
 
-    public suspend fun activityForYear(ownerId: String, year: Int): List<DayActivity> = io {
-        val from = LocalDateKey("$year-01-01")
-        val to = LocalDateKey("$year-12-31")
+    /** Entry counts per day between [from] and [to], inclusive. */
+    public suspend fun activityForRange(
+        ownerId: String,
+        from: LocalDateKey,
+        to: LocalDateKey,
+    ): List<DayActivity> = io {
         queries.countsByDate(ownerId, from.value, to.value)
             .awaitAsList()
             .map { DayActivity(LocalDateKey(it.local_date), it.entry_count.toInt()) }
     }
+
+    public suspend fun activityForYear(ownerId: String, year: Int): List<DayActivity> =
+        activityForRange(
+            ownerId = ownerId,
+            from = LocalDateKey("$year-01-01"),
+            to = LocalDateKey("$year-12-31"),
+        )
 
     /**
      * Local text search.

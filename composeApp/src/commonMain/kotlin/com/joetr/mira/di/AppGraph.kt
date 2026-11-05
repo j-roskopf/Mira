@@ -1,5 +1,6 @@
 package com.joetr.mira.di
 
+import com.joetr.mira.app.configureImageLoader
 import com.joetr.mira.data.archive.ArchiveService
 import com.joetr.mira.data.archive.ExportService
 import com.joetr.mira.data.archive.GitHubDeviceFlow
@@ -236,6 +237,7 @@ public class AppGraph(
 internal expect fun defaultRetentionPolicy(): RetentionPolicy
 
 public suspend fun createMiraAppGraph(): AppGraph {
+    configureImageLoader()
     val dataLayer = com.joetr.mira.database.createMiraDataLayer()
     val graph = AppGraph(dataLayer)
     graph.awaitStartup()

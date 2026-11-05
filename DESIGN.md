@@ -95,10 +95,14 @@ light:  L_anchor = 0.93,  C_anchor = 0.016
 ```
 
 Step 0 is a day with one entry. Step 4 is a day at or above the busy threshold. The year view
-still paints a day as a ramp-coloured dot. On the month grid, a written day is the numeral over a
-small row of pips — one per entry, capped at five — while a day with **zero** entries is just the
-numeral in `inkFaint`. That absence is what makes a consistent month read as a constellation
-instead of a grid, without turning busy days into heavy filled discs.
+still paints a day as a ramp-coloured dot. On the month grid, a written day is a filled rounded
+tile in its ramp colour, while a day with **zero** entries is just the numeral in `inkFaint`. That
+absence is what makes a consistent month read as a scrapbook of lived days instead of a uniform
+grid.
+
+A day carrying a photo uses that photo as its tile — cropped to fill, with the numeral on a quiet
+scrim so it stays readable. Video and audio add a small badge at the bottom of the tile, so a day
+with a recording is visibly different from a text-only day.
 
 The busy threshold is **adaptive**: the 90th percentile of entries-per-day over the visible month,
 clamped to a minimum of 3. A month where you wrote once a day should still show variation, and a
@@ -219,8 +223,8 @@ attachment, chevron, close, cloud-pending, cloud-done, github, download.
 │  OCTOBER                         │  monthTitle
 │                                  │  20dp
 │  SU  M  TU  W  TH  F  SA         │  weekdayHead, inkMuted
-│   ·  ·  ·  1  ②  ③  4           │  circles = ramp step, bare = no entries
-│   5  ⑥  ⑦  ⑧  9  ⑩ ⑪           │
+│   ·  ·  ·  1  ▣  ▣  4           │  tiles = ramp step, photo = media
+│   5  ▣  ▣  ▣  9  ▣  ▣           │
 │  ...                             │
 │                                  │
 │                           ( + )  │  accent record/compose FAB
@@ -236,10 +240,11 @@ is listed beneath it in bold uppercase hugging the left edge, and the current mo
 pill in `ink` with `canvas`-coloured text. The grid then loses its month title and takes the full
 remaining width and height.
 
-On that wide grid the month reads as a constellation rather than a uniform type wall. Written days
-carry a pip per entry, while an unwritten day is only a faint numeral. Today draws a ring and the
-selection draws a filled disc, so those states stay legible without competing with the count pips.
-The same drag-to-page gesture still works, and the rail follows the settled month.
+On that wide grid the month reads as a scrapbook rather than a uniform type wall. Written days are
+filled ramp-coloured tiles, photos fill their day, and an unwritten day is only a faint numeral.
+Today draws a ring and the selection draws an outline, so those states stay legible without
+competing with the media tiles. The same drag-to-page gesture still works, and the rail follows the
+settled month.
 
 ### Day
 
