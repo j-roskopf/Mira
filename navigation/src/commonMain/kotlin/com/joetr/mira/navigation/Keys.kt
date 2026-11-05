@@ -50,6 +50,7 @@ public data object AuthKey
 public sealed class TopLevelDestination {
     public data object Calendar : TopLevelDestination()
     public data object Timeline : TopLevelDestination()
+    public data object Media : TopLevelDestination()
     public data object Search : TopLevelDestination()
     public data object Settings : TopLevelDestination()
 }

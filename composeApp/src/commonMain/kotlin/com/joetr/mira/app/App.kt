@@ -114,6 +114,7 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
         ?.let { LocalDateKey((it as DayKey).date) }
     var activity by remember { mutableStateOf<Map<LocalDateKey, Int>>(emptyMap()) }
     var dayMedia by remember { mutableStateOf<Map<LocalDateKey, CalendarDayMedia>>(emptyMap()) }
+    var dayEntries by remember { mutableStateOf<Map<LocalDateKey, List<Entry>>>(emptyMap()) }
     var timeline by remember { mutableStateOf<List<Entry>>(emptyList()) }
 
     val ownerId = session.ownerId
@@ -136,11 +137,19 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
         }
     }
 
-    // Cancel obsolete loads when month navigation interrupts an in-flight request.
+    // Cancel obsolete loads when month navigation interrupts an in-flight request. The range
+    // reaches a month either side so the pager's neighbouring pages already have their media
+    // while they are composed offscreen during a swipe — otherwise thumbnails only begin loading
+    // once the page settles and `month` catches up.
     LaunchedEffect(ownerId, month, refreshVersion) {
-        val monthEntries = graph.entries.entriesInRange(ownerId, month.firstDay, month.lastDay)
-        activity = monthEntries.groupingBy { it.localDate }.eachCount()
-        dayMedia = monthEntries
+        val rangeEntries = graph.entries.entriesInRange(
+            ownerId,
+            month.minusMonths(1).firstDay,
+            month.plusMonths(1).lastDay,
+        )
+        activity = rangeEntries.groupingBy { it.localDate }.eachCount()
+        dayEntries = rangeEntries.groupBy { it.localDate }
+        dayMedia = rangeEntries
             .groupBy { it.localDate }
             .mapValues { (_, entries) ->
                 val attachments = entries.flatMap { it.attachments }
@@ -170,7 +179,13 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
             CompositionLocalProvider(LocalSharedTransitionScope provides this) {
                 AdaptiveScaffold(
                     widthDp = maxWidth.value.toInt(),
-                    selected = screenKey.topLevel(),
+                    // Compact phones only reach Media from the timeline header, so keep the
+                    // Timeline tab active there while wider layouts highlight their own entry.
+                    selected = if (maxWidth < 600.dp && screenKey is MediaKey) {
+                        TopLevelDestination.Timeline
+                    } else {
+                        screenKey.topLevel()
+                    },
                     accentCanvas = screenKey is CalendarKey || screenKey is YearKey,
                     editorSurface = screenKey is ComposeKey,
                     onCompose = {
@@ -233,8 +248,10 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
                                 today = clock.today(),
                                 selectedDate = selectedDate,
                                 showComposeButton = maxWidth >= 600.dp,
+                                showMediaShortcut = maxWidth < 600.dp,
                                 activity = activity,
                                 dayMedia = dayMedia,
+                                dayEntries = dayEntries,
                                 timeline = timeline,
                                 onNavigate = {
                                     navDirection = NavDirection.Forward
@@ -324,8 +341,10 @@ private fun Screen(
     today: LocalDateKey,
     selectedDate: LocalDateKey?,
     showComposeButton: Boolean,
+    showMediaShortcut: Boolean,
     activity: Map<LocalDateKey, Int>,
     dayMedia: Map<LocalDateKey, CalendarDayMedia>,
+    dayEntries: Map<LocalDateKey, List<Entry>>,
     timeline: List<Entry>,
     onNavigate: (Any) -> Unit,
     onBack: () -> Unit,
@@ -345,7 +364,11 @@ private fun Screen(
             selected = selectedDate,
             showComposeButton = showComposeButton,
             dayMedia = dayMedia,
+            dayEntries = dayEntries,
             thumbnailFor = graph.media::sourceFor,
+            onEntryClick = { entry ->
+                onNavigate(ComposeKey(entryId = entry.id, date = entry.localDate.value))
+            },
             onMonthChange = { onReplaceTop(CalendarKey(it.value)) },
             onDayClick = { date ->
                 if ((activity[date] ?: 0) == 0) {
@@ -569,6 +592,7 @@ private fun Screen(
             onEntryClick = { onNavigate(ComposeKey(entryId = it.id, date = it.localDate.value)) },
             today = today,
             onMediaClick = { onNavigate(MediaKey) },
+            showMediaShortcut = showMediaShortcut,
         )
 
         is MediaKey -> {
@@ -648,7 +672,8 @@ private fun Screen(
 }
 
 private fun Any.topLevel(): TopLevelDestination = when (this) {
-    is TimelineKey, is MediaKey -> TopLevelDestination.Timeline
+    is TimelineKey -> TopLevelDestination.Timeline
+    is MediaKey -> TopLevelDestination.Media
     is SearchKey -> TopLevelDestination.Search
     is SettingsKey -> TopLevelDestination.Settings
     else -> TopLevelDestination.Calendar
@@ -657,6 +682,7 @@ private fun Any.topLevel(): TopLevelDestination = when (this) {
 private fun TopLevelDestination.rootKey(): Any = when (this) {
     TopLevelDestination.Calendar -> CalendarKey()
     TopLevelDestination.Timeline -> TimelineKey
+    TopLevelDestination.Media -> MediaKey
     TopLevelDestination.Search -> SearchKey()
     TopLevelDestination.Settings -> SettingsKey
 }

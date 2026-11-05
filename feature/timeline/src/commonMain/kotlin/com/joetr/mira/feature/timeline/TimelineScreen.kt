@@ -67,13 +67,14 @@ public fun TimelineScreen(
     onLoadMore: () -> Unit = {},
     today: LocalDateKey? = null,
     onMediaClick: () -> Unit = {},
+    showMediaShortcut: Boolean = true,
 ) {
     val colors = MiraTheme.colors
     val listState = rememberLazyListState()
     val grouped = remember(entries) { entries.groupBy { it.localDate.monthKey } }
 
     Column(modifier.fillMaxSize().background(colors.canvas)) {
-        TimelineHeader(onMediaClick = onMediaClick)
+        TimelineHeader(onMediaClick = onMediaClick, showMediaShortcut = showMediaShortcut)
         if (entries.isEmpty()) {
             Column(Modifier.fillMaxSize().padding(horizontal = MiraSpacing.gutter)) {
                 Spacer(Modifier.height(MiraSpacing.xxl))
@@ -130,7 +131,7 @@ public fun TimelineScreen(
 }
 
 @Composable
-private fun TimelineHeader(onMediaClick: () -> Unit) {
+private fun TimelineHeader(onMediaClick: () -> Unit, showMediaShortcut: Boolean) {
     val colors = MiraTheme.colors
     Row(
         modifier = Modifier
@@ -139,22 +140,24 @@ private fun TimelineHeader(onMediaClick: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         SectionLabel("Timeline")
-        Spacer(Modifier.weight(1f))
-        Row(
-            modifier = Modifier
-                .clip(RoundedCornerShape(MiraRadii.pill))
-                .background(colors.surfaceRaised)
-                .clickable(onClick = onMediaClick)
-                .padding(horizontal = MiraSpacing.md, vertical = MiraSpacing.sm),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            MiraIcon(MiraIcons.Photo, tint = colors.accent, size = 15.dp)
-            Spacer(Modifier.width(MiraSpacing.xs))
-            Text(
-                text = "Media",
-                style = MiraTheme.type.meta,
-                color = colors.ink,
-            )
+        if (showMediaShortcut) {
+            Spacer(Modifier.weight(1f))
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(MiraRadii.pill))
+                    .background(colors.surfaceRaised)
+                    .clickable(onClick = onMediaClick)
+                    .padding(horizontal = MiraSpacing.md, vertical = MiraSpacing.sm),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                MiraIcon(MiraIcons.Photo, tint = colors.accent, size = 15.dp)
+                Spacer(Modifier.width(MiraSpacing.xs))
+                Text(
+                    text = "Media",
+                    style = MiraTheme.type.meta,
+                    color = colors.ink,
+                )
+            }
         }
     }
 }
