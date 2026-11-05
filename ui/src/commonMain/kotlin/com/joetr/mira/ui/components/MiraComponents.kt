@@ -116,7 +116,8 @@ public fun MiraCard(
  * One entry in a day list.
  *
  * Timestamp top-left, attachment dots top-right, Literata body below. Clamped to [maxLines] with a
- * trailing ellipsis rather than a hard cut.
+ * trailing ellipsis rather than a hard cut. [media] is an optional preview rendered in a column
+ * down the right edge — used where a thumbnail tells the entry faster than its text.
  */
 @Composable
 public fun EntryCard(
@@ -124,36 +125,43 @@ public fun EntryCard(
     modifier: Modifier = Modifier,
     maxLines: Int = 6,
     onClick: (() -> Unit)? = null,
+    media: (@Composable () -> Unit)? = null,
 ) {
     val colors = MiraTheme.colors
     MiraCard(modifier = modifier, onClick = onClick) {
-        Column {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = formatTimestamp(entry.createdAt),
-                    style = MiraTheme.type.timestamp,
-                    color = colors.inkMuted,
-                )
-                Spacer(Modifier.weight(1f))
-                AttachmentDots(entry)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(MiraSpacing.md),
+        ) {
+            Column(Modifier.weight(1f)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = formatTimestamp(entry.createdAt),
+                        style = MiraTheme.type.timestamp,
+                        color = colors.inkMuted,
+                    )
+                    Spacer(Modifier.weight(1f))
+                    AttachmentDots(entry)
+                }
+                if (entry.body.isNotBlank()) {
+                    Spacer(Modifier.height(MiraSpacing.sm))
+                    Text(
+                        text = entry.body.trim(),
+                        style = MiraTheme.type.entryBody,
+                        color = colors.ink,
+                        maxLines = maxLines,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (entry.tags.isNotEmpty()) {
+                    Spacer(Modifier.height(MiraSpacing.sm))
+                    EntryTagLine(entry.tags)
+                }
             }
-            if (entry.body.isNotBlank()) {
-                Spacer(Modifier.height(MiraSpacing.sm))
-                Text(
-                    text = entry.body.trim(),
-                    style = MiraTheme.type.entryBody,
-                    color = colors.ink,
-                    maxLines = maxLines,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            if (entry.tags.isNotEmpty()) {
-                Spacer(Modifier.height(MiraSpacing.sm))
-                EntryTagLine(entry.tags)
-            }
+            media?.invoke()
         }
     }
 }

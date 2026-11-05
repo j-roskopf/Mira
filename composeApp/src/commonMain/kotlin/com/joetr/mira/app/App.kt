@@ -303,6 +303,7 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
                     loading = loading,
                     error = error,
                     onRetry = { retry++ },
+                    thumbnailFor = graph.media::sourceFor,
                     onDismiss = {
                         navDirection = NavDirection.Backward
                         if (backStack.size > 1) backStack.removeAt(backStack.lastIndex)
@@ -311,6 +312,16 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
                     onEntryClick = {
                         navDirection = NavDirection.Forward
                         backStack.add(ComposeKey(entryId = it.id, date = date.value))
+                    },
+                    onMediaClick = {
+                        navDirection = NavDirection.Forward
+                        backStack.add(
+                            ComposeKey(
+                                entryId = it.id,
+                                date = date.value,
+                                attachmentsOpen = true,
+                            ),
+                        )
                     },
                     onCompose = {
                         navDirection = NavDirection.Forward
