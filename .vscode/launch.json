@@ -17,7 +17,7 @@
       "runtimeExecutable": "bash",
       "runtimeArgs": [
         "-c",
-        "ADB=\"${ANDROID_HOME:-$HOME/Library/Android/sdk}/platform-tools/adb\"; [ -x \"$ADB\" ] || ADB=adb; ./gradlew :androidApp:installDebug && \"$ADB\" shell monkey -p com.joetr.mira.debug -c android.intent.category.LAUNCHER 1"
+        "ADB=\"${ANDROID_HOME:-$HOME/Library/Android/sdk}/platform-tools/adb\"; [ -x \"$ADB\" ] || ADB=adb; ./gradlew :androidApp:installDebug && \"$ADB\" shell am start -n com.joetr.mira.debug/com.joetr.mira.app.MainActivity"
       ],
       "console": "integratedTerminal",
       "cwd": "${workspaceFolder}"

@@ -504,23 +504,24 @@ private fun Screen(
                         saving = true
                         try {
                             val existing = key.entryId?.let { graph.entries.entry(it) }
-                            if (key.entryId == null) {
+                            val savedId = if (key.entryId == null) {
                                 graph.entries.create(
                                     ownerId = ownerId,
                                     body = body,
                                     date = date,
                                     attachments = attachments,
                                     tags = tags,
-                                )
+                                ).id
                             } else {
-                                graph.entries.save(
-                                    requireNotNull(existing).copy(
-                                        body = body,
-                                        attachments = attachments,
-                                        tags = tags,
-                                    ),
+                                val updated = requireNotNull(existing).copy(
+                                    body = body,
+                                    attachments = attachments,
+                                    tags = tags,
                                 )
+                                graph.entries.save(updated)
+                                updated.id
                             }
+                            graph.media.pruneUnreferencedStaged(savedId, attachments)
                             graph.onEntrySaved(ownerId)
                             onRefresh()
                             onBack()
