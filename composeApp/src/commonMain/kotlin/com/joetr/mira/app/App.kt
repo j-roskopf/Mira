@@ -170,7 +170,13 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
             CompositionLocalProvider(LocalSharedTransitionScope provides this) {
                 AdaptiveScaffold(
                     widthDp = maxWidth.value.toInt(),
-                    selected = screenKey.topLevel(),
+                    // Compact phones only reach Media from the timeline header, so keep the
+                    // Timeline tab active there while wider layouts highlight their own entry.
+                    selected = if (maxWidth < 600.dp && screenKey is MediaKey) {
+                        TopLevelDestination.Timeline
+                    } else {
+                        screenKey.topLevel()
+                    },
                     accentCanvas = screenKey is CalendarKey || screenKey is YearKey,
                     editorSurface = screenKey is ComposeKey,
                     onCompose = {
@@ -233,6 +239,7 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
                                 today = clock.today(),
                                 selectedDate = selectedDate,
                                 showComposeButton = maxWidth >= 600.dp,
+                                showMediaShortcut = maxWidth < 600.dp,
                                 activity = activity,
                                 dayMedia = dayMedia,
                                 timeline = timeline,
@@ -324,6 +331,7 @@ private fun Screen(
     today: LocalDateKey,
     selectedDate: LocalDateKey?,
     showComposeButton: Boolean,
+    showMediaShortcut: Boolean,
     activity: Map<LocalDateKey, Int>,
     dayMedia: Map<LocalDateKey, CalendarDayMedia>,
     timeline: List<Entry>,
@@ -569,6 +577,7 @@ private fun Screen(
             onEntryClick = { onNavigate(ComposeKey(entryId = it.id, date = it.localDate.value)) },
             today = today,
             onMediaClick = { onNavigate(MediaKey) },
+            showMediaShortcut = showMediaShortcut,
         )
 
         is MediaKey -> {
@@ -648,7 +657,8 @@ private fun Screen(
 }
 
 private fun Any.topLevel(): TopLevelDestination = when (this) {
-    is TimelineKey, is MediaKey -> TopLevelDestination.Timeline
+    is TimelineKey -> TopLevelDestination.Timeline
+    is MediaKey -> TopLevelDestination.Media
     is SearchKey -> TopLevelDestination.Search
     is SettingsKey -> TopLevelDestination.Settings
     else -> TopLevelDestination.Calendar
@@ -657,6 +667,7 @@ private fun Any.topLevel(): TopLevelDestination = when (this) {
 private fun TopLevelDestination.rootKey(): Any = when (this) {
     TopLevelDestination.Calendar -> CalendarKey()
     TopLevelDestination.Timeline -> TimelineKey
+    TopLevelDestination.Media -> MediaKey
     TopLevelDestination.Search -> SearchKey()
     TopLevelDestination.Settings -> SettingsKey
 }

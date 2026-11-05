@@ -26,4 +26,5 @@ iosApp/**/GoogleService-Info.plist
 firebase/functions/lib/
 *.iconset/
 composeApp/flatpak/icons/
-.andy
+.andy/*
+!.andy/actions.toml

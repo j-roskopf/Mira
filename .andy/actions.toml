@@ -1,0 +1,62 @@
+version = 1
+notes = [  ]
+
+[[projects]]
+id = "proj-mira"
+name = "Mira"
+contextDir = "."
+env = {  }
+
+[[actions]]
+id = "act-mira-desktop"
+projectId = "proj-mira"
+name = "Desktop"
+icon = "run"
+command = "./gradlew :composeApp:run"
+cwd = ""
+env = {  }
+
+[[actions]]
+id = "act-mira-android"
+projectId = "proj-mira"
+name = "Android"
+icon = "run"
+command = "./gradlew :androidApp:installDebug && adb shell am start -n com.joetr.mira.debug/com.joetr.mira.app.MainActivity"
+cwd = ""
+env = {  }
+
+[[actions]]
+id = "act-mira-ios"
+projectId = "proj-mira"
+name = "iOS"
+icon = "run"
+command = "./scripts/run-ios-simulator.sh"
+cwd = ""
+env = {  }
+
+[[actions]]
+id = "act-mira-web"
+projectId = "proj-mira"
+name = "Web"
+icon = "debug"
+command = "./gradlew :composeApp:wasmJsBrowserDevelopmentRun"
+cwd = ""
+env = {  }
+
+[[actions]]
+id = "act-mira-screenshots"
+projectId = "proj-mira"
+name = "Screenshots"
+icon = "test"
+command = "./gradlew :composeApp:recordRoborazziDesktop"
+cwd = ""
+env = {  }
+
+[[actions]]
+id = "act-mira-ffmpeg"
+projectId = "proj-mira"
+name = "Build FFmpeg"
+icon = "build"
+command = "./scripts/build-ffmpeg.sh macos"
+cwd = ""
+env = {  }

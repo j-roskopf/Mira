@@ -70,6 +70,12 @@ private val DesktopRailWidth: Dp = 200.dp
 /** Gutter between day tiles — tighter than the general day gap so squares nearly touch. */
 private val CalendarTileGap: Dp = 4.dp
 
+/**
+ * The most row slots a Sunday-first month can need. The desktop pager always reserves this many so
+ * its height and cell size never change as months with different row counts scroll past each other.
+ */
+private const val MaxRowsInMonth: Int = 6
+
 private fun MonthKey.monthsUntil(other: MonthKey): Int =
     (other.year * 12 + other.monthNumber) - (year * 12 + monthNumber)
 
@@ -175,7 +181,6 @@ public fun CalendarScreen(
                         DesktopMonthPager(
                             pagerState = pagerState,
                             pageToMonth = pageToMonth,
-                            month = month,
                             today = today,
                             selected = selected,
                             activity = activity,
@@ -346,7 +351,6 @@ private fun DesktopMonthRail(
 private fun DesktopMonthPager(
     pagerState: PagerState,
     pageToMonth: (Int) -> MonthKey,
-    month: MonthKey,
     today: LocalDateKey,
     selected: LocalDateKey?,
     activity: Map<LocalDateKey, Int>,
@@ -362,16 +366,17 @@ private fun DesktopMonthPager(
         letterSpacing = 1.2.sp,
     )
     BoxWithConstraints(modifier) {
-        val settledMonth = pageToMonth(pagerState.settledPage)
-        val visibleRows = remember(settledMonth, month) { rowsAcross(settledMonth, month) }
         val density = LocalDensity.current
         val gap = CalendarTileGap
         val headerHeight = with(density) { weekdayStyle.lineHeight.toDp() } + MiraSpacing.xl
         val cellWidth = maxWidth / 7
+        // Budget every page against the tallest possible month rather than the months the pager
+        // happens to be between. A neighbour-driven budget would re-measure the cells and re-centre
+        // the pager each time a swipe settles, producing a visible vertical jump.
         val rowHeightFromHeight =
-            (maxHeight - headerHeight - gap * (visibleRows - 1)) / visibleRows
+            (maxHeight - headerHeight - gap * (MaxRowsInMonth - 1)) / MaxRowsInMonth
         val rowHeight = minOf(rowHeightFromHeight, cellWidth).coerceAtLeast(MiraSizes.touchTarget)
-        val pageHeight = headerHeight + rowHeight * visibleRows + gap * (visibleRows - 1)
+        val pageHeight = headerHeight + rowHeight * MaxRowsInMonth + gap * (MaxRowsInMonth - 1)
 
         HorizontalPager(
             state = pagerState,

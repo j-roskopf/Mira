@@ -116,7 +116,7 @@ private fun SidebarLayout(
                     color = MaterialTheme.colorScheme.onBackground,
                 )
                 Spacer(Modifier.height(MiraSpacing.xl))
-                ColumnNav(selected, onNavigate)
+                ColumnNav(expandedDestinations, selected, onNavigate)
                 Spacer(Modifier.weight(1f))
                 accountLabel?.let {
                     Text(
@@ -159,7 +159,7 @@ private fun RailLayout(
             modifier = Modifier.fillMaxHeight().background(MaterialTheme.colorScheme.surface).miraSafeArea(),
             windowInsets = WindowInsets(0, 0, 0, 0),
         ) {
-            destinations.forEach { dest -> RailItem(dest, selected, onNavigate) }
+            expandedDestinations.forEach { dest -> RailItem(dest, selected, onNavigate) }
         }
         Box(
             Modifier
@@ -299,6 +299,7 @@ private fun BottomBarLayout(
 
 @Composable
 private fun ColumnNav(
+    destinations: List<Destination>,
     selected: TopLevelDestination,
     onNavigate: (TopLevelDestination) -> Unit,
 ) {
@@ -378,9 +379,19 @@ private data class Destination(
     val icon: MiraIconPainter,
 )
 
+/** Compact phones reach Media from the timeline header, so the bar keeps four tabs. */
 private val destinations = listOf(
     Destination(TopLevelDestination.Calendar, "Calendar", MiraIcons.Calendar),
     Destination(TopLevelDestination.Timeline, "Timeline", MiraIcons.Timeline),
+    Destination(TopLevelDestination.Search, "Search", MiraIcons.Search),
+    Destination(TopLevelDestination.Settings, "Settings", MiraIcons.Settings),
+)
+
+/** Wider layouts have room for Media as its own destination. */
+private val expandedDestinations = listOf(
+    Destination(TopLevelDestination.Calendar, "Calendar", MiraIcons.Calendar),
+    Destination(TopLevelDestination.Timeline, "Timeline", MiraIcons.Timeline),
+    Destination(TopLevelDestination.Media, "Media", MiraIcons.Photo),
     Destination(TopLevelDestination.Search, "Search", MiraIcons.Search),
     Destination(TopLevelDestination.Settings, "Settings", MiraIcons.Settings),
 )
