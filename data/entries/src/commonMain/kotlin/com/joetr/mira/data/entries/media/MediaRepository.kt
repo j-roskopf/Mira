@@ -3,6 +3,7 @@ package com.joetr.mira.data.entries.media
 import app.cash.sqldelight.async.coroutines.awaitAsList
 import app.cash.sqldelight.async.coroutines.awaitAsOneOrNull
 import com.joetr.mira.data.entries.EntryRepository
+import com.joetr.mira.data.entries.decodeAttachments
 import com.joetr.mira.db.MiraDatabase
 import com.joetr.mira.domain.Attachment
 import com.joetr.mira.domain.AttachmentKind
@@ -214,9 +215,55 @@ public class MediaRepository(
         queries.totalBlobBytes().awaitAsOneOrNull() ?: 0L
     }
 
-    /** Attachments on live entries whose bytes have not reached Storage yet. */
+    /**
+     * Attachments on live entries whose bytes have not reached Storage yet.
+     *
+     * A blob can outlive the attachment that referenced it — removing media from an entry leaves
+     * the staged bytes behind. Those rows still point at the entry, so counting rows alone would
+     * keep reporting them as waiting forever even though the upload path skips them. Count only
+     * blobs the entry itself still lists, which is exactly what [uploadPending] will try.
+     */
     public suspend fun pendingUploadCount(): Int = io {
-        queries.countPendingUploads().awaitAsOneOrNull()?.toInt() ?: 0
+        queries.selectUnuploadedBlobs().awaitAsList().count { blob ->
+            queries.selectEntry(blob.entry_id).awaitAsOneOrNull()
+                ?.let { entry -> decodeAttachments(entry.attachments).any { it.id == blob.id } }
+                ?: false
+        }
+    }
+
+    /**
+     * Drops staged uploads the entry no longer references, e.g. media removed in the editor before
+     * saving. Only called with an authoritative attachment list, so an attachment still being
+     * staged for an in-progress edit is never mistaken for a stale one.
+     */
+    public suspend fun pruneUnreferencedStaged(entryId: String, attachments: List<Attachment>) {
+        val referenced = attachments.mapTo(mutableSetOf()) { it.id }
+        val staged = io { queries.selectBlobsForEntry(entryId).awaitAsList() }
+        for (blob in staged) {
+            if (blob.uploaded != 0L || blob.id in referenced) continue
+            blob.path?.let { deletePreservedFile(it) }
+            io { queries.deleteBlob(blob.id) }
+        }
+    }
+
+    /**
+     * Removes staged uploads that no live entry references, left behind by abandoned edits or
+     * media removed before this cleanup existed. Safe at startup because no editor is staging
+     * attachments yet.
+     */
+    public suspend fun pruneAllUnreferencedStaged() {
+        val staged = io { queries.selectUnuploadedBlobs().awaitAsList() }
+        if (staged.isEmpty()) return
+        val referencedByEntry = mutableMapOf<String, Set<String>>()
+        for (blob in staged) {
+            val entry = io { queries.selectEntry(blob.entry_id).awaitAsOneOrNull() } ?: continue
+            val referenced = referencedByEntry.getOrPut(blob.entry_id) {
+                decodeAttachments(entry.attachments).mapTo(mutableSetOf()) { it.id }
+            }
+            if (blob.id in referenced) continue
+            blob.path?.let { deletePreservedFile(it) }
+            io { queries.deleteBlob(blob.id) }
+        }
     }
 
     /** Deletes every locally cached or staged media file, including unattached captures. */

@@ -172,12 +172,6 @@ ORDER BY last_access ASC;
 selectUnuploadedBlobs:
 SELECT * FROM media_blobs WHERE uploaded = 0 ORDER BY created_at ASC;
 
--- Pending uploads that belong to a live entry. Staged captures awaiting an entry save are not
--- counted, so sync status only reflects media the journal actually references.
-countPendingUploads:
-SELECT COUNT(*) FROM media_blobs
-WHERE uploaded = 0 AND entry_id IN (SELECT id FROM entries WHERE deleted = 0);
-
 -- Settings ------------------------------------------------------------------
 
 getSetting:

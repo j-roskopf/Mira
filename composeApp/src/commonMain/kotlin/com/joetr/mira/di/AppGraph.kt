@@ -110,6 +110,9 @@ public class AppGraph(
         settings.load()
         archive.load()
         firebase.preloadPersistedSession()
+        // No editor is open yet, so anything staged but unreferenced is a leftover from an
+        // abandoned edit and would otherwise be reported as waiting to upload forever.
+        media.pruneAllUnreferencedStaged()
         val signedInViaOAuth = sessionRepository.resumePendingWebOAuth()
         sessionRepository.ensureSession()
         if (signedInViaOAuth) {

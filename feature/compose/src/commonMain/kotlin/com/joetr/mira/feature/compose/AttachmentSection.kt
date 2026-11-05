@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
@@ -341,7 +340,7 @@ private fun MediaAttachment(
     content: @Composable () -> Unit,
 ) {
     val colors = MiraTheme.colors
-    Column(modifier.widthIn(max = 440.dp).fillMaxWidth()) {
+    Column(modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -403,8 +402,8 @@ private fun ImageAttachmentTile(
 ) {
     val colors = MiraTheme.colors
     val density = LocalDensity.current
-    // Tile is capped at 440.dp wide; decode just enough pixels for that box at the current density.
-    val thumbMaxPx = with(density) { 440.dp.roundToPx() }.coerceAtLeast(1)
+    // The sheet is capped at 720.dp wide; decode just enough pixels for that box at the current density.
+    val thumbMaxPx = with(density) { 720.dp.roundToPx() }.coerceAtLeast(1)
     val window = LocalWindowInfo.current.containerSize
     val fullMaxPx = maxOf(window.width, window.height, thumbMaxPx).coerceAtMost(2048)
 
