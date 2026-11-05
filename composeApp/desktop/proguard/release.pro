@@ -16,3 +16,10 @@
 
 # Coil registers its network fetcher through java.util.ServiceLoader.
 -keep class coil3.network.ktor3.** { *; }
+
+# ProGuard 7.7.0's optimizer rewrites Okio's `Source.buffer()` as a synthetic
+# `buffer$...` returning `RealBufferedSource` without updating the method body, so the JVM
+# rejects the class with `VerifyError: Bad return type` the first time Coil touches the disk
+# cache or a network response. Every image fetch then fails and photos silently disappear in
+# release builds. Keeping Okio's members intact stops the optimizer from changing them.
+-keep class okio.** { *; }
