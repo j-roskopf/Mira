@@ -114,6 +114,7 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
         ?.let { LocalDateKey((it as DayKey).date) }
     var activity by remember { mutableStateOf<Map<LocalDateKey, Int>>(emptyMap()) }
     var dayMedia by remember { mutableStateOf<Map<LocalDateKey, CalendarDayMedia>>(emptyMap()) }
+    var dayEntries by remember { mutableStateOf<Map<LocalDateKey, List<Entry>>>(emptyMap()) }
     var timeline by remember { mutableStateOf<List<Entry>>(emptyList()) }
 
     val ownerId = session.ownerId
@@ -147,6 +148,7 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
             month.plusMonths(1).lastDay,
         )
         activity = rangeEntries.groupingBy { it.localDate }.eachCount()
+        dayEntries = rangeEntries.groupBy { it.localDate }
         dayMedia = rangeEntries
             .groupBy { it.localDate }
             .mapValues { (_, entries) ->
@@ -249,6 +251,7 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
                                 showMediaShortcut = maxWidth < 600.dp,
                                 activity = activity,
                                 dayMedia = dayMedia,
+                                dayEntries = dayEntries,
                                 timeline = timeline,
                                 onNavigate = {
                                     navDirection = NavDirection.Forward
@@ -341,6 +344,7 @@ private fun Screen(
     showMediaShortcut: Boolean,
     activity: Map<LocalDateKey, Int>,
     dayMedia: Map<LocalDateKey, CalendarDayMedia>,
+    dayEntries: Map<LocalDateKey, List<Entry>>,
     timeline: List<Entry>,
     onNavigate: (Any) -> Unit,
     onBack: () -> Unit,
@@ -360,7 +364,11 @@ private fun Screen(
             selected = selectedDate,
             showComposeButton = showComposeButton,
             dayMedia = dayMedia,
+            dayEntries = dayEntries,
             thumbnailFor = graph.media::sourceFor,
+            onEntryClick = { entry ->
+                onNavigate(ComposeKey(entryId = entry.id, date = entry.localDate.value))
+            },
             onMonthChange = { onReplaceTop(CalendarKey(it.value)) },
             onDayClick = { date ->
                 if ((activity[date] ?: 0) == 0) {

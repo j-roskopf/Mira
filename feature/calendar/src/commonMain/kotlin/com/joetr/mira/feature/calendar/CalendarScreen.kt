@@ -1,11 +1,19 @@
 package com.joetr.mira.feature.calendar
 
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -16,6 +24,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.pager.rememberPagerState
@@ -34,14 +44,22 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.joetr.mira.domain.Attachment
+import com.joetr.mira.domain.Entry
 import com.joetr.mira.domain.LocalDateKey
 import com.joetr.mira.domain.MonthKey
 import com.joetr.mira.domain.lengthOfMonth
@@ -49,10 +67,12 @@ import com.joetr.mira.media.MediaSource
 import com.joetr.mira.ui.WEEKDAY_HEADS
 import com.joetr.mira.ui.components.MiraFab
 import com.joetr.mira.ui.displayName
+import com.joetr.mira.ui.formatTimestamp
 import com.joetr.mira.ui.icons.MiraIcons
 import com.joetr.mira.ui.monthName
 import com.joetr.mira.ui.monthShortName
 import com.joetr.mira.ui.sundayFirstColumn
+import com.joetr.mira.ui.weekdayUpper
 import com.joetr.mira.ui.motion.sharedDayCircle
 import com.joetr.mira.ui.theme.MiraRadii
 import com.joetr.mira.ui.theme.MiraSizes
@@ -76,6 +96,9 @@ private val DesktopRailWidth: Dp = 200.dp
 
 /** Gutter between day tiles — tighter than the general day gap so squares nearly touch. */
 private val CalendarTileGap: Dp = 4.dp
+
+/** Phones have less room per tile, so the compact grid tucks the squares closer together. */
+private val CompactTileGap: Dp = 3.dp
 
 /**
  * The most row slots a Sunday-first month can need. The desktop pager always reserves this many so
@@ -126,6 +149,8 @@ public fun CalendarScreen(
     modifier: Modifier = Modifier,
     showComposeButton: Boolean = true,
     dayMedia: Map<LocalDateKey, CalendarDayMedia> = emptyMap(),
+    dayEntries: Map<LocalDateKey, List<Entry>> = emptyMap(),
+    onEntryClick: ((Entry) -> Unit)? = null,
     thumbnailFor: suspend (Attachment) -> MediaSource? = { null },
 ) {
     MiraAccentCanvas {
@@ -134,7 +159,6 @@ public fun CalendarScreen(
 
         BoxWithConstraints(modifier.fillMaxSize().background(colors.canvas)) {
             val expanded = maxWidth >= 800.dp
-            val windowWidth = maxWidth
             val pagerState = rememberPagerState(
                 initialPage = PAGER_CENTER,
                 pageCount = { Int.MAX_VALUE },
@@ -199,6 +223,8 @@ public fun CalendarScreen(
                     }
                 }
             } else {
+                val containerWidth = maxWidth
+                val containerHeight = maxHeight
                 Column(
                     Modifier.fillMaxSize()
                         .verticalScroll(rememberScrollState())
@@ -220,17 +246,30 @@ public fun CalendarScreen(
                     val visibleRows = remember(settledMonth, month) {
                         rowsAcross(settledMonth, month)
                     }
-                    // Rows track the day tiles instead of stretching to fill the window. Leftover
-                    // height would otherwise turn into a large vertical gap between squares.
-                    val rowHeight = (windowWidth - MiraSpacing.gutter * 2) / 7 +
-                        CalendarTileGap
                     val density = LocalDensity.current
+                    val cellWidth = (containerWidth - MiraSpacing.gutter * 2) / 7
+                    // Rows stay square to the column. Growing them to take leftover height only
+                    // opens a wide vertical gutter between days, so the agenda gets that space
+                    // instead and the grid stays tight.
+                    val rowHeight = cellWidth
+                    val tileGap = CompactTileGap
+                    val navigatorHeight = with(density) {
+                        val line = MiraTheme.type.yearNav.lineHeight.toDp()
+                        line + MiraSpacing.sm +
+                            (line + MiraSpacing.xs + 2.dp + MiraSpacing.xs * 2) * 2
+                    }
                     val chromeHeight = with(density) {
                         MiraTheme.type.monthTitle.lineHeight.toDp() + MiraSpacing.xl +
                             MiraTheme.type.weekdayHead.lineHeight.toDp() + MiraSpacing.sm
                     }
                     val pageHeight = chromeHeight + rowHeight * visibleRows +
-                        CalendarTileGap * (visibleRows - 1)
+                        tileGap * (visibleRows - 1)
+                    // Everything the tight grid does not use becomes room for the day agenda.
+                    // On a short window this hits its floor and the page scrolls instead.
+                    val agendaHeight = (
+                        containerHeight - MiraSpacing.lg - navigatorHeight - MiraSpacing.xxxl -
+                            pageHeight - MiraSpacing.md
+                        ).coerceAtLeast(96.dp)
 
                     HorizontalPager(
                         state = pagerState,
@@ -262,11 +301,26 @@ public fun CalendarScreen(
                                 onDayClick = onDayClick,
                                 rowHeight = rowHeight,
                                 numeralStyle = MiraTheme.type.dayNumeral,
+                                tileGap = tileGap,
                                 enableSharedTransition = page == pagerState.settledPage,
                             )
                         }
                     }
-                    Spacer(Modifier.height(104.dp))
+
+                    // The agenda always shows today, whichever month the pager is resting on.
+                    Spacer(Modifier.height(MiraSpacing.md))
+
+                    TodayAgenda(
+                        today = today,
+                        entries = dayEntries[today].orEmpty(),
+                        onDayClick = onDayClick,
+                        onEntryClick = onEntryClick,
+                        onComposeClick = onComposeClick,
+                        // The arrow points at the tab bar's centre +. When the floating
+                        // compose button is in play instead, keep the hint arrow-free.
+                        showComposeArrow = !showComposeButton,
+                        modifier = Modifier.height(agendaHeight).fillMaxWidth(),
+                    )
                 }
             }
 
@@ -429,6 +483,10 @@ private fun YearNavigator(
     onYearStep: (Int) -> Unit,
 ) {
     val colors = MiraTheme.colors
+    val monthStyle = MiraTheme.type.yearNav.copy(
+        fontSize = 12.sp,
+        fontWeight = FontWeight.SemiBold,
+    )
     Column {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
@@ -463,7 +521,7 @@ private fun YearNavigator(
                     ) {
                         Text(
                             text = monthShortName(number),
-                            style = MiraTheme.type.yearNav,
+                            style = monthStyle,
                             color = if (isCurrent) colors.ink else colors.inkFaint,
                         )
                         Spacer(Modifier.height(MiraSpacing.xs))
@@ -477,6 +535,181 @@ private fun YearNavigator(
                 }
             }
         }
+    }
+}
+
+/**
+ * Today's entries, sitting in the space the tight month grid leaves behind.
+ *
+ * Only today ever appears here; other months have no agenda. When today is empty the slot turns
+ * into a small invitation, with a bobbing arrow pointing down at the compose button in the tab
+ * bar. It deliberately ignores the day selection: tapping a day opens its sheet over this list,
+ * so following the tap would swap the content behind a sheet the user cannot see.
+ */
+@Composable
+private fun TodayAgenda(
+    today: LocalDateKey,
+    entries: List<Entry>,
+    onDayClick: (LocalDateKey) -> Unit,
+    onEntryClick: ((Entry) -> Unit)?,
+    onComposeClick: () -> Unit,
+    showComposeArrow: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val colors = MiraTheme.colors
+    Column(modifier) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = buildString {
+                    append("TODAY · ")
+                    append(today.weekdayUpper())
+                    append(' ')
+                    append(today.dayOfMonth)
+                    append(' ')
+                    append(monthShortName(today.monthNumber))
+                },
+                style = MiraTheme.type.sectionLabel,
+                color = colors.accent,
+                modifier = Modifier.clickable { onDayClick(today) },
+            )
+            Spacer(Modifier.weight(1f))
+            if (entries.isNotEmpty()) {
+                Text(
+                    text = "${entries.size} ${if (entries.size == 1) "entry" else "entries"}",
+                    style = MiraTheme.type.meta,
+                    color = colors.inkMuted,
+                )
+            }
+        }
+
+        Spacer(Modifier.height(MiraSpacing.sm))
+
+        if (entries.isEmpty()) {
+            AddEntryHint(
+                onComposeClick = onComposeClick,
+                showArrow = showComposeArrow,
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+            )
+        } else {
+            LazyColumn(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(MiraSpacing.md),
+                contentPadding = PaddingValues(bottom = 72.dp),
+            ) {
+                items(entries, key = { it.id }) { entry ->
+                    AgendaRow(
+                        entry = entry,
+                        onClick = {
+                            if (onEntryClick != null) onEntryClick(entry) else onDayClick(today)
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The "nothing written yet" invitation. A quiet line plus a hand-drawn arrow that bobs toward the
+ * compose button, so an empty day reads as an opening rather than a dead end.
+ */
+@Composable
+private fun AddEntryHint(
+    onComposeClick: () -> Unit,
+    showArrow: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val colors = MiraTheme.colors
+    Column(
+        modifier = modifier.clickable(onClick = onComposeClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Spacer(Modifier.weight(1f))
+        Text(
+            text = "Nothing yet.",
+            style = MiraTheme.type.entryBody,
+            color = colors.inkFaint,
+        )
+        Spacer(Modifier.height(MiraSpacing.xs))
+        Text(
+            text = "A blank page for today. Tap + to start it.",
+            style = MiraTheme.type.entryExcerpt,
+            color = colors.inkMuted,
+        )
+        if (showArrow) {
+            Spacer(Modifier.height(MiraSpacing.md))
+            ComposeArrow()
+            Spacer(Modifier.height(MiraSpacing.xs))
+        }
+    }
+}
+
+@Composable
+private fun ComposeArrow(modifier: Modifier = Modifier) {
+    val colors = MiraTheme.colors
+    val bob = if (MiraTheme.motionEnabled) {
+        val transition = rememberInfiniteTransition(label = "compose-hint")
+        val value by transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 850, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "compose-hint-bob",
+        )
+        value
+    } else {
+        0f
+    }
+
+    Canvas(
+        modifier = modifier
+            .size(width = 52.dp, height = 46.dp)
+            .graphicsLayer { translationY = bob * 6.dp.toPx() },
+    ) {
+        val strokeWidth = 2.2.dp.toPx()
+        val w = size.width
+        val h = size.height
+        val tip = Offset(w * 0.5f, h * 0.82f)
+        val path = Path().apply {
+            moveTo(w * 0.5f, 0f)
+            quadraticBezierTo(w * 0.43f, h * 0.45f, tip.x, tip.y)
+        }
+        drawPath(
+            path = path,
+            color = colors.accent,
+            style = Stroke(width = strokeWidth, cap = StrokeCap.Round, join = StrokeJoin.Round),
+        )
+        drawLine(colors.accent, tip, Offset(w * 0.28f, h * 0.6f), strokeWidth, StrokeCap.Round)
+        drawLine(colors.accent, tip, Offset(w * 0.72f, h * 0.6f), strokeWidth, StrokeCap.Round)
+    }
+}
+
+@Composable
+private fun AgendaRow(entry: Entry, onClick: () -> Unit) {
+    val colors = MiraTheme.colors
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(MiraRadii.control))
+            .clickable(onClick = onClick),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Text(
+            text = formatTimestamp(entry.createdAt),
+            style = MiraTheme.type.timestamp,
+            color = colors.inkMuted,
+            modifier = Modifier.width(64.dp).padding(top = 3.dp),
+        )
+        Spacer(Modifier.width(MiraSpacing.md))
+        Text(
+            text = entry.excerpt(120),
+            style = MiraTheme.type.entryExcerpt,
+            color = colors.ink,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -508,6 +741,7 @@ private fun MonthGrid(
     rowHeight: Dp,
     numeralStyle: TextStyle,
     activitySized: Boolean = false,
+    tileGap: Dp = CalendarTileGap,
     enableSharedTransition: Boolean,
 ) {
     val daysInMonth = lengthOfMonth(month.year, month.monthNumber)
@@ -519,10 +753,10 @@ private fun MonthGrid(
         // Days fill their column rather than sitting as small discs inside it, so a month with a
         // photo every day reads as one continuous strip with a thin gutter.
         val cellWidth = maxWidth / 7
-        val tileSize = (minOf(cellWidth, rowHeight) - CalendarTileGap)
+        val tileSize = (minOf(cellWidth, rowHeight) - tileGap)
             .coerceAtLeast(MiraSizes.touchTarget)
 
-        Column(verticalArrangement = Arrangement.spacedBy(CalendarTileGap)) {
+        Column(verticalArrangement = Arrangement.spacedBy(tileGap)) {
             repeat(rows) { row ->
                 Row(Modifier.fillMaxWidth().height(rowHeight)) {
                     repeat(7) { column ->
