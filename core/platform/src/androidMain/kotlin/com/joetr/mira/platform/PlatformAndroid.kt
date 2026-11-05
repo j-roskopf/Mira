@@ -14,12 +14,31 @@ import android.os.Vibrator
 import android.os.VibratorManager
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.result.ActivityResultLauncher
 import java.io.ByteArrayOutputStream
 import kotlin.math.max
 
 public object AndroidContextHolder {
     public lateinit var application: Context
     public var activity: ComponentActivity? = null
+    public var activityResultLaunchers: Map<Int, ActivityResultLauncher<Intent>> = emptyMap()
+    public var permissionLauncher: ActivityResultLauncher<Array<String>>? = null
+}
+
+public object AndroidRequestCodes {
+    public const val CAPTURE_PERMISSION: Int = 0x4D49
+    public const val EXPORT_FILE: Int = 0x4D50
+    public const val IMPORT_FILE: Int = 0x4D51
+    public const val PICK_MEDIA: Int = 0x4D52
+    public const val CAPTURE_PHOTO: Int = 0x4D43
+    public const val CAPTURE_VIDEO: Int = 0x4D56
+}
+
+/** Launches [intent] through the Activity Result API launcher registered for [requestCode]. */
+public fun launchAndroidActivityForResult(intent: Intent, requestCode: Int): Boolean {
+    val launcher = AndroidContextHolder.activityResultLaunchers[requestCode] ?: return false
+    launcher.launch(intent)
+    return true
 }
 
 public actual fun currentTimeMillis(): Long = System.currentTimeMillis()

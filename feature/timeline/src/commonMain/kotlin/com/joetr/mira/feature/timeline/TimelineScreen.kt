@@ -18,11 +18,13 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.style.TextOverflow
@@ -35,8 +37,11 @@ import com.joetr.mira.ui.components.EntryTagLine
 import com.joetr.mira.ui.components.SectionLabel
 import com.joetr.mira.ui.displayName
 import com.joetr.mira.ui.formatTimestamp
+import com.joetr.mira.ui.icons.MiraIcon
+import com.joetr.mira.ui.icons.MiraIcons
 import com.joetr.mira.ui.shortName
 import com.joetr.mira.ui.theme.MiraMotion
+import com.joetr.mira.ui.theme.MiraRadii
 import com.joetr.mira.ui.theme.MiraSpacing
 import com.joetr.mira.ui.theme.MiraTheme
 
@@ -61,67 +66,95 @@ public fun TimelineScreen(
     modifier: Modifier = Modifier,
     onLoadMore: () -> Unit = {},
     today: LocalDateKey? = null,
+    onMediaClick: () -> Unit = {},
 ) {
     val colors = MiraTheme.colors
     val listState = rememberLazyListState()
     val grouped = remember(entries) { entries.groupBy { it.localDate.monthKey } }
 
-    if (entries.isEmpty()) {
-        Column(
-            modifier = modifier
-                .fillMaxSize()
-                .background(colors.canvas)
-                .padding(horizontal = MiraSpacing.gutter),
-        ) {
-            Spacer(Modifier.height(MiraSpacing.giant))
-            EmptyState("Nothing written yet.")
-        }
-        return
-    }
-
-    LazyColumn(
-        modifier = modifier.fillMaxSize().background(colors.canvas),
-        state = listState,
-        contentPadding = PaddingValues(
-            start = MiraSpacing.gutter,
-            end = MiraSpacing.gutter,
-            top = MiraSpacing.md,
-            bottom = MiraSpacing.giant,
-        ),
-    ) {
-        grouped.forEach { (month, monthEntries) ->
-            stickyHeader(key = "header-${month.value}") {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(colors.canvas)
-                        .padding(top = MiraSpacing.xl, bottom = MiraSpacing.sm),
-                ) {
-                    SectionLabel("${month.displayName()} ${month.year}")
+    Column(modifier.fillMaxSize().background(colors.canvas)) {
+        TimelineHeader(onMediaClick = onMediaClick)
+        if (entries.isEmpty()) {
+            Column(Modifier.fillMaxSize().padding(horizontal = MiraSpacing.gutter)) {
+                Spacer(Modifier.height(MiraSpacing.xxl))
+                EmptyState("Nothing written yet.")
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                state = listState,
+                contentPadding = PaddingValues(
+                    start = MiraSpacing.gutter,
+                    end = MiraSpacing.gutter,
+                    top = MiraSpacing.xs,
+                    bottom = MiraSpacing.giant,
+                ),
+            ) {
+                grouped.forEach { (month, monthEntries) ->
+                    stickyHeader(key = "header-${month.value}") {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(colors.canvas)
+                                .padding(top = MiraSpacing.xl, bottom = MiraSpacing.sm),
+                        ) {
+                            SectionLabel("${month.displayName()} ${month.year}")
+                        }
+                    }
+                    itemsIndexed(monthEntries, key = { _, entry -> entry.id }) { index, entry ->
+                        TimelineRow(
+                            entry = entry,
+                            isFirst = index == 0,
+                            isLast = index == monthEntries.lastIndex,
+                            isToday = entry.localDate == today,
+                            onClick = { onEntryClick(entry) },
+                            modifier = if (MiraTheme.motionEnabled) {
+                                Modifier.animateItem(
+                                    fadeInSpec = tween(MiraMotion.STANDARD_MS),
+                                    placementSpec = tween(MiraMotion.STANDARD_MS),
+                                    fadeOutSpec = tween(MiraMotion.QUICK_MS),
+                                )
+                            } else {
+                                Modifier
+                            },
+                        )
+                    }
+                }
+                item {
+                    Spacer(Modifier.height(MiraSpacing.xxl))
+                    onLoadMore()
                 }
             }
-            itemsIndexed(monthEntries, key = { _, entry -> entry.id }) { index, entry ->
-                TimelineRow(
-                    entry = entry,
-                    isFirst = index == 0,
-                    isLast = index == monthEntries.lastIndex,
-                    isToday = entry.localDate == today,
-                    onClick = { onEntryClick(entry) },
-                    modifier = if (MiraTheme.motionEnabled) {
-                        Modifier.animateItem(
-                            fadeInSpec = tween(MiraMotion.STANDARD_MS),
-                            placementSpec = tween(MiraMotion.STANDARD_MS),
-                            fadeOutSpec = tween(MiraMotion.QUICK_MS),
-                        )
-                    } else {
-                        Modifier
-                    },
-                )
-            }
         }
-        item {
-            Spacer(Modifier.height(MiraSpacing.xxl))
-            onLoadMore()
+    }
+}
+
+@Composable
+private fun TimelineHeader(onMediaClick: () -> Unit) {
+    val colors = MiraTheme.colors
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = MiraSpacing.gutter, vertical = MiraSpacing.md),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        SectionLabel("Timeline")
+        Spacer(Modifier.weight(1f))
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(MiraRadii.pill))
+                .background(colors.surfaceRaised)
+                .clickable(onClick = onMediaClick)
+                .padding(horizontal = MiraSpacing.md, vertical = MiraSpacing.sm),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            MiraIcon(MiraIcons.Photo, tint = colors.accent, size = 15.dp)
+            Spacer(Modifier.width(MiraSpacing.xs))
+            Text(
+                text = "Media",
+                style = MiraTheme.type.meta,
+                color = colors.ink,
+            )
         }
     }
 }

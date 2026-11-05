@@ -27,6 +27,7 @@ import androidx.navigationevent.NavigationEventInfo
 import androidx.navigationevent.compose.NavigationBackHandler
 import androidx.navigationevent.compose.rememberNavigationEventState
 import com.joetr.mira.di.AppGraph
+import com.joetr.mira.domain.AttachmentKind
 import com.joetr.mira.domain.CaptureQuality
 import com.joetr.mira.domain.Entry
 import com.joetr.mira.domain.LocalDateKey
@@ -36,9 +37,11 @@ import com.joetr.mira.domain.SystemClockZone
 import com.joetr.mira.domain.ThemeMode
 import com.joetr.mira.domain.ownerId
 import com.joetr.mira.feature.auth.AuthScreen
+import com.joetr.mira.feature.calendar.CalendarDayMedia
 import com.joetr.mira.feature.calendar.CalendarScreen
 import com.joetr.mira.feature.calendar.YearScreen
 import com.joetr.mira.feature.compose.ComposeEntryScreen
+import com.joetr.mira.feature.media.MediaScreen
 import com.joetr.mira.feature.search.SearchScreen
 import com.joetr.mira.feature.timeline.TimelineScreen
 import com.joetr.mira.media.CaptureKind
@@ -48,6 +51,7 @@ import com.joetr.mira.navigation.AuthKey
 import com.joetr.mira.navigation.CalendarKey
 import com.joetr.mira.navigation.ComposeKey
 import com.joetr.mira.navigation.DayKey
+import com.joetr.mira.navigation.MediaKey
 import com.joetr.mira.navigation.SearchKey
 import com.joetr.mira.navigation.SettingsKey
 import com.joetr.mira.navigation.TimelineKey
@@ -109,6 +113,7 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
     val selectedDate = backStack.lastOrNull { it is DayKey }
         ?.let { LocalDateKey((it as DayKey).date) }
     var activity by remember { mutableStateOf<Map<LocalDateKey, Int>>(emptyMap()) }
+    var dayMedia by remember { mutableStateOf<Map<LocalDateKey, CalendarDayMedia>>(emptyMap()) }
     var timeline by remember { mutableStateOf<List<Entry>>(emptyList()) }
 
     val ownerId = session.ownerId
@@ -133,7 +138,18 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
 
     // Cancel obsolete loads when month navigation interrupts an in-flight request.
     LaunchedEffect(ownerId, month, refreshVersion) {
-        activity = graph.entries.activityForMonth(ownerId, month)
+        val monthEntries = graph.entries.entriesInRange(ownerId, month.firstDay, month.lastDay)
+        activity = monthEntries.groupingBy { it.localDate }.eachCount()
+        dayMedia = monthEntries
+            .groupBy { it.localDate }
+            .mapValues { (_, entries) ->
+                val attachments = entries.flatMap { it.attachments }
+                CalendarDayMedia(
+                    image = attachments.firstOrNull { it.kind == AttachmentKind.IMAGE },
+                    hasVideo = attachments.any { it.kind == AttachmentKind.VIDEO },
+                    hasAudio = attachments.any { it.kind == AttachmentKind.AUDIO },
+                )
+            }
         timeline = graph.entries.timeline(ownerId, limit = 200, offset = 0)
     }
 
@@ -206,6 +222,7 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
                                     is YearKey -> Dp.Infinity
                                     is AuthKey -> Dp.Infinity
                                     is ComposeKey -> Dp.Infinity
+                                    is MediaKey -> 1100.dp
                                     else -> 720.dp
                                 },
                             ) {
@@ -217,6 +234,7 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
                                 selectedDate = selectedDate,
                                 showComposeButton = maxWidth >= 600.dp,
                                 activity = activity,
+                                dayMedia = dayMedia,
                                 timeline = timeline,
                                 onNavigate = {
                                     navDirection = NavDirection.Forward
@@ -307,6 +325,7 @@ private fun Screen(
     selectedDate: LocalDateKey?,
     showComposeButton: Boolean,
     activity: Map<LocalDateKey, Int>,
+    dayMedia: Map<LocalDateKey, CalendarDayMedia>,
     timeline: List<Entry>,
     onNavigate: (Any) -> Unit,
     onBack: () -> Unit,
@@ -325,6 +344,8 @@ private fun Screen(
             activity = activity,
             selected = selectedDate,
             showComposeButton = showComposeButton,
+            dayMedia = dayMedia,
+            thumbnailFor = graph.media::sourceFor,
             onMonthChange = { onReplaceTop(CalendarKey(it.value)) },
             onDayClick = { date ->
                 if ((activity[date] ?: 0) == 0) {
@@ -462,6 +483,7 @@ private fun Screen(
                     "video" -> CaptureKind.VIDEO
                     else -> null
                 },
+                initialAttachmentsOpen = key.attachmentsOpen,
                 videoQuality = videoQuality,
                 photoQuality = photoQuality,
                 onBodyChange = { body = it },
@@ -546,7 +568,33 @@ private fun Screen(
             entries = timeline,
             onEntryClick = { onNavigate(ComposeKey(entryId = it.id, date = it.localDate.value)) },
             today = today,
+            onMediaClick = { onNavigate(MediaKey) },
         )
+
+        is MediaKey -> {
+            var mediaEntries by remember(ownerId) { mutableStateOf<List<Entry>>(emptyList()) }
+            var mediaLoading by remember(ownerId) { mutableStateOf(true) }
+            LaunchedEffect(ownerId, refreshVersion) {
+                mediaLoading = true
+                mediaEntries = runCatching { graph.entries.entriesForOwner(ownerId) }
+                    .getOrDefault(emptyList())
+                mediaLoading = false
+            }
+            MediaScreen(
+                entries = mediaEntries,
+                loading = mediaLoading,
+                thumbnailFor = graph.media::sourceFor,
+                onEntryClick = {
+                    onNavigate(
+                        ComposeKey(
+                            entryId = it.id,
+                            date = it.localDate.value,
+                            attachmentsOpen = true,
+                        ),
+                    )
+                },
+            )
+        }
 
         is SearchKey -> {
             var query by remember { mutableStateOf(key.query.orEmpty()) }
@@ -581,9 +629,12 @@ private fun Screen(
         is SettingsKey -> SettingsRoute(
             graph = graph,
             ownerId = ownerId,
+            today = today,
+            refreshVersion = refreshVersion,
             onBack = onBack,
             onSignIn = { onNavigate(AuthKey) },
             onDataDeleted = onRefresh,
+            onOpenYear = { onNavigate(YearKey(it)) },
         )
 
         is AuthKey -> AuthScreen(
@@ -597,7 +648,7 @@ private fun Screen(
 }
 
 private fun Any.topLevel(): TopLevelDestination = when (this) {
-    is TimelineKey -> TopLevelDestination.Timeline
+    is TimelineKey, is MediaKey -> TopLevelDestination.Timeline
     is SearchKey -> TopLevelDestination.Search
     is SettingsKey -> TopLevelDestination.Settings
     else -> TopLevelDestination.Calendar

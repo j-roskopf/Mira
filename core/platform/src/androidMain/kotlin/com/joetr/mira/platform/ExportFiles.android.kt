@@ -5,9 +5,6 @@ import android.content.Intent
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 
-private const val EXPORT_REQUEST_CODE = 0x4D50
-private const val IMPORT_REQUEST_CODE = 0x4D51
-
 private var pendingExportBytes: ByteArray? = null
 private var pendingExportResult: ((Boolean) -> Unit)? = null
 private var pendingImportResult: ((ByteArray?) -> Unit)? = null
@@ -31,8 +28,13 @@ public actual suspend fun exportFile(suggestedName: String, mimeType: String, by
             putExtra(Intent.EXTRA_TITLE, suggestedName)
         }
         activity.runOnUiThread {
-            @Suppress("DEPRECATION")
-            activity.startActivityForResult(intent, EXPORT_REQUEST_CODE)
+            if (!launchAndroidActivityForResult(intent, AndroidRequestCodes.EXPORT_FILE) &&
+                pendingExportResult === callback
+            ) {
+                pendingExportResult = null
+                pendingExportBytes = null
+                callback(false)
+            }
         }
     }
 }
@@ -50,8 +52,12 @@ public actual suspend fun importFile(extensions: Set<String>): ByteArray? {
             type = "*/*"
         }
         activity.runOnUiThread {
-            @Suppress("DEPRECATION")
-            activity.startActivityForResult(intent, IMPORT_REQUEST_CODE)
+            if (!launchAndroidActivityForResult(intent, AndroidRequestCodes.IMPORT_FILE) &&
+                pendingImportResult === callback
+            ) {
+                pendingImportResult = null
+                callback(null)
+            }
         }
     }
 }
@@ -59,7 +65,7 @@ public actual suspend fun importFile(extensions: Set<String>): ByteArray? {
 /** Routes the activity's result back to the awaiting [exportFile] or [importFile] call. */
 public fun dispatchAndroidActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
     when (requestCode) {
-        EXPORT_REQUEST_CODE -> {
+        AndroidRequestCodes.EXPORT_FILE -> {
             val callback = pendingExportResult ?: return
             pendingExportResult = null
             val bytes = pendingExportBytes
@@ -75,7 +81,7 @@ public fun dispatchAndroidActivityResult(requestCode: Int, resultCode: Int, data
             }.getOrDefault(false)
             callback(success)
         }
-        IMPORT_REQUEST_CODE -> {
+        AndroidRequestCodes.IMPORT_FILE -> {
             val callback = pendingImportResult ?: return
             pendingImportResult = null
             val uri = data?.data

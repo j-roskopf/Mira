@@ -168,8 +168,8 @@ public class MediaRepository(
      *
      * Prefers a local file so playback starts instantly and works offline, falls back to a signed
      * Storage URL so it streams, and only materialises bytes when neither is available — which is
-     * the web case, and anything captured but not yet uploaded. Images are always materialised,
-     * since the image tile decodes bytes rather than streaming a URL.
+     * the web case, and anything captured but not yet uploaded. Images use the same order so Coil
+     * can fetch and disk-cache the URL rather than re-downloading bytes itself.
      */
     public suspend fun sourceFor(attachment: Attachment): MediaSource? {
         val blob = io { queries.selectBlob(attachment.id).awaitAsOneOrNull() }
@@ -180,10 +180,12 @@ public class MediaRepository(
             }
             blob.data_?.let { bytes -> return MediaSource.Bytes(bytes, attachment.mime) }
         }
-        // Photos are decoded in memory rather than streamed, so a remote-only image has to be
-        // fetched now; handing back a Remote would leave the tile stuck on its placeholder after
-        // a reinstall or cache eviction even though the bytes are safely in Storage.
+        // Images are rendered through Coil, which can fetch and disk-cache a Storage URL. Prefer
+        // that over materialising the bytes here so revisiting an evicted photo does not download
+        // it again into memory on every open. Only read the bytes when no URL is available yet
+        // (not uploaded) or the download token is missing.
         if (attachment.kind == AttachmentKind.IMAGE) {
+            attachment.url?.let { return MediaSource.Remote(it) }
             bytesFor(attachment)?.let { return MediaSource.Bytes(it, attachment.mime) }
         }
 

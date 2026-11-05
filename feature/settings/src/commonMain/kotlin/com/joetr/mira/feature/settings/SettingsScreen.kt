@@ -27,6 +27,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.joetr.mira.domain.CaptureQuality
+import com.joetr.mira.domain.DayActivity
+import com.joetr.mira.domain.LocalDateKey
 import com.joetr.mira.domain.SessionState
 import com.joetr.mira.domain.SyncState
 import com.joetr.mira.domain.SyncStatus
@@ -53,6 +55,8 @@ public data class SettingsUiState(
     val mediaCacheCapBytes: Long,
     val orphanCount: Int?,
     val version: String,
+    val today: LocalDateKey,
+    val writingActivity: List<DayActivity>? = null,
     val updateState: AppUpdateState = AppUpdateState.Idle,
     val archivePushing: Boolean = false,
     val archiveError: String? = null,
@@ -89,6 +93,7 @@ public data class SettingsActions(
     val onPhotoQualityChange: (CaptureQuality) -> Unit = {},
     val onAuthorizeGitHub: () -> Unit = {},
     val onRemoveArchiveTarget: () -> Unit = {},
+    val onOpenWritingFrequency: () -> Unit = {},
 )
 
 @Composable
@@ -110,6 +115,16 @@ public fun SettingsScreen(
         Spacer(Modifier.height(MiraSpacing.lg))
         Text("SETTINGS", style = MiraTheme.type.monthTitle, color = colors.ink)
         Spacer(Modifier.height(MiraSpacing.sectionGap))
+
+        state.writingActivity?.let { activity ->
+            Section("Writing") {
+                WritingFrequencyCard(
+                    activity = activity,
+                    today = state.today,
+                    onOpenYear = actions.onOpenWritingFrequency,
+                )
+            }
+        }
 
         Section("Account") {
             when (val session = state.session) {

@@ -198,7 +198,13 @@ private fun BottomBarLayout(
     // The editor paints its own canvas, including behind the system bars and IME, so the shell
     // keeps the same dark base instead of introducing a second tone around it.
     val canvas = scaffoldCanvas(accentCanvas)
-    val barTarget = if (accentCanvas) MaterialTheme.colorScheme.surface else canvas
+    // Pick the bar target from the static scheme, not the animated canvas. Following `canvas`
+    // makes the bar dip through the accent tone when leaving a calendar page before settling.
+    val barTarget = if (accentCanvas) {
+        MaterialTheme.colorScheme.surface
+    } else {
+        MaterialTheme.colorScheme.background
+    }
     val bar = if (MiraTheme.motionEnabled) {
         animateColorAsState(barTarget, tween(MiraMotion.STANDARD_MS), label = "bottomBar").value
     } else {

@@ -10,6 +10,8 @@ import android.provider.MediaStore
 import androidx.core.content.FileProvider
 import com.joetr.mira.domain.CaptureQuality
 import com.joetr.mira.platform.AndroidContextHolder
+import com.joetr.mira.platform.AndroidRequestCodes
+import com.joetr.mira.platform.launchAndroidActivityForResult
 import com.joetr.mira.platform.requestAndroidPermissions
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -19,9 +21,6 @@ import java.io.File
 import java.io.FileOutputStream
 import kotlin.coroutines.resume
 import kotlin.math.max
-
-private const val PHOTO_REQUEST = 0x4D43
-private const val VIDEO_REQUEST = 0x4D56
 
 private var pendingNativeResult: ((CaptureResult?) -> Unit)? = null
 private var pendingNativeFile: File? = null
@@ -97,11 +96,15 @@ public actual suspend fun captureWithNativeCamera(
             // visibility can hide it even when the device has a perfectly good camera app. Just
             // launch it and treat ActivityNotFoundException as "no camera".
             val launched = runCatching {
-                activity.startActivityForResult(
+                launchAndroidActivityForResult(
                     intent,
-                    if (kind == CaptureKind.VIDEO) VIDEO_REQUEST else PHOTO_REQUEST,
+                    if (kind == CaptureKind.VIDEO) {
+                        AndroidRequestCodes.CAPTURE_VIDEO
+                    } else {
+                        AndroidRequestCodes.CAPTURE_PHOTO
+                    },
                 )
-            }.isSuccess
+            }.getOrDefault(false)
             if (!launched && pendingNativeResult === callback) {
                 pendingNativeResult = null
                 pendingNativeFile = null
@@ -114,7 +117,12 @@ public actual suspend fun captureWithNativeCamera(
 
 /** Routes the camera app's result back to the awaiting [captureWithNativeCamera] call. */
 public fun dispatchAndroidNativeCameraResult(requestCode: Int, resultCode: Int, data: Intent?) {
-    if (requestCode != PHOTO_REQUEST && requestCode != VIDEO_REQUEST) return
+    if (
+        requestCode != AndroidRequestCodes.CAPTURE_PHOTO &&
+        requestCode != AndroidRequestCodes.CAPTURE_VIDEO
+    ) {
+        return
+    }
     val callback = pendingNativeResult ?: return
     pendingNativeResult = null
     val file = pendingNativeFile
@@ -127,7 +135,7 @@ public fun dispatchAndroidNativeCameraResult(requestCode: Int, resultCode: Int, 
         return
     }
 
-    val isVideo = requestCode == VIDEO_REQUEST
+    val isVideo = requestCode == AndroidRequestCodes.CAPTURE_VIDEO
     if (isVideo) {
         callback(
             CaptureResult(

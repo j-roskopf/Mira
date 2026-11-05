@@ -7,6 +7,7 @@ kotlin {
         commonMain {
             dependencies {
                 implementation(project(":data:entries"))
+                implementation(project(":core:media"))
             }
         }
     }

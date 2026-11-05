@@ -286,6 +286,20 @@ private fun ComposeSample() {
     )
 }
 
+private val sampleWritingActivity =
+    sampleActivity.map { DayActivity(it.key, it.value) } +
+        listOf(
+            DayActivity(LocalDateKey("2026-06-12"), 2),
+            DayActivity(LocalDateKey("2026-07-04"), 1),
+            DayActivity(LocalDateKey("2026-08-19"), 4),
+            DayActivity(LocalDateKey("2026-09-01"), 1),
+            DayActivity(LocalDateKey("2026-09-14"), 3),
+            DayActivity(LocalDateKey("2026-09-30"), 2),
+            DayActivity(LocalDateKey("2026-10-27"), 1),
+            DayActivity(LocalDateKey("2026-10-28"), 2),
+            DayActivity(LocalDateKey("2026-10-29"), 1),
+        )
+
 @Composable
 private fun SettingsSample() {
     SettingsScreen(
@@ -302,6 +316,8 @@ private fun SettingsSample() {
             mediaCacheCapBytes = 5L * 1024 * 1024 * 1024,
             orphanCount = null,
             version = "2026.1030.2200",
+            today = sampleDate,
+            writingActivity = sampleWritingActivity,
         ),
         actions = SettingsActions(
             onBack = {},
@@ -323,6 +339,7 @@ private fun SettingsSample() {
             onExportData = {},
             onImportData = {},
             onDeleteAllData = {},
+            onOpenWritingFrequency = {},
         ),
     )
 }

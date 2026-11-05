@@ -41,11 +41,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.joetr.mira.domain.Attachment
 import com.joetr.mira.domain.LocalDateKey
 import com.joetr.mira.domain.MonthKey
 import com.joetr.mira.domain.lengthOfMonth
+import com.joetr.mira.media.MediaSource
 import com.joetr.mira.ui.WEEKDAY_HEADS
-import com.joetr.mira.ui.components.HeatmapDay
 import com.joetr.mira.ui.components.MiraFab
 import com.joetr.mira.ui.displayName
 import com.joetr.mira.ui.icons.MiraIcons
@@ -59,13 +60,15 @@ import com.joetr.mira.ui.theme.MiraSpacing
 import com.joetr.mira.ui.theme.MiraAccentCanvas
 import com.joetr.mira.ui.theme.MiraTheme
 import com.joetr.mira.ui.theme.busyThreshold
-import com.joetr.mira.ui.theme.heatmapStep
 import kotlinx.coroutines.flow.collect
 
 private const val PAGER_CENTER: Int = Int.MAX_VALUE / 2
 
 /** The desktop month rail, sitting between the app sidebar and the grid. */
 private val DesktopRailWidth: Dp = 200.dp
+
+/** Gutter between day tiles — tighter than the general day gap so squares nearly touch. */
+private val CalendarTileGap: Dp = 4.dp
 
 private fun MonthKey.monthsUntil(other: MonthKey): Int =
     (other.year * 12 + other.monthNumber) - (year * 12 + monthNumber)
@@ -109,6 +112,8 @@ public fun CalendarScreen(
     onComposeClick: () -> Unit,
     modifier: Modifier = Modifier,
     showComposeButton: Boolean = true,
+    dayMedia: Map<LocalDateKey, CalendarDayMedia> = emptyMap(),
+    thumbnailFor: suspend (Attachment) -> MediaSource? = { null },
 ) {
     MiraAccentCanvas {
         val colors = MiraTheme.colors
@@ -116,7 +121,7 @@ public fun CalendarScreen(
 
         BoxWithConstraints(modifier.fillMaxSize().background(colors.canvas)) {
             val expanded = maxWidth >= 800.dp
-            val availableHeight = maxHeight
+            val windowWidth = maxWidth
             val pagerState = rememberPagerState(
                 initialPage = PAGER_CENTER,
                 pageCount = { Int.MAX_VALUE },
@@ -174,7 +179,9 @@ public fun CalendarScreen(
                             today = today,
                             selected = selected,
                             activity = activity,
+                            dayMedia = dayMedia,
                             busyThreshold = threshold,
+                            thumbnailFor = thumbnailFor,
                             onDayClick = onDayClick,
                         )
                     }
@@ -201,15 +208,17 @@ public fun CalendarScreen(
                     val visibleRows = remember(settledMonth, month) {
                         rowsAcross(settledMonth, month)
                     }
-                    val rowHeight = ((availableHeight - 304.dp) / visibleRows)
-                        .coerceIn(64.dp, 120.dp)
+                    // Rows track the day tiles instead of stretching to fill the window. Leftover
+                    // height would otherwise turn into a large vertical gap between squares.
+                    val rowHeight = (windowWidth - MiraSpacing.gutter * 2) / 7 +
+                        CalendarTileGap
                     val density = LocalDensity.current
                     val chromeHeight = with(density) {
                         MiraTheme.type.monthTitle.lineHeight.toDp() + MiraSpacing.xl +
                             MiraTheme.type.weekdayHead.lineHeight.toDp() + MiraSpacing.sm
                     }
                     val pageHeight = chromeHeight + rowHeight * visibleRows +
-                        MiraSizes.dayGap * (visibleRows - 1)
+                        CalendarTileGap * (visibleRows - 1)
 
                     HorizontalPager(
                         state = pagerState,
@@ -234,10 +243,11 @@ public fun CalendarScreen(
                                 today = today,
                                 selected = selected,
                                 activity = activity,
+                                dayMedia = dayMedia,
                                 busyThreshold = threshold,
+                                thumbnailFor = thumbnailFor,
                                 onDayClick = onDayClick,
                                 rowHeight = rowHeight,
-                                daySize = MiraSizes.dayCircle,
                                 numeralStyle = MiraTheme.type.dayNumeral,
                                 enableSharedTransition = page == pagerState.settledPage,
                             )
@@ -340,7 +350,9 @@ private fun DesktopMonthPager(
     today: LocalDateKey,
     selected: LocalDateKey?,
     activity: Map<LocalDateKey, Int>,
+    dayMedia: Map<LocalDateKey, CalendarDayMedia>,
     busyThreshold: Int,
+    thumbnailFor: suspend (Attachment) -> MediaSource?,
     onDayClick: (LocalDateKey) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -353,17 +365,12 @@ private fun DesktopMonthPager(
         val settledMonth = pageToMonth(pagerState.settledPage)
         val visibleRows = remember(settledMonth, month) { rowsAcross(settledMonth, month) }
         val density = LocalDensity.current
-        val gap = MiraSizes.dayGap
+        val gap = CalendarTileGap
         val headerHeight = with(density) { weekdayStyle.lineHeight.toDp() } + MiraSpacing.xl
         val cellWidth = maxWidth / 7
         val rowHeightFromHeight =
             (maxHeight - headerHeight - gap * (visibleRows - 1)) / visibleRows
         val rowHeight = minOf(rowHeightFromHeight, cellWidth).coerceAtLeast(MiraSizes.touchTarget)
-        val daySize = (minOf(rowHeight, cellWidth) - gap * 2).coerceIn(48.dp, 64.dp)
-        val numeralStyle = MiraTheme.type.dayNumeral.copy(
-            fontSize = (daySize.value * 0.30f).sp,
-            lineHeight = (daySize.value * 0.30f).sp,
-        )
         val pageHeight = headerHeight + rowHeight * visibleRows + gap * (visibleRows - 1)
 
         HorizontalPager(
@@ -380,11 +387,12 @@ private fun DesktopMonthPager(
                     today = today,
                     selected = selected,
                     activity = activity,
+                    dayMedia = dayMedia,
                     busyThreshold = busyThreshold,
+                    thumbnailFor = thumbnailFor,
                     onDayClick = onDayClick,
                     rowHeight = rowHeight,
-                    daySize = daySize,
-                    numeralStyle = numeralStyle,
+                    numeralStyle = MiraTheme.type.dayNumeral,
                     activitySized = true,
                     enableSharedTransition = page == pagerState.settledPage,
                 )
@@ -479,10 +487,11 @@ private fun MonthGrid(
     today: LocalDateKey,
     selected: LocalDateKey?,
     activity: Map<LocalDateKey, Int>,
+    dayMedia: Map<LocalDateKey, CalendarDayMedia>,
     busyThreshold: Int,
+    thumbnailFor: suspend (Attachment) -> MediaSource?,
     onDayClick: (LocalDateKey) -> Unit,
     rowHeight: Dp,
-    daySize: Dp,
     numeralStyle: TextStyle,
     activitySized: Boolean = false,
     enableSharedTransition: Boolean,
@@ -492,46 +501,58 @@ private fun MonthGrid(
     val cells = leadingBlanks + daysInMonth
     val rows = (cells + 6) / 7
 
-    Column(verticalArrangement = Arrangement.spacedBy(MiraSizes.dayGap)) {
-        repeat(rows) { row ->
-            Row(Modifier.fillMaxWidth().height(rowHeight)) {
-                repeat(7) { column ->
-                    val index = row * 7 + column
-                    val dayNumber = index - leadingBlanks + 1
-                    Box(Modifier.weight(1f).height(rowHeight), contentAlignment = Alignment.Center) {
-                        if (dayNumber in 1..daysInMonth) {
-                            val date = LocalDateKey(
-                                "${month.value}-${dayNumber.toString().padStart(2, '0')}",
-                            )
-                            val count = activity[date] ?: 0
-                            val step = heatmapStep(count, busyThreshold)
-                            val isMarked = date == today || date == selected
-                            // Activity is carried by the pip row, so every numeral keeps the same
-                            // size; today and the selection get a slightly larger one.
-                            val style = if (activitySized) {
-                                val factor = if (isMarked) 0.30f else 0.24f
-                                numeralStyle.copy(
-                                    fontSize = (daySize.value * factor).sp,
-                                    lineHeight = (daySize.value * factor).sp,
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        // Days fill their column rather than sitting as small discs inside it, so a month with a
+        // photo every day reads as one continuous strip with a thin gutter.
+        val cellWidth = maxWidth / 7
+        val tileSize = (minOf(cellWidth, rowHeight) - CalendarTileGap)
+            .coerceAtLeast(MiraSizes.touchTarget)
+
+        Column(verticalArrangement = Arrangement.spacedBy(CalendarTileGap)) {
+            repeat(rows) { row ->
+                Row(Modifier.fillMaxWidth().height(rowHeight)) {
+                    repeat(7) { column ->
+                        val index = row * 7 + column
+                        val dayNumber = index - leadingBlanks + 1
+                        Box(
+                            Modifier.weight(1f).height(rowHeight),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (dayNumber in 1..daysInMonth) {
+                                val date = LocalDateKey(
+                                    "${month.value}-${dayNumber.toString().padStart(2, '0')}",
                                 )
-                            } else {
-                                numeralStyle
-                            }
-                            HeatmapDay(
-                                day = dayNumber,
-                                circleSize = daySize,
-                                numeralStyle = style,
-                                rampStep = step,
-                                entryCount = count,
-                                isToday = date == today,
-                                isSelected = date == selected,
-                                onClick = { onDayClick(date) },
-                                modifier = if (enableSharedTransition) {
-                                    Modifier.sharedDayCircle(date.value)
+                                val count = activity[date] ?: 0
+                                val isMarked = date == today || date == selected
+                                // The tile itself carries activity now, so every numeral keeps the
+                                // same size; today and the selection get a slightly larger one.
+                                val style = if (activitySized) {
+                                    val factor = if (isMarked) 0.30f else 0.24f
+                                    numeralStyle.copy(
+                                        fontSize = (tileSize.value * factor).sp,
+                                        lineHeight = (tileSize.value * factor).sp,
+                                    )
                                 } else {
-                                    Modifier
-                                },
-                            )
+                                    numeralStyle
+                                }
+                                CalendarDayCell(
+                                    day = dayNumber,
+                                    entryCount = count,
+                                    media = dayMedia[date],
+                                    busyThreshold = busyThreshold,
+                                    isToday = date == today,
+                                    isSelected = date == selected,
+                                    tileSize = tileSize,
+                                    numeralStyle = style,
+                                    thumbnailFor = thumbnailFor,
+                                    onClick = { onDayClick(date) },
+                                    modifier = if (enableSharedTransition) {
+                                        Modifier.sharedDayCircle(date.value)
+                                    } else {
+                                        Modifier
+                                    },
+                                )
+                            }
                         }
                     }
                 }

@@ -28,12 +28,15 @@ import com.joetr.mira.data.archive.GitHubArchive
 import com.joetr.mira.data.archive.ImportFailedException
 import com.joetr.mira.di.AppGraph
 import com.joetr.mira.domain.CaptureQuality
+import com.joetr.mira.domain.DayActivity
+import com.joetr.mira.domain.LocalDateKey
 import com.joetr.mira.domain.SessionState
 import com.joetr.mira.domain.SyncState
 import com.joetr.mira.domain.ThemeMode
 import com.joetr.mira.feature.settings.SettingsActions
 import com.joetr.mira.feature.settings.SettingsScreen
 import com.joetr.mira.feature.settings.SettingsUiState
+import com.joetr.mira.feature.settings.writingHistoryStart
 import com.joetr.mira.platform.MiraBuildInfo
 import com.joetr.mira.platform.exportFile
 import com.joetr.mira.platform.importFile
@@ -48,9 +51,12 @@ import kotlinx.coroutines.launch
 internal fun SettingsRoute(
     graph: AppGraph,
     ownerId: String,
+    today: LocalDateKey,
+    refreshVersion: Int,
     onBack: () -> Unit,
     onSignIn: () -> Unit,
     onDataDeleted: () -> Unit,
+    onOpenYear: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val scope = rememberCoroutineScope()
@@ -67,6 +73,7 @@ internal fun SettingsRoute(
     val videoQuality by graph.settings.observeVideoQuality().collectAsState(CaptureQuality.MEDIUM)
     val photoQuality by graph.settings.observePhotoQuality().collectAsState(CaptureQuality.MEDIUM)
 
+    var writingActivity by remember(ownerId) { mutableStateOf<List<DayActivity>?>(null) }
     var localBytes by remember { mutableStateOf(0L) }
     var orphanCount by remember { mutableStateOf<Int?>(null) }
     var orphans by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -89,6 +96,14 @@ internal fun SettingsRoute(
         localBytes = graph.media.localBytesUsed()
         // Pick up an archive target another device connected or removed while this one was idle.
         graph.archive.refreshSharedConfig()
+    }
+
+    LaunchedEffect(ownerId, today, refreshVersion) {
+        writingActivity = graph.entries.activityForRange(
+            ownerId = ownerId,
+            from = writingHistoryStart(today),
+            to = today,
+        )
     }
 
     /**
@@ -160,6 +175,8 @@ internal fun SettingsRoute(
             mediaCacheCapBytes = cacheCap,
             orphanCount = orphanCount,
             version = MiraBuildInfo.versionName,
+            today = today,
+            writingActivity = writingActivity,
             updateState = updateState,
             exporting = exporting,
             importing = importing,
@@ -275,6 +292,7 @@ internal fun SettingsRoute(
             },
             onVideoQualityChange = { scope.launch { graph.settings.setVideoQuality(it) } },
             onPhotoQualityChange = { scope.launch { graph.settings.setPhotoQuality(it) } },
+            onOpenWritingFrequency = { onOpenYear(today.year) },
         ),
     )
 

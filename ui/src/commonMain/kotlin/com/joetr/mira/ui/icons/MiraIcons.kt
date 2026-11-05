@@ -14,6 +14,9 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 
 @Composable
 public fun MiraIcon(
@@ -452,17 +455,30 @@ public object MiraIcons {
 
     public val Settings: MiraIconPainter = MiraIconPainter { scope, tint, stroke ->
         with(scope) {
-            listOf(0.30f, 0.52f, 0.74f).forEachIndexed { index, fy ->
-                drawLine(
-                    tint,
-                    Offset(size.width * 0.16f, size.height * fy),
-                    Offset(size.width * 0.84f, size.height * fy),
-                    stroke.width,
-                    StrokeCap.Round,
-                )
-                val knobX = size.width * (if (index % 2 == 0) 0.66f else 0.36f)
-                drawCircle(tint, radius = size.minDimension * 0.085f, center = Offset(knobX, size.height * fy), style = stroke)
+            val center = Offset(size.width / 2, size.height / 2)
+            val outerRadius = size.minDimension * 0.42f
+            val innerRadius = size.minDimension * 0.32f
+            val teeth = 8
+            val step = (2.0 * PI / teeth).toFloat()
+            val gear = Path().apply {
+                repeat(teeth) { index ->
+                    val angle = index * step
+                    val points = listOf(
+                        angle - step * 0.40f to innerRadius,
+                        angle - step * 0.24f to outerRadius,
+                        angle + step * 0.24f to outerRadius,
+                        angle + step * 0.40f to innerRadius,
+                    )
+                    points.forEachIndexed { pointIndex, (a, r) ->
+                        val x = center.x + cos(a) * r
+                        val y = center.y + sin(a) * r
+                        if (index == 0 && pointIndex == 0) moveTo(x, y) else lineTo(x, y)
+                    }
+                }
+                close()
             }
+            drawPath(gear, tint, style = stroke)
+            drawCircle(tint, radius = size.minDimension * 0.13f, center = center, style = stroke)
         }
     }
 

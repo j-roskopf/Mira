@@ -1,12 +1,9 @@
 package com.joetr.mira.platform
 
 import android.content.pm.PackageManager
-import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
-
-private const val CAPTURE_PERMISSION_REQUEST = 0x4D49
 
 private var pendingCaptureResult: ((Map<String, Boolean>) -> Unit)? = null
 
@@ -25,6 +22,8 @@ public suspend fun requestAndroidPermissions(permissions: List<String>): Map<Str
     }.toSet()
     val missing = permissions.filterNot { it in alreadyGranted }
     if (missing.isEmpty()) return permissions.associateWith { true }
+    val launcher = AndroidContextHolder.permissionLauncher
+        ?: return permissions.associateWith { it in alreadyGranted }
 
     return suspendCancellableCoroutine { continuation ->
         val callback: (Map<String, Boolean>) -> Unit = { results ->
@@ -37,26 +36,14 @@ public suspend fun requestAndroidPermissions(permissions: List<String>): Map<Str
             if (pendingCaptureResult === callback) pendingCaptureResult = null
         }
         activity.runOnUiThread {
-            ActivityCompat.requestPermissions(
-                activity,
-                missing.toTypedArray(),
-                CAPTURE_PERMISSION_REQUEST,
-            )
+            launcher.launch(missing.toTypedArray())
         }
     }
 }
 
 /** Routes the activity's permission result back to the awaiting [requestAndroidPermissions]. */
-public fun dispatchAndroidPermissionResult(
-    requestCode: Int,
-    permissions: Array<out String>,
-    grantResults: IntArray,
-) {
-    if (requestCode != CAPTURE_PERMISSION_REQUEST) return
+public fun dispatchAndroidPermissionResult(grantResults: Map<String, Boolean>) {
     val callback = pendingCaptureResult ?: return
     pendingCaptureResult = null
-    val results = permissions.mapIndexed { index, permission ->
-        permission to (grantResults.getOrNull(index) == PackageManager.PERMISSION_GRANTED)
-    }.toMap()
-    callback(results)
+    callback(grantResults)
 }
