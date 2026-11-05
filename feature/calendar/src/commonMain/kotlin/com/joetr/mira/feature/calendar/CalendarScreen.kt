@@ -64,6 +64,13 @@ import kotlinx.coroutines.flow.collect
 
 private const val PAGER_CENTER: Int = Int.MAX_VALUE / 2
 
+/**
+ * Keep the neighbouring months composed so their tiles resolve and load thumbnails before the
+ * swipe settles. Without this the pager only composes a page once it enters the viewport, so the
+ * images for the month being swiped to start loading mid-gesture and appear late.
+ */
+private const val PAGER_OFFSCREEN_PAGES: Int = 1
+
 /** The desktop month rail, sitting between the app sidebar and the grid. */
 private val DesktopRailWidth: Dp = 200.dp
 
@@ -229,6 +236,7 @@ public fun CalendarScreen(
                         state = pagerState,
                         modifier = Modifier.fillMaxWidth().height(pageHeight),
                         key = { it },
+                        beyondViewportPageCount = PAGER_OFFSCREEN_PAGES,
                     ) { page ->
                         val pageMonth = pageToMonth(page)
                         Column(Modifier.fillMaxWidth().height(pageHeight)) {
@@ -382,6 +390,7 @@ private fun DesktopMonthPager(
             state = pagerState,
             modifier = Modifier.fillMaxWidth().height(pageHeight),
             key = { it },
+            beyondViewportPageCount = PAGER_OFFSCREEN_PAGES,
         ) { page ->
             val pageMonth = pageToMonth(page)
             Column(Modifier.fillMaxWidth().height(pageHeight)) {

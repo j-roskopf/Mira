@@ -136,11 +136,18 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
         }
     }
 
-    // Cancel obsolete loads when month navigation interrupts an in-flight request.
+    // Cancel obsolete loads when month navigation interrupts an in-flight request. The range
+    // reaches a month either side so the pager's neighbouring pages already have their media
+    // while they are composed offscreen during a swipe — otherwise thumbnails only begin loading
+    // once the page settles and `month` catches up.
     LaunchedEffect(ownerId, month, refreshVersion) {
-        val monthEntries = graph.entries.entriesInRange(ownerId, month.firstDay, month.lastDay)
-        activity = monthEntries.groupingBy { it.localDate }.eachCount()
-        dayMedia = monthEntries
+        val rangeEntries = graph.entries.entriesInRange(
+            ownerId,
+            month.minusMonths(1).firstDay,
+            month.plusMonths(1).lastDay,
+        )
+        activity = rangeEntries.groupingBy { it.localDate }.eachCount()
+        dayMedia = rangeEntries
             .groupBy { it.localDate }
             .mapValues { (_, entries) ->
                 val attachments = entries.flatMap { it.attachments }
