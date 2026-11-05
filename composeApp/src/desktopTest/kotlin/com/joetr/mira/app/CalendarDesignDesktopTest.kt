@@ -9,6 +9,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onLast
@@ -81,7 +84,12 @@ class CalendarDesignDesktopTest {
                 }
             }
         }
-        onNodeWithText("12", useUnmergedTree = true).performClick()
+        // Neighbouring months are composed offscreen for prefetching, so scope the day to the
+        // page whose month is on screen.
+        onNode(
+            hasText("12") and hasAnyAncestor(hasTestTag("calendar-page-2026-10")),
+            useUnmergedTree = true,
+        ).performClick()
         onNodeWithText("A walk by the lake.").assertIsDisplayed()
         onAllNodes(isRoot()).onLast().captureRoboImage(File("src/desktopTest/resources/roborazzi/DaySheet_compact.png").absolutePath)
         onNodeWithText("A walk by the lake.").performClick()

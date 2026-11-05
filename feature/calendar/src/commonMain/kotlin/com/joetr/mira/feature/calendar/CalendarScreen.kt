@@ -52,6 +52,7 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -278,7 +279,10 @@ public fun CalendarScreen(
                         beyondViewportPageCount = PAGER_OFFSCREEN_PAGES,
                     ) { page ->
                         val pageMonth = pageToMonth(page)
-                        Column(Modifier.fillMaxWidth().height(pageHeight)) {
+                        Column(
+                            Modifier.fillMaxWidth().height(pageHeight)
+                                .testTag("calendar-page-${pageMonth.value}"),
+                        ) {
                             Text(
                                 text = pageMonth.displayName().uppercase(),
                                 style = MiraTheme.type.monthTitle,
@@ -447,7 +451,10 @@ private fun DesktopMonthPager(
             beyondViewportPageCount = PAGER_OFFSCREEN_PAGES,
         ) { page ->
             val pageMonth = pageToMonth(page)
-            Column(Modifier.fillMaxWidth().height(pageHeight)) {
+            Column(
+                Modifier.fillMaxWidth().height(pageHeight)
+                    .testTag("calendar-page-${pageMonth.value}"),
+            ) {
                 WeekdayHeader(style = weekdayStyle)
                 Spacer(Modifier.height(MiraSpacing.xl))
                 MonthGrid(

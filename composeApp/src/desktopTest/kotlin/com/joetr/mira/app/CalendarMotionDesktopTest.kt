@@ -2,7 +2,11 @@ package com.joetr.mira.app
 
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import io.github.takahirom.roborazzi.captureRoboImage
@@ -62,7 +66,12 @@ class CalendarMotionDesktopTest {
         mainClock.autoAdvance = true
         waitForIdle()
         onNodeWithText("DECEMBER").assertIsDisplayed()
-        onNodeWithText("31", useUnmergedTree = true).performClick()
+        // Neighbouring months are composed offscreen for prefetching, so scope the day to
+        // December's page.
+        onNode(
+            hasText("31") and hasAnyAncestor(hasTestTag("calendar-page-2026-12")),
+            useUnmergedTree = true,
+        ).performClick()
         runOnIdle { assertEquals(LocalDateKey("2026-12-31"), selected) }
     }
 
@@ -76,6 +85,9 @@ class CalendarMotionDesktopTest {
         }
         onNodeWithText("Feb", ignoreCase = true).performClick()
         onNodeWithText("FEBRUARY").assertIsDisplayed()
-        onNodeWithText("31", useUnmergedTree = true).assertDoesNotExist()
+        onAllNodes(
+            hasText("31") and hasAnyAncestor(hasTestTag("calendar-page-2026-02")),
+            useUnmergedTree = true,
+        ).assertCountEquals(0)
     }
 }
