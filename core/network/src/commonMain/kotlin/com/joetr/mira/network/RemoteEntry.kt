@@ -21,6 +21,9 @@ public data class RemoteAttachment(
     val bytes: Long,
     val durationMs: Long,
     val posterPath: String?,
+    val posterUrl: String?,
+    val thumbnailPath: String?,
+    val thumbnailUrl: String?,
     val caption: String,
 )
 

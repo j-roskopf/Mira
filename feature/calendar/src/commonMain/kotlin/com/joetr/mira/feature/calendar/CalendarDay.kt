@@ -26,6 +26,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.joetr.mira.domain.Attachment
+import com.joetr.mira.domain.AttachmentKind
 import com.joetr.mira.media.AttachmentImage
 import com.joetr.mira.media.AttachmentImageState
 import com.joetr.mira.media.MediaSource
@@ -38,8 +39,8 @@ import com.joetr.mira.ui.theme.heatmapStep
  * What the calendar needs to know about a day's media, without loading every attachment on the
  * screen at once.
  *
- * The first photo becomes the day's tile; video and audio are represented by a small badge so a
- * day with a recording is visibly different from a day with only text.
+ * The first photo — or, failing that, a video's poster — becomes the day's tile; video and audio
+ * keep a small badge so a day with a recording is visibly different from a day with only text.
  */
 public data class CalendarDayMedia(
     val image: Attachment? = null,
@@ -114,7 +115,11 @@ internal fun CalendarDayCell(
                 AttachmentImage(
                     attachment = image,
                     sourceFor = thumbnailFor,
-                    contentDescription = "Photo on day $day",
+                    contentDescription = if (image.kind == AttachmentKind.VIDEO) {
+                        "Video on day $day"
+                    } else {
+                        "Photo on day $day"
+                    },
                     contentScale = ContentScale.Crop,
                     cacheKey = "calendar-tile",
                     modifier = Modifier.size(tileSize),

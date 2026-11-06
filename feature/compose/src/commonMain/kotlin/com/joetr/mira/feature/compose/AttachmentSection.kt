@@ -53,9 +53,11 @@ import com.joetr.mira.media.CaptureKind
 import com.joetr.mira.media.MediaSource
 import com.joetr.mira.media.VideoSurface
 import com.joetr.mira.media.createMediaPlayerController
+import com.joetr.mira.media.locationLabel
 import com.joetr.mira.ui.components.AttachmentPlaybackState
 import com.joetr.mira.ui.components.AudioAttachmentRow
 import com.joetr.mira.ui.components.CircleIconButton
+import com.joetr.mira.ui.components.MediaInfoButton
 import com.joetr.mira.ui.components.SectionLabel
 import com.joetr.mira.ui.components.VideoAttachmentTile
 import com.joetr.mira.ui.formatDuration
@@ -80,8 +82,10 @@ import kotlinx.coroutines.launch
 internal fun AttachmentSheet(
     attachments: List<Attachment>,
     sourceFor: suspend (Attachment) -> MediaSource?,
+    thumbnailFor: suspend (Attachment) -> MediaSource? = sourceFor,
     onRemove: (Attachment) -> Unit,
     onDismiss: () -> Unit,
+    capturedLabel: String? = null,
 ) {
     if (attachments.isEmpty()) return
 
@@ -212,6 +216,8 @@ internal fun AttachmentSheet(
                             } ${index + 1}",
                             state = stateFor(attachment),
                             sourceFor = sourceFor,
+                            thumbnailFor = thumbnailFor,
+                            capturedLabel = capturedLabel,
                             started = activeId == attachment.id && expandedId != attachment.id,
                             onPlayPause = { toggle(attachment) },
                             onSeek = { fraction -> seek(attachment, fraction) },
@@ -271,6 +277,8 @@ private fun AttachmentEntry(
     state: AttachmentPlaybackState,
     started: Boolean,
     sourceFor: suspend (Attachment) -> MediaSource?,
+    thumbnailFor: suspend (Attachment) -> MediaSource?,
+    capturedLabel: String?,
     onPlayPause: () -> Unit,
     onSeek: (Float) -> Unit,
     onRemove: () -> Unit,
@@ -278,6 +286,14 @@ private fun AttachmentEntry(
     surface: @Composable (Modifier) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val infoAction: @Composable () -> Unit = {
+        MediaInfoButton(
+            attachment = attachment,
+            capturedLabel = capturedLabel,
+            resolveLocation = { sourceFor(attachment)?.locationLabel() },
+        )
+    }
+
     when (attachment.kind) {
         AttachmentKind.AUDIO -> AudioAttachmentRow(
             attachment = attachment,
@@ -286,6 +302,7 @@ private fun AttachmentEntry(
             onPlayPause = onPlayPause,
             onSeek = onSeek,
             onRemove = onRemove,
+            infoAction = infoAction,
             modifier = modifier,
         )
 
@@ -293,6 +310,7 @@ private fun AttachmentEntry(
             attachment = attachment,
             label = label,
             onRemove = onRemove,
+            infoAction = infoAction,
             modifier = modifier,
         ) {
             VideoAttachmentTile(
@@ -303,6 +321,16 @@ private fun AttachmentEntry(
                 onSeek = onSeek,
                 onExpand = onExpand,
                 surface = surface,
+                poster = { posterModifier ->
+                    AttachmentImage(
+                        attachment = attachment,
+                        sourceFor = thumbnailFor,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        cacheKey = "video-poster",
+                        modifier = posterModifier,
+                    )
+                },
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -311,6 +339,7 @@ private fun AttachmentEntry(
             attachment = attachment,
             label = label,
             onRemove = onRemove,
+            infoAction = infoAction,
             modifier = modifier,
         ) {
             ImageAttachmentTile(
@@ -331,6 +360,7 @@ private fun MediaAttachment(
     attachment: Attachment,
     label: String,
     onRemove: () -> Unit,
+    infoAction: @Composable () -> Unit,
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
@@ -366,6 +396,7 @@ private fun MediaAttachment(
             if (!attachment.isUploaded) {
                 MiraIcon(MiraIcons.CloudPending, tint = colors.accent, size = 16.dp)
             }
+            infoAction()
             CircleIconButton(
                 icon = MiraIcons.Trash,
                 contentDescription = "Remove $label",

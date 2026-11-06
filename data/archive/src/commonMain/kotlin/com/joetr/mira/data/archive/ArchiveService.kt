@@ -7,6 +7,7 @@ import com.joetr.mira.db.MiraDatabase
 import com.joetr.mira.domain.Entry
 import com.joetr.mira.network.MiraFirebase
 import com.joetr.mira.network.RemoteArchiveConfig
+import com.joetr.mira.platform.currentTimeMillis
 import com.joetr.mira.platform.isNetworkAvailable
 import io.ktor.client.HttpClient
 import kotlinx.coroutines.CancellationException
@@ -50,6 +51,7 @@ public class ArchiveService(
     public val status: StateFlow<ArchiveStatus> = _status.asStateFlow()
 
     private var debounceJob: Job? = null
+    private var lastSharedConfigRefreshAt: Long = 0L
 
     public suspend fun load() {
         val token = read(KEY_TOKEN)
@@ -95,9 +97,16 @@ public class ArchiveService(
      * no [ArchiveStatus.connected]. A missing document means this account predates the shared
      * config (or connected while offline), so the local target is published instead of erased.
      */
+    /** Same as [refreshSharedConfig], but skips the Firestore read if one ran recently. */
+    public suspend fun refreshSharedConfigIfStale() {
+        if (currentTimeMillis() - lastSharedConfigRefreshAt < SHARED_CONFIG_MIN_INTERVAL_MS) return
+        refreshSharedConfig()
+    }
+
     public suspend fun refreshSharedConfig() {
         val firebase = firebase ?: return
         if (!isNetworkAvailable()) return
+        lastSharedConfigRefreshAt = currentTimeMillis()
         val session = try {
             firebase.currentSession()
         } catch (cancelled: CancellationException) {
@@ -377,5 +386,13 @@ public class ArchiveService(
 
         const val PUSH_DEBOUNCE_MS: Long = 5 * 60 * 1000
         const val MAX_PER_PUSH = 500
+
+        /**
+         * Shared config rarely changes, but [refreshSharedConfig] is wired to every Activity
+         * resume — including returning from the camera, a media picker, or a permission dialog —
+         * not just genuine app-foreground events. Without this gate, a session of testing media
+         * capture burns one Firestore read per round-trip.
+         */
+        const val SHARED_CONFIG_MIN_INTERVAL_MS: Long = 15 * 60 * 1000
     }
 }

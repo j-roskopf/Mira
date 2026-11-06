@@ -154,7 +154,8 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
             .mapValues { (_, entries) ->
                 val attachments = entries.flatMap { it.attachments }
                 CalendarDayMedia(
-                    image = attachments.firstOrNull { it.kind == AttachmentKind.IMAGE },
+                    image = attachments.firstOrNull { it.kind == AttachmentKind.IMAGE }
+                        ?: attachments.firstOrNull { it.kind == AttachmentKind.VIDEO },
                     hasVideo = attachments.any { it.kind == AttachmentKind.VIDEO },
                     hasAudio = attachments.any { it.kind == AttachmentKind.AUDIO },
                 )
@@ -303,7 +304,7 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
                     loading = loading,
                     error = error,
                     onRetry = { retry++ },
-                    thumbnailFor = graph.media::sourceFor,
+                    thumbnailFor = graph.media::thumbnailSourceFor,
                     onDismiss = {
                         navDirection = NavDirection.Backward
                         if (backStack.size > 1) backStack.removeAt(backStack.lastIndex)
@@ -376,7 +377,7 @@ private fun Screen(
             showComposeButton = showComposeButton,
             dayMedia = dayMedia,
             dayEntries = dayEntries,
-            thumbnailFor = graph.media::sourceFor,
+            thumbnailFor = graph.media::thumbnailSourceFor,
             onEntryClick = { entry ->
                 onNavigate(ComposeKey(entryId = entry.id, date = entry.localDate.value))
             },
@@ -509,6 +510,7 @@ private fun Screen(
                     tags = tags.filterNot { it.equals(tag, ignoreCase = true) }
                 },
                 sourceFor = { graph.media.sourceFor(it) },
+                thumbnailFor = { graph.media.thumbnailSourceFor(it) },
                 onRemoveAttachment = { attachment ->
                     attachments = attachments.filterNot { it.id == attachment.id }
                 },
@@ -618,7 +620,7 @@ private fun Screen(
             MediaScreen(
                 entries = mediaEntries,
                 loading = mediaLoading,
-                thumbnailFor = graph.media::sourceFor,
+                thumbnailFor = graph.media::thumbnailSourceFor,
                 onEntryClick = {
                     onNavigate(
                         ComposeKey(

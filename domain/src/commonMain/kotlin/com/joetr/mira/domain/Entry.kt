@@ -109,6 +109,9 @@ public data class Attachment(
     val bytes: Long = 0,
     val durationMs: Long = 0,
     val posterPath: String? = null,
+    val posterUrl: String? = null,
+    val thumbnailPath: String? = null,
+    val thumbnailUrl: String? = null,
     val caption: String = "",
     val state: AttachmentState = AttachmentState.LOCAL,
 ) {

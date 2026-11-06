@@ -138,6 +138,7 @@ public fun ComposeEntryScreen(
     recorder: MediaRecorderController,
     attachments: List<Attachment>,
     sourceFor: suspend (Attachment) -> MediaSource?,
+    thumbnailFor: suspend (Attachment) -> MediaSource? = sourceFor,
     onRemoveAttachment: (Attachment) -> Unit,
     onBodyChange: (String) -> Unit,
     onDateClick: () -> Unit,
@@ -440,8 +441,10 @@ public fun ComposeEntryScreen(
             AttachmentSheet(
                 attachments = attachments,
                 sourceFor = sourceFor,
+                thumbnailFor = thumbnailFor,
                 onRemove = onRemoveAttachment,
                 onDismiss = { showAttachments = false },
+                capturedLabel = date.displayDate(),
             )
         }
 

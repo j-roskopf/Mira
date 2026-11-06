@@ -229,6 +229,23 @@ private fun MediaPreviewTile(
                 }
             }
             AttachmentKind.VIDEO -> {
+                var hasPoster by remember(attachment.id) { mutableStateOf(false) }
+                AttachmentImage(
+                    attachment = attachment,
+                    sourceFor = thumbnailFor,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    cacheKey = "day-video-poster",
+                    modifier = Modifier.matchParentSize(),
+                    onState = { hasPoster = it == AttachmentImageState.Success },
+                )
+                if (hasPoster) {
+                    Box(
+                        Modifier
+                            .matchParentSize()
+                            .background(Color.Black.copy(alpha = 0.22f)),
+                    )
+                }
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center,
