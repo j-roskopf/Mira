@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -71,6 +72,7 @@ public fun AudioAttachmentRow(
     modifier: Modifier = Modifier,
     label: String = "Voice note",
     onRemove: (() -> Unit)? = null,
+    infoAction: (@Composable () -> Unit)? = null,
 ) {
     val colors = MiraTheme.colors
     val duration = state.durationMs.takeIf { it > 0 } ?: attachment.durationMs
@@ -128,6 +130,7 @@ public fun AudioAttachmentRow(
                 Scrubber(progress = state.progress, onSeek = onSeek)
             }
 
+            infoAction?.invoke()
             onRemove?.let { remove ->
                 CircleIconButton(
                     icon = MiraIcons.Trash,
@@ -159,6 +162,7 @@ public fun VideoAttachmentTile(
     started: Boolean = false,
     onExpand: (() -> Unit)? = null,
     surface: @Composable (Modifier) -> Unit = {},
+    poster: (@Composable (Modifier) -> Unit)? = null,
 ) {
     val colors = MiraTheme.colors
     val duration = state.durationMs.takeIf { it > 0 } ?: attachment.durationMs
@@ -175,6 +179,20 @@ public fun VideoAttachmentTile(
         ) {
             if (started) {
                 surface(Modifier.fillMaxWidth().fillMaxHeight())
+            } else {
+                poster?.invoke(Modifier.fillMaxSize())
+                poster?.let {
+                    Box(
+                        Modifier
+                            .fillMaxSize()
+                            .background(
+                                androidx.compose.ui.graphics.Brush.verticalGradient(
+                                    0f to Color.Transparent,
+                                    1f to Color.Black.copy(alpha = 0.28f),
+                                ),
+                            ),
+                    )
+                }
             }
             if (state.preparing) {
                 Row(

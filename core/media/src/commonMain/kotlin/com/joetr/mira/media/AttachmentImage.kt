@@ -52,6 +52,10 @@ public fun AttachmentImage(
         attachment.state,
         attachment.url,
         attachment.storagePath,
+        attachment.posterPath,
+        attachment.posterUrl,
+        attachment.thumbnailPath,
+        attachment.thumbnailUrl,
     ) {
         value = ResolvedSource.Resolving
         val source = try {

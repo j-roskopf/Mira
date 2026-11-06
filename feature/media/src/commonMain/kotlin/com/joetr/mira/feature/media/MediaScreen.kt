@@ -43,7 +43,9 @@ import com.joetr.mira.domain.MonthKey
 import com.joetr.mira.media.AttachmentImage
 import com.joetr.mira.media.AttachmentImageState
 import com.joetr.mira.media.MediaSource
+import com.joetr.mira.media.locationLabel
 import com.joetr.mira.ui.components.EmptyState
+import com.joetr.mira.ui.components.MediaInfoButton
 import com.joetr.mira.ui.components.SectionLabel
 import com.joetr.mira.ui.displayDate
 import com.joetr.mira.ui.displayName
@@ -280,6 +282,7 @@ private fun DayMosaic(
             AudioPiece(
                 piece = piece,
                 modifier = Modifier.fillMaxWidth(),
+                thumbnailFor = thumbnailFor,
                 onEntryClick = onEntryClick,
             )
             index++
@@ -335,7 +338,7 @@ private fun VisualPiece(
             .background(colors.surfaceRaised)
             .clickable { onEntryClick(piece.entry) },
     ) {
-        if (attachment.kind == AttachmentKind.IMAGE) {
+        if (attachment.kind != AttachmentKind.AUDIO) {
             AttachmentImage(
                 attachment = attachment,
                 sourceFor = thumbnailFor,
@@ -388,6 +391,17 @@ private fun VisualPiece(
             }
         }
 
+        MediaInfoButton(
+            attachment = attachment,
+            capturedLabel = "${piece.entry.localDate.displayDate()} · ${
+                formatTimestamp(piece.entry.createdAt)
+            }",
+            resolveLocation = { thumbnailFor(attachment)?.locationLabel() },
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(MiraSpacing.xs),
+        )
+
         Row(
             modifier = Modifier
                 .align(Alignment.BottomStart)
@@ -430,6 +444,7 @@ private fun VisualPiece(
 private fun AudioPiece(
     piece: MediaPiece,
     modifier: Modifier,
+    thumbnailFor: suspend (Attachment) -> MediaSource?,
     onEntryClick: (Entry) -> Unit,
 ) {
     val colors = MiraTheme.colors
@@ -476,6 +491,14 @@ private fun AudioPiece(
             Spacer(Modifier.width(MiraSpacing.sm))
             MiraIcon(MiraIcons.CloudPending, tint = colors.accent, size = 14.dp)
         }
+        MediaInfoButton(
+            attachment = attachment,
+            capturedLabel = "${piece.entry.localDate.displayDate()} · ${
+                formatTimestamp(piece.entry.createdAt)
+            }",
+            resolveLocation = { thumbnailFor(attachment)?.locationLabel() },
+            modifier = Modifier.padding(start = MiraSpacing.xs),
+        )
     }
 }
 

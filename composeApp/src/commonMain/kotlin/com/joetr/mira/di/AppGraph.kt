@@ -129,7 +129,7 @@ public class AppGraph(
         AppLifecycleObserver.onForeground = {
             scope.launch {
                 syncService.syncIfStale()
-                archive.refreshSharedConfig()
+                archive.refreshSharedConfigIfStale()
             }
         }
     }

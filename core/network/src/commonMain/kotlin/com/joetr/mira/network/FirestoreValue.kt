@@ -37,6 +37,9 @@ internal fun RemoteEntryRow.toFirestoreFields(): JsonObject = buildJsonObject {
                                     put("bytes", integerValue(attachment.bytes))
                                     put("durationMs", integerValue(attachment.durationMs))
                                     put("posterPath", nullableString(attachment.posterPath))
+                                    put("posterUrl", nullableString(attachment.posterUrl))
+                                    put("thumbnailPath", nullableString(attachment.thumbnailPath))
+                                    put("thumbnailUrl", nullableString(attachment.thumbnailUrl))
                                     put("caption", stringValue(attachment.caption))
                                 },
                             )
@@ -79,6 +82,9 @@ private fun JsonObject.attachmentsField(name: String): List<RemoteAttachment> {
             bytes = fields.longField("bytes") ?: 0L,
             durationMs = fields.longField("durationMs") ?: 0L,
             posterPath = fields.stringField("posterPath"),
+            posterUrl = fields.stringField("posterUrl"),
+            thumbnailPath = fields.stringField("thumbnailPath"),
+            thumbnailUrl = fields.stringField("thumbnailUrl"),
             caption = fields.stringField("caption").orEmpty(),
         )
     }

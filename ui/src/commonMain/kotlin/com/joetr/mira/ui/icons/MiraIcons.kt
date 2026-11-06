@@ -136,6 +136,26 @@ public object MiraIcons {
         }
     }
 
+    public val Info: MiraIconPainter = MiraIconPainter { scope, tint, stroke ->
+        with(scope) {
+            val c = Offset(size.width / 2, size.height / 2)
+            val r = size.minDimension * 0.34f
+            drawCircle(tint, radius = r, center = c, style = stroke)
+            drawCircle(
+                tint,
+                radius = size.minDimension * 0.045f,
+                center = Offset(c.x, c.y - r * 0.42f),
+            )
+            drawLine(
+                tint,
+                Offset(c.x, c.y - r * 0.08f),
+                Offset(c.x, c.y + r * 0.44f),
+                stroke.width,
+                StrokeCap.Round,
+            )
+        }
+    }
+
     public val Tag: MiraIconPainter = MiraIconPainter { scope, tint, stroke ->
         with(scope) {
             val path = Path().apply {

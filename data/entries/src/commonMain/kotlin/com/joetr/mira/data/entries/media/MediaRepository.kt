@@ -9,16 +9,20 @@ import com.joetr.mira.domain.Attachment
 import com.joetr.mira.domain.AttachmentKind
 import com.joetr.mira.domain.AttachmentState
 import com.joetr.mira.media.MediaSource
+import com.joetr.mira.media.extractVideoPoster
 import com.joetr.mira.media.isHevcVideo
 import com.joetr.mira.media.normalizeVideo
 import com.joetr.mira.media.supportsVideoNormalization
 import com.joetr.mira.network.MiraFirebase
+import com.joetr.mira.network.StorageUpload
 import com.joetr.mira.platform.currentTimeMillis
 import com.joetr.mira.platform.detectImageMimeType
 import com.joetr.mira.platform.isJpegImage
 import com.joetr.mira.platform.resizeImage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /** How much local media a platform keeps once it is safely in Storage. */
@@ -51,6 +55,15 @@ public class MediaRepository(
     private val policy: RetentionPolicy,
 ) {
     private val queries get() = database.entriesQueries
+
+    /**
+     * Posters extracted this session, keyed by attachment id.
+     *
+     * Extracting a frame is cheap but not free, and a gallery can ask for the same poster several
+     * times while scrolling. Coil caches the decoded bitmap; this avoids re-decoding the video.
+     */
+    private val posterCache = mutableMapOf<String, ByteArray>()
+    private val posterCacheMutex = Mutex()
 
     /** Records freshly captured bytes against an entry, before any upload is attempted. */
     public suspend fun stage(
@@ -125,6 +138,36 @@ public class MediaRepository(
                     null
                 } ?: continue
 
+                // A poster or thumbnail is optional: failing to generate or upload one must not
+                // cost the recording its place in the cloud.
+                val poster = try {
+                    ensurePosterUploaded(
+                        idToken = session.idToken,
+                        ownerId = ownerId,
+                        entry = entry,
+                        attachment = attachment,
+                        localPath = blob.path,
+                        localBytes = bytes,
+                    )
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    null
+                }
+                val thumbnail = try {
+                    ensureThumbnailUploaded(
+                        idToken = session.idToken,
+                        ownerId = ownerId,
+                        entry = entry,
+                        attachment = attachment,
+                        localBytes = bytes,
+                    )
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    null
+                }
+
                 val updated = entry.copy(
                     attachments = entry.attachments.map {
                         if (it.id != attachment.id) {
@@ -134,6 +177,10 @@ public class MediaRepository(
                                 storagePath = result.storagePath,
                                 url = result.downloadUrl,
                                 mime = payload.mime,
+                                posterPath = poster?.storagePath ?: it.posterPath,
+                                posterUrl = poster?.downloadUrl ?: it.posterUrl,
+                                thumbnailPath = thumbnail?.storagePath ?: it.thumbnailPath,
+                                thumbnailUrl = thumbnail?.downloadUrl ?: it.thumbnailUrl,
                                 state = AttachmentState.UPLOADED,
                             )
                         }
@@ -148,6 +195,26 @@ public class MediaRepository(
                 false
             }
             if (didUpload) uploaded++
+        }
+
+        // Videos uploaded before posters existed (and any whose poster upload failed while the
+        // video itself succeeded) get one more chance while their local copy is still around.
+        if (includeVideo) {
+            try {
+                backfillPosters(session.idToken, ownerId)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // Retried on the next run; the throttle below keeps it from being every run.
+            }
+        }
+        // Photos aren't gated behind includeVideo, so neither is their thumbnail backfill.
+        try {
+            backfillThumbnails(session.idToken, ownerId)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // Retried on the next run; the throttle below keeps it from being every run.
         }
 
         // Eviction is housekeeping; never let it fail an otherwise successful upload run.
@@ -194,6 +261,239 @@ public class MediaRepository(
         // No local copy and no usable URL: fetch it so playback can still happen.
         val bytes = bytesFor(attachment) ?: return null
         return MediaSource.Bytes(bytes, attachment.mime)
+    }
+
+    /**
+     * Where a thumbnail should read this attachment from.
+     *
+     * A video has no thumbnail itself, so this returns its cover frame: extracted from the local
+     * copy when there is one, otherwise the small poster uploaded alongside the video. An image's
+     * local copy is already on-device at no network cost, so that is still used directly; once it
+     * is evicted or lives on another device, this prefers the small uploaded thumbnail over the
+     * full-resolution original — a 60dp tile has no reason to pull a multi-megabyte 4096px photo
+     * over the network.
+     */
+    public suspend fun thumbnailSourceFor(attachment: Attachment): MediaSource? =
+        when (attachment.kind) {
+            AttachmentKind.VIDEO -> posterSourceFor(attachment)
+            AttachmentKind.IMAGE -> imageThumbnailSourceFor(attachment)
+            AttachmentKind.AUDIO -> sourceFor(attachment)
+        }
+
+    private suspend fun imageThumbnailSourceFor(attachment: Attachment): MediaSource? {
+        val blob = io { queries.selectBlob(attachment.id).awaitAsOneOrNull() }
+        if (blob != null) {
+            io { queries.touchBlob(currentTimeMillis(), attachment.id) }
+            blob.path?.let { path ->
+                if (localFileExists(path)) return MediaSource.LocalFile(path)
+            }
+            blob.data_?.let { bytes -> return MediaSource.Bytes(bytes, attachment.mime) }
+        }
+        attachment.thumbnailUrl?.let { return MediaSource.Remote(it) }
+        attachment.url?.let { return MediaSource.Remote(it) }
+        val bytes = bytesFor(attachment) ?: return null
+        return MediaSource.Bytes(bytes, attachment.mime)
+    }
+
+    private suspend fun posterSourceFor(attachment: Attachment): MediaSource? {
+        posterCacheGet(attachment.id)?.let { return MediaSource.Bytes(it, "image/jpeg") }
+
+        val blob = io { queries.selectBlob(attachment.id).awaitAsOneOrNull() }
+        if (blob != null) {
+            io { queries.touchBlob(currentTimeMillis(), attachment.id) }
+            val path = blob.path?.takeIf { localFileExists(it) }
+            if (path != null || blob.data_ != null) {
+                val poster = runCatching {
+                    extractVideoPoster(
+                        path = path,
+                        bytes = if (path == null) blob.data_ else null,
+                        mime = attachment.mime,
+                    )
+                }.getOrNull()
+                if (poster != null) {
+                    posterCachePut(attachment.id, poster)
+                    return MediaSource.Bytes(poster, "image/jpeg")
+                }
+            }
+        }
+
+        // A poster is tiny and Coil disk-caches it, so this is the cheap path for a video whose
+        // bytes were evicted or that was captured on another device.
+        attachment.posterUrl?.let { return MediaSource.Remote(it) }
+        val posterPath = attachment.posterPath ?: return null
+        val session = firebase.sessionForSync() ?: return null
+        val downloaded = runCatching {
+            firebase.storage.download(session.idToken, posterPath)
+        }.getOrNull() ?: return null
+        posterCachePut(attachment.id, downloaded)
+        return MediaSource.Bytes(downloaded, "image/jpeg")
+    }
+
+    private suspend fun posterCacheGet(attachmentId: String): ByteArray? =
+        posterCacheMutex.withLock { posterCache[attachmentId] }
+
+    private suspend fun posterCachePut(attachmentId: String, bytes: ByteArray) {
+        posterCacheMutex.withLock { posterCache[attachmentId] = bytes }
+    }
+
+    /**
+     * Generates and uploads a cover frame for [attachment] when it does not have one yet.
+     *
+     * Returns null when the platform cannot extract a frame or the upload fails; callers treat a
+     * missing poster as cosmetic, never as a failed attachment.
+     */
+    private suspend fun ensurePosterUploaded(
+        idToken: String,
+        ownerId: String,
+        entry: com.joetr.mira.domain.Entry,
+        attachment: Attachment,
+        localPath: String?,
+        localBytes: ByteArray?,
+    ): StorageUpload? {
+        if (attachment.kind != AttachmentKind.VIDEO) return null
+        if (attachment.posterPath != null && attachment.posterUrl != null) return null
+
+        val poster = posterCacheGet(attachment.id) ?: run {
+            val path = localPath?.takeIf { localFileExists(it) }
+            val extracted = runCatching {
+                extractVideoPoster(
+                    path = path,
+                    bytes = if (path == null) localBytes else null,
+                    mime = attachment.mime,
+                )
+            }.getOrNull() ?: return null
+            posterCachePut(attachment.id, extracted)
+            extracted
+        }
+        val objectName = firebase.storage.mediaPath(
+            ownerId = ownerId,
+            entryId = entry.id,
+            attachmentId = attachment.id,
+            extension = "jpg",
+        )
+        return firebase.storage.upload(idToken, objectName, poster, "image/jpeg")
+    }
+
+    /**
+     * Generates and uploads a small preview JPEG for [attachment] when it does not have one yet.
+     *
+     * Returns null when resizing or the upload fails; callers treat a missing thumbnail as
+     * cosmetic, never as a failed attachment — [thumbnailSourceFor] falls back to the full image.
+     */
+    private suspend fun ensureThumbnailUploaded(
+        idToken: String,
+        ownerId: String,
+        entry: com.joetr.mira.domain.Entry,
+        attachment: Attachment,
+        localBytes: ByteArray,
+    ): StorageUpload? {
+        if (attachment.kind != AttachmentKind.IMAGE) return null
+        if (attachment.thumbnailPath != null && attachment.thumbnailUrl != null) return null
+
+        val thumbnail = runCatching {
+            resizeImage(localBytes, PHOTO_THUMBNAIL_MAX_LONG_EDGE, PHOTO_THUMBNAIL_JPEG_QUALITY)
+        }.getOrNull() ?: return null
+        val objectName = firebase.storage.mediaPath(
+            ownerId = ownerId,
+            entryId = entry.id,
+            attachmentId = "${attachment.id}_thumb",
+            extension = "jpg",
+        )
+        return firebase.storage.upload(idToken, objectName, thumbnail, "image/jpeg")
+    }
+
+    /**
+     * Uploads thumbnails for photos that were captured before thumbnails existed.
+     *
+     * Only local copies can be used — downloading the full original back just to shrink it is the
+     * expense this feature exists to avoid. Throttled so a missing local copy is not retried on
+     * every sync.
+     */
+    private suspend fun backfillThumbnails(idToken: String, ownerId: String) {
+        val now = currentTimeMillis()
+        val key = "$THUMBNAIL_BACKFILL_KEY:$ownerId"
+        val lastAttempt = io { queries.getSetting(key).awaitAsOneOrNull() }?.toLongOrNull() ?: 0L
+        if (now - lastAttempt < THUMBNAIL_BACKFILL_INTERVAL_MS) return
+        io { queries.putSetting(key, now.toString()) }
+
+        for (entry in entries.entriesForOwner(ownerId)) {
+            var changed = false
+            val attachments = entry.attachments.map { attachment ->
+                if (attachment.kind != AttachmentKind.IMAGE) return@map attachment
+                if (attachment.thumbnailPath != null && attachment.thumbnailUrl != null) {
+                    return@map attachment
+                }
+
+                val blob = io { queries.selectBlob(attachment.id).awaitAsOneOrNull() }
+                    ?: return@map attachment
+                val bytes = blob.data_ ?: blob.path?.takeIf { localFileExists(it) }?.let {
+                    readLocalFile(it)
+                } ?: return@map attachment
+
+                val thumbnail = runCatching {
+                    ensureThumbnailUploaded(
+                        idToken = idToken,
+                        ownerId = ownerId,
+                        entry = entry,
+                        attachment = attachment,
+                        localBytes = bytes,
+                    )
+                }.getOrNull() ?: return@map attachment
+
+                changed = true
+                attachment.copy(
+                    thumbnailPath = thumbnail.storagePath,
+                    thumbnailUrl = thumbnail.downloadUrl,
+                )
+            }
+            if (changed) entries.save(entry.copy(attachments = attachments))
+        }
+    }
+
+    /**
+     * Uploads poster frames for videos that were captured before posters existed.
+     *
+     * Only local copies can be used — downloading the video back to extract one frame is the
+     * expense this feature exists to avoid. Throttled so an undecodable file is not retried on
+     * every sync.
+     */
+    private suspend fun backfillPosters(idToken: String, ownerId: String) {
+        val now = currentTimeMillis()
+        val key = "$POSTER_BACKFILL_KEY:$ownerId"
+        val lastAttempt = io { queries.getSetting(key).awaitAsOneOrNull() }?.toLongOrNull() ?: 0L
+        if (now - lastAttempt < POSTER_BACKFILL_INTERVAL_MS) return
+        io { queries.putSetting(key, now.toString()) }
+
+        for (entry in entries.entriesForOwner(ownerId)) {
+            var changed = false
+            val attachments = entry.attachments.map { attachment ->
+                if (attachment.kind != AttachmentKind.VIDEO) return@map attachment
+                if (attachment.posterPath != null && attachment.posterUrl != null) return@map attachment
+
+                val blob = io { queries.selectBlob(attachment.id).awaitAsOneOrNull() }
+                    ?: return@map attachment
+                val path = blob.path?.takeIf { localFileExists(it) }
+                if (path == null && blob.data_ == null) return@map attachment
+
+                val poster = runCatching {
+                    ensurePosterUploaded(
+                        idToken = idToken,
+                        ownerId = ownerId,
+                        entry = entry,
+                        attachment = attachment,
+                        localPath = path,
+                        localBytes = blob.data_,
+                    )
+                }.getOrNull() ?: return@map attachment
+
+                changed = true
+                attachment.copy(
+                    posterPath = poster.storagePath,
+                    posterUrl = poster.downloadUrl,
+                )
+            }
+            if (changed) entries.save(entry.copy(attachments = attachments))
+        }
     }
 
     /** Bytes for playback: local if cached, otherwise streamed from Storage. */
@@ -294,6 +594,9 @@ public class MediaRepository(
                 attachment.posterPath?.let { poster ->
                     runCatching { firebase.storage.deleteObject(session.idToken, poster) }
                 }
+                attachment.thumbnailPath?.let { thumbnail ->
+                    runCatching { firebase.storage.deleteObject(session.idToken, thumbnail) }
+                }
             }
         }
         for (attachment in attachments) {
@@ -319,7 +622,7 @@ public class MediaRepository(
             queries.selectAllEntries(ownerId).awaitAsList()
         }.flatMap { row ->
             com.joetr.mira.data.entries.decodeAttachments(row.attachments)
-        }.flatMap { listOfNotNull(it.storagePath, it.posterPath) }.toSet()
+        }.flatMap { listOfNotNull(it.storagePath, it.posterPath, it.thumbnailPath) }.toSet()
 
         return remote.filterNot { it in referenced }
     }
@@ -437,6 +740,12 @@ private val JPEG_SAFE_IMAGE_MIMES: Set<String> = setOf("image/jpeg", "image/png"
 private const val PHOTO_MAX_LONG_EDGE: Int = 4096
 private const val PHOTO_JPEG_QUALITY: Int = 90
 private const val NON_PORTABLE_VIDEO_REPAIR_KEY: String = "non_portable_video_repair_done"
+private const val POSTER_BACKFILL_KEY: String = "video_poster_backfill_at"
+private const val POSTER_BACKFILL_INTERVAL_MS: Long = 24 * 60 * 60 * 1000L
+private const val PHOTO_THUMBNAIL_MAX_LONG_EDGE: Int = 640
+private const val PHOTO_THUMBNAIL_JPEG_QUALITY: Int = 80
+private const val THUMBNAIL_BACKFILL_KEY: String = "photo_thumbnail_backfill_at"
+private const val THUMBNAIL_BACKFILL_INTERVAL_MS: Long = 24 * 60 * 60 * 1000L
 
 /** Reads a captured file from disk. Web has no filesystem, so it stores bytes inline instead. */
 internal expect suspend fun readLocalFile(path: String): ByteArray?

@@ -25,6 +25,13 @@ public sealed interface MediaSource {
     }
 }
 
+/** A user-facing description of where an attachment's bytes are being read from. */
+public fun MediaSource.locationLabel(): String = when (this) {
+    is MediaSource.LocalFile -> "Local file"
+    is MediaSource.Remote -> "Remote"
+    is MediaSource.Bytes -> "In memory"
+}
+
 public data class PlaybackState(
     val playing: Boolean = false,
     val preparing: Boolean = false,

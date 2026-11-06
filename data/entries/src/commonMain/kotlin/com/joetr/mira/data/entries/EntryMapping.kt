@@ -64,6 +64,9 @@ internal fun Attachment.toRemote(): RemoteAttachment = RemoteAttachment(
     bytes = bytes,
     durationMs = durationMs,
     posterPath = posterPath,
+    posterUrl = posterUrl,
+    thumbnailPath = thumbnailPath,
+    thumbnailUrl = thumbnailUrl,
     caption = caption,
 )
 
@@ -80,6 +83,9 @@ internal fun RemoteAttachment.toAttachment(): Attachment = Attachment(
     bytes = bytes,
     durationMs = durationMs,
     posterPath = posterPath,
+    posterUrl = posterUrl,
+    thumbnailPath = thumbnailPath,
+    thumbnailUrl = thumbnailUrl,
     caption = caption,
     state = AttachmentState.UPLOADED,
 )

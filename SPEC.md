@@ -131,6 +131,9 @@ a date field defaulting to today.
   "bytes": 1048576,
   "durationMs": 94000,
   "posterPath": "users/<uid>/media/<entryId>/<attachmentId>.jpg",
+  "posterUrl": "https://firebasestorage.../...?alt=media&token=...",
+  "thumbnailPath": "users/<uid>/media/<entryId>/<attachmentId>_thumb.jpg",
+  "thumbnailUrl": "https://firebasestorage.../...?alt=media&token=...",
   "caption": "",
   "state": "local" | "uploading" | "uploaded"
 }
