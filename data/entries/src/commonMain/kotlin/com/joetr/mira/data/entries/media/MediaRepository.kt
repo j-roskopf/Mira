@@ -11,6 +11,7 @@ import com.joetr.mira.domain.AttachmentState
 import com.joetr.mira.media.MediaSource
 import com.joetr.mira.media.extractVideoPoster
 import com.joetr.mira.media.isHevcVideo
+import com.joetr.mira.media.needsVideoPosterRotationRepair
 import com.joetr.mira.media.normalizeVideo
 import com.joetr.mira.media.supportsVideoNormalization
 import com.joetr.mira.network.MiraFirebase
@@ -207,6 +208,15 @@ public class MediaRepository(
             } catch (_: Exception) {
                 // Retried on the next run; the throttle below keeps it from being every run.
             }
+            if (needsVideoPosterRotationRepair) {
+                try {
+                    repairMisrotatedPosters(session.idToken, ownerId)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    // Retried on the next run.
+                }
+            }
         }
         // Photos aren't gated behind includeVideo, so neither is their thumbnail backfill.
         try {
@@ -349,11 +359,14 @@ public class MediaRepository(
         attachment: Attachment,
         localPath: String?,
         localBytes: ByteArray?,
+        force: Boolean = false,
     ): StorageUpload? {
         if (attachment.kind != AttachmentKind.VIDEO) return null
-        if (attachment.posterPath != null && attachment.posterUrl != null) return null
+        if (!force && attachment.posterPath != null && attachment.posterUrl != null) return null
 
-        val poster = posterCacheGet(attachment.id) ?: run {
+        // A forced repair must not reuse the cache: it may hold the previous, misrotated poster.
+        val cached = if (force) null else posterCacheGet(attachment.id)
+        val poster = cached ?: run {
             val path = localPath?.takeIf { localFileExists(it) }
             val extracted = runCatching {
                 extractVideoPoster(
@@ -494,6 +507,51 @@ public class MediaRepository(
             }
             if (changed) entries.save(entry.copy(attachments = attachments))
         }
+    }
+
+    /**
+     * Rebuilds posters that a pre-fix Android build extracted with the wrong orientation.
+     *
+     * `MediaMetadataRetriever` already applies the video's rotation, and the old extractor rotated
+     * the frame a second time, so portrait recordings ended up as landscape covers. This runs once
+     * per install, only for videos whose local copy is still around; a missing local copy is left
+     * to the normal poster backfill on a device that still has the file.
+     */
+    private suspend fun repairMisrotatedPosters(idToken: String, ownerId: String) {
+        val done = io { queries.getSetting(POSTER_ROTATION_REPAIR_KEY).awaitAsOneOrNull() }
+        if (done == "1") return
+
+        for (entry in entries.entriesForOwner(ownerId)) {
+            var changed = false
+            val attachments = entry.attachments.map { attachment ->
+                if (attachment.kind != AttachmentKind.VIDEO) return@map attachment
+
+                val blob = io { queries.selectBlob(attachment.id).awaitAsOneOrNull() }
+                    ?: return@map attachment
+                val path = blob.path?.takeIf { localFileExists(it) }
+                if (path == null && blob.data_ == null) return@map attachment
+
+                val poster = runCatching {
+                    ensurePosterUploaded(
+                        idToken = idToken,
+                        ownerId = ownerId,
+                        entry = entry,
+                        attachment = attachment,
+                        localPath = path,
+                        localBytes = blob.data_,
+                        force = true,
+                    )
+                }.getOrNull() ?: return@map attachment
+
+                changed = true
+                attachment.copy(
+                    posterPath = poster.storagePath,
+                    posterUrl = poster.downloadUrl,
+                )
+            }
+            if (changed) entries.save(entry.copy(attachments = attachments))
+        }
+        io { queries.putSetting(POSTER_ROTATION_REPAIR_KEY, "1") }
     }
 
     /** Bytes for playback: local if cached, otherwise streamed from Storage. */
@@ -740,6 +798,7 @@ private val JPEG_SAFE_IMAGE_MIMES: Set<String> = setOf("image/jpeg", "image/png"
 private const val PHOTO_MAX_LONG_EDGE: Int = 4096
 private const val PHOTO_JPEG_QUALITY: Int = 90
 private const val NON_PORTABLE_VIDEO_REPAIR_KEY: String = "non_portable_video_repair_done"
+private const val POSTER_ROTATION_REPAIR_KEY: String = "video_poster_rotation_repair_done"
 private const val POSTER_BACKFILL_KEY: String = "video_poster_backfill_at"
 private const val POSTER_BACKFILL_INTERVAL_MS: Long = 24 * 60 * 60 * 1000L
 private const val PHOTO_THUMBNAIL_MAX_LONG_EDGE: Int = 640

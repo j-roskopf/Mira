@@ -72,3 +72,5 @@ private fun ByteArray.toPosterNSData(): NSData = memScoped {
 
 @OptIn(ExperimentalTime::class)
 private fun nowMillisForPoster(): Long = Clock.System.now().toEpochMilliseconds()
+
+public actual val needsVideoPosterRotationRepair: Boolean = false
