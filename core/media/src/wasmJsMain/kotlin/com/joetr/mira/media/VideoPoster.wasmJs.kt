@@ -73,3 +73,5 @@ private fun ArrayBuffer.toPosterByteArray(): ByteArray {
     val view = Int8Array(this)
     return ByteArray(view.length) { index -> view[index] }
 }
+
+public actual val needsVideoPosterRotationRepair: Boolean = false

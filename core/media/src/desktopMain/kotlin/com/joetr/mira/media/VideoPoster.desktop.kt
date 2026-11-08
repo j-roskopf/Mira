@@ -55,3 +55,5 @@ public actual suspend fun extractVideoPoster(
         directory.deleteRecursively()
     }
 }
+
+public actual val needsVideoPosterRotationRepair: Boolean = false
