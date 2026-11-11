@@ -421,12 +421,14 @@ private fun VisualPiece(
                     tint = foregroundMuted,
                     size = 14.dp,
                 )
-                Spacer(Modifier.width(MiraSpacing.xxs))
-                Text(
-                    text = formatDuration(attachment.durationMs),
-                    style = MiraTheme.type.meta,
-                    color = foreground,
-                )
+                if (attachment.durationMs > 0) {
+                    Spacer(Modifier.width(MiraSpacing.xxs))
+                    Text(
+                        text = formatDuration(attachment.durationMs),
+                        style = MiraTheme.type.meta,
+                        color = foreground,
+                    )
+                }
             }
             if (!attachment.isUploaded) {
                 Spacer(Modifier.width(MiraSpacing.xs))

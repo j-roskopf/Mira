@@ -60,6 +60,7 @@ import com.joetr.mira.ui.components.CircleIconButton
 import com.joetr.mira.ui.components.MediaInfoButton
 import com.joetr.mira.ui.components.SectionLabel
 import com.joetr.mira.ui.components.VideoAttachmentTile
+import com.joetr.mira.ui.components.VideoTransportControls
 import com.joetr.mira.ui.formatDuration
 import com.joetr.mira.ui.icons.MiraIcon
 import com.joetr.mira.ui.icons.MiraIcons
@@ -255,6 +256,7 @@ internal fun AttachmentSheet(
             state = state,
             onDismiss = { expandedId = null },
             onPlayPause = { toggle(expandedVideo) },
+            onSeek = { fraction -> seek(expandedVideo, fraction) },
             surface = { surfaceModifier -> VideoSurface(controller, surfaceModifier) },
         )
     }
@@ -386,7 +388,9 @@ private fun MediaAttachment(
                 color = colors.ink,
                 modifier = Modifier.weight(1f),
             )
-            if (attachment.kind == AttachmentKind.VIDEO) {
+            // A duration of 0 means "not known" (older picks, or a file whose header has no
+            // duration). Showing "0:00" there reads as a zero-length clip, so say nothing.
+            if (attachment.kind == AttachmentKind.VIDEO && attachment.durationMs > 0) {
                 Text(
                     text = formatDuration(attachment.durationMs),
                     style = MiraTheme.type.meta,
@@ -514,9 +518,11 @@ private fun FullScreenVideo(
     state: AttachmentPlaybackState,
     onDismiss: () -> Unit,
     onPlayPause: () -> Unit,
+    onSeek: (Float) -> Unit,
     surface: @Composable (Modifier) -> Unit,
 ) {
     val colors = MiraTheme.colors
+    val duration = state.durationMs.takeIf { it > 0 } ?: attachment.durationMs
     val ratio = if (state.videoWidth > 0 && state.videoHeight > 0) {
         state.videoWidth.toFloat() / state.videoHeight
     } else {
@@ -542,16 +548,17 @@ private fun FullScreenVideo(
             } else {
                 surface(Modifier.fillMaxSize())
             }
+            // Tap anywhere outside the transport bar to toggle playback.
             Box(
                 Modifier
                     .fillMaxSize()
                     .clickable(onClickLabel = if (state.playing) "Pause" else "Play", onClick = onPlayPause),
             )
-            if (!state.playing) {
+            if (!state.playing && !state.preparing) {
                 Box(
                     modifier = Modifier
                         .size(60.dp)
-                        .background(colors.accent, CircleShape),
+                        .background(colors.accent.copy(alpha = 0.9f), CircleShape),
                     contentAlignment = Alignment.Center,
                 ) {
                     MiraIcon(MiraIcons.Play, tint = colors.onAccent, size = 24.dp)
@@ -565,6 +572,13 @@ private fun FullScreenVideo(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(MiraSpacing.lg),
+            )
+            VideoTransportControls(
+                state = state,
+                durationMs = duration,
+                onPlayPause = onPlayPause,
+                onSeek = onSeek,
+                modifier = Modifier.align(Alignment.BottomCenter),
             )
         }
     }

@@ -2,7 +2,8 @@ package com.joetr.mira.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,6 +29,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
@@ -220,7 +222,7 @@ public fun VideoAttachmentTile(
             onExpand?.let { expand ->
                 Box(
                     modifier = Modifier
-                        .align(Alignment.BottomEnd)
+                        .align(Alignment.TopEnd)
                         .padding(MiraSpacing.sm)
                         .size(34.dp)
                         .background(Color.Black.copy(alpha = 0.45f), CircleShape)
@@ -230,25 +232,14 @@ public fun VideoAttachmentTile(
                     MiraIcon(MiraIcons.Expand, tint = Color.White, size = 16.dp)
                 }
             }
-        }
-
-        if (started) {
-            Spacer(Modifier.height(MiraSpacing.sm))
-
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.weight(1f)) {
-                    Scrubber(progress = state.progress, onSeek = onSeek)
-                }
-                Spacer(Modifier.width(MiraSpacing.md))
-                Text(
-                    text = "${formatDuration(state.positionMs)} / ${formatDuration(duration)}",
-                    style = MiraTheme.type.meta,
-                    color = colors.inkMuted,
+            if (started) {
+                VideoTransportControls(
+                    state = state,
+                    durationMs = duration,
+                    onPlayPause = onPlayPause,
+                    onSeek = onSeek,
+                    modifier = Modifier.align(Alignment.BottomStart),
                 )
-                if (!attachment.isUploaded) {
-                    Spacer(Modifier.width(MiraSpacing.sm))
-                    MiraIcon(MiraIcons.CloudPending, tint = colors.accent, size = 16.dp)
-                }
             }
         }
 
@@ -259,15 +250,80 @@ public fun VideoAttachmentTile(
     }
 }
 
+/**
+ * The play/pause and scrubbing bar laid over a video.
+ *
+ * White-on-scrim rather than the theme's ink colours, because it sits on top of the picture rather
+ * than on a surface — accent-on-video disappears against the wrong frame.
+ */
+@Composable
+public fun VideoTransportControls(
+    state: AttachmentPlaybackState,
+    durationMs: Long,
+    onPlayPause: () -> Unit,
+    onSeek: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(
+                Brush.verticalGradient(
+                    0f to Color.Transparent,
+                    1f to Color.Black.copy(alpha = 0.72f),
+                ),
+            )
+            .padding(horizontal = MiraSpacing.sm, vertical = MiraSpacing.xs),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(MiraSpacing.sm),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .background(Color.Black.copy(alpha = 0.4f), CircleShape)
+                .clickable(enabled = !state.preparing, onClick = onPlayPause),
+            contentAlignment = Alignment.Center,
+        ) {
+            MiraIcon(
+                painter = if (state.playing) MiraIcons.Pause else MiraIcons.Play,
+                tint = Color.White,
+                size = 18.dp,
+            )
+        }
+        Box(Modifier.weight(1f)) {
+            Scrubber(
+                progress = state.progress,
+                onSeek = onSeek,
+                trackColor = Color.White.copy(alpha = 0.3f),
+                fillColor = Color.White,
+            )
+        }
+        Text(
+            text = if (durationMs > 0) {
+                "${formatDuration(state.positionMs)} / ${formatDuration(durationMs)}"
+            } else {
+                formatDuration(state.positionMs)
+            },
+            style = MiraTheme.type.meta,
+            color = Color.White.copy(alpha = 0.9f),
+        )
+    }
+}
+
 /** A hairline track with an accent fill. Drag or tap anywhere on it to seek. */
 @Composable
 private fun Scrubber(
     progress: Float,
     onSeek: (Float) -> Unit,
     modifier: Modifier = Modifier,
+    trackColor: Color = MiraTheme.colors.outline,
+    fillColor: Color = MiraTheme.colors.accent,
+    enabled: Boolean = true,
 ) {
-    val colors = MiraTheme.colors
     var width by remember { mutableStateOf(1) }
+    val seek: (Float) -> Unit = { fraction ->
+        if (enabled) onSeek(fraction.coerceIn(0f, 1f))
+    }
 
     Box(
         modifier = modifier
@@ -275,9 +331,22 @@ private fun Scrubber(
             // The visual track is 3dp but the hit area is a comfortable 24dp.
             .height(24.dp)
             .onSizeChanged { width = it.width.coerceAtLeast(1) }
-            .pointerInput(Unit) {
-                detectHorizontalDragGestures { change, _ ->
-                    onSeek((change.position.x / width).coerceIn(0f, 1f))
+            .pointerInput(enabled) {
+                if (!enabled) return@pointerInput
+                // One gesture for both tap and drag: seek on the down event, then keep tracking
+                // while the finger moves. Splitting them into two detectors makes the tap
+                // detector swallow the drag.
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    seek(down.position.x / width)
+                    down.consume()
+                    while (true) {
+                        val change = awaitPointerEvent().changes
+                            .firstOrNull { it.id == down.id } ?: break
+                        if (!change.pressed) break
+                        seek(change.position.x / width)
+                        change.consume()
+                    }
                 }
             }
             .clickable(indication = null, interactionSource = null) { },
@@ -288,14 +357,14 @@ private fun Scrubber(
                 .fillMaxWidth()
                 .height(3.dp)
                 .clip(RoundedCornerShape(MiraRadii.pill))
-                .background(colors.outline),
+                .background(trackColor),
         )
         Box(
             Modifier
                 .fillMaxWidth(progress)
                 .height(3.dp)
                 .clip(RoundedCornerShape(MiraRadii.pill))
-                .background(colors.accent),
+                .background(fillColor),
         )
     }
 }
