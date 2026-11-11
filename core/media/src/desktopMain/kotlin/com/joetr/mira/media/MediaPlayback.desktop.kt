@@ -87,7 +87,7 @@ internal class DesktopMediaPlayerController : MediaPlayerController {
             return
         }
         sourcePath = path
-        _state.value = PlaybackState(durationMs = probeDurationMs(path))
+        _state.value = PlaybackState(durationMs = withContext(Dispatchers.IO) { probeDurationMs(path) })
     }
 
     override suspend fun play() {
@@ -235,27 +235,6 @@ internal class DesktopMediaPlayerController : MediaPlayerController {
             )
             delay(100)
         }
-    }
-
-    /** Reads `Duration: HH:MM:SS.ss` from FFmpeg's own report of the file. */
-    private suspend fun probeDurationMs(path: String): Long = withContext(Dispatchers.IO) {
-        val binary = FfmpegBinary.path ?: return@withContext 0L
-        val process = runCatching {
-            ProcessBuilder(buildProbeCommand(binary, path))
-                .redirectErrorStream(true)
-                .start()
-        }.getOrNull() ?: return@withContext 0L
-
-        val text = runCatching { process.inputStream.bufferedReader().readText() }.getOrDefault("")
-        process.waitFor(5, TimeUnit.SECONDS)
-
-        val match = Regex("""Duration:\s*(\d+):(\d{2}):(\d{2})\.(\d{1,2})""").find(text)
-            ?: return@withContext 0L
-        val (hours, minutes, seconds, fraction) = match.destructured
-        hours.toLong() * 3_600_000 +
-            minutes.toLong() * 60_000 +
-            seconds.toLong() * 1_000 +
-            fraction.padEnd(2, '0').toLong() * 10
     }
 
     private fun resolvePath(source: MediaSource): String? = when (source) {
@@ -448,6 +427,32 @@ internal fun buildVideoPlaybackCommand(
 /** Asks FFmpeg to report the file, so its own duration line can be read back. */
 internal fun buildProbeCommand(binary: String, path: String): List<String> =
     listOf(binary, "-hide_banner", "-i", path)
+
+/**
+ * Reads `Duration: HH:MM:SS.ss` from FFmpeg's own report of the file.
+ *
+ * Blocking, because both call sites already run on [Dispatchers.IO]. Returns `0` when the file has
+ * no duration metadata (a still image) or FFmpeg is unavailable, which callers treat as unknown.
+ */
+internal fun probeDurationMs(path: String): Long {
+    val binary = FfmpegBinary.path ?: return 0L
+    val process = runCatching {
+        ProcessBuilder(buildProbeCommand(binary, path))
+            .redirectErrorStream(true)
+            .start()
+    }.getOrNull() ?: return 0L
+
+    val text = runCatching { process.inputStream.bufferedReader().readText() }.getOrDefault("")
+    process.waitFor(5, TimeUnit.SECONDS)
+
+    val match = Regex("""Duration:\s*(\d+):(\d{2}):(\d{2})\.(\d{1,2})""").find(text)
+        ?: return 0L
+    val (hours, minutes, seconds, fraction) = match.destructured
+    return hours.toLong() * 3_600_000 +
+        minutes.toLong() * 60_000 +
+        seconds.toLong() * 1_000 +
+        fraction.padEnd(2, '0').toLong() * 10
+}
 
 internal const val PLAYBACK_SAMPLE_RATE: Int = 44_100
 internal const val PLAYBACK_CHANNELS: Int = 2

@@ -38,7 +38,7 @@ private fun File.toCaptureResult(): CaptureResult? {
         bytes = null,
         mime = mimeFor(ext, isVideo),
         sizeBytes = length(),
-        durationMs = 0,
+        durationMs = if (isVideo) probeDurationMs(absolutePath) else 0,
     )
 }
 
