@@ -24,8 +24,9 @@ import kotlinx.coroutines.withContext
  * Drains the entry outbox to Firestore and merges remote changes back.
  *
  * Entry rows sync eagerly — text lands on every device within seconds. Attachment bytes are
- * uploaded first and the owning rows pushed afterwards, so a remote device never sees an entry
- * referencing media the cloud does not have. A run is only [SyncStatus.SYNCED] once both are done.
+ * uploaded first when possible, but a recording that is still uploading is published as a pending
+ * attachment rather than omitted, so other devices can show that media exists and is on its way.
+ * A run is only [SyncStatus.SYNCED] once both are done.
  */
 public class EntrySyncService(
     database: MiraDatabase,
@@ -134,8 +135,10 @@ public class EntrySyncService(
     }
 
     /**
-     * Uploads attachment bytes before pushing entries, so another device never receives an entry
-     * that points at media the cloud does not have yet.
+     * Uploads attachment bytes before pushing entries where possible.
+     *
+     * Anything still unavailable is published as a pending attachment, so the remote row never
+     * pretends the entry has no media when it does.
      */
     private suspend fun uploadPendingMedia() {
         val ownerId = firebase.sessionForSync()?.localId ?: return

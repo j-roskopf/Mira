@@ -25,6 +25,13 @@ public data class RemoteAttachment(
     val thumbnailPath: String?,
     val thumbnailUrl: String?,
     val caption: String,
+    /**
+     * Whether the bytes are in Storage, still only on the originating device, or in flight.
+     *
+     * Optional because documents written before pending attachments were published predate the
+     * field; those always describe a complete upload.
+     */
+    val state: String? = null,
 )
 
 public data class FirestoreEntryDocument(

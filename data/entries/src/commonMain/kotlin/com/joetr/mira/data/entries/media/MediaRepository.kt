@@ -4,6 +4,7 @@ import app.cash.sqldelight.async.coroutines.awaitAsList
 import app.cash.sqldelight.async.coroutines.awaitAsOneOrNull
 import com.joetr.mira.data.entries.EntryRepository
 import com.joetr.mira.data.entries.decodeAttachments
+import com.joetr.mira.db.Media_blobs
 import com.joetr.mira.db.MiraDatabase
 import com.joetr.mira.domain.Attachment
 import com.joetr.mira.domain.AttachmentKind
@@ -13,9 +14,11 @@ import com.joetr.mira.media.extractVideoPoster
 import com.joetr.mira.media.isHevcVideo
 import com.joetr.mira.media.needsVideoPosterRotationRepair
 import com.joetr.mira.media.normalizeVideo
+import com.joetr.mira.media.supportsStreamingFileUpload
 import com.joetr.mira.media.supportsVideoNormalization
 import com.joetr.mira.network.MiraFirebase
 import com.joetr.mira.network.StorageUpload
+import com.joetr.mira.network.UploadBody
 import com.joetr.mira.platform.currentTimeMillis
 import com.joetr.mira.platform.detectImageMimeType
 import com.joetr.mira.platform.isJpegImage
@@ -123,8 +126,8 @@ public class MediaRepository(
                 val attachment = entry.attachments.firstOrNull { it.id == blob.id } ?: continue
                 if (attachment.kind == AttachmentKind.VIDEO && !includeVideo) continue
 
-                val bytes = readBytes(blob.id) ?: continue
-                val payload = uploadPayloadFor(attachment, bytes)
+                val path = blob.path?.takeIf { localFileExists(it) }
+                val payload = uploadPayloadFor(attachment, blob, path) ?: continue
                 val objectName = firebase.storage.mediaPath(
                     ownerId = ownerId,
                     entryId = entry.id,
@@ -132,7 +135,7 @@ public class MediaRepository(
                     extension = extensionFor(payload.mime),
                 )
                 val result = try {
-                    firebase.storage.upload(session.idToken, objectName, payload.bytes, payload.mime)
+                    firebase.storage.upload(session.idToken, objectName, payload.body, payload.mime)
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (_: Exception) {
@@ -147,8 +150,8 @@ public class MediaRepository(
                         ownerId = ownerId,
                         entry = entry,
                         attachment = attachment,
-                        localPath = blob.path,
-                        localBytes = bytes,
+                        localPath = path,
+                        localBytes = payload.bytes,
                     )
                 } catch (cancelled: CancellationException) {
                     throw cancelled
@@ -161,7 +164,7 @@ public class MediaRepository(
                         ownerId = ownerId,
                         entry = entry,
                         attachment = attachment,
-                        localBytes = bytes,
+                        localBytes = payload.bytes,
                     )
                 } catch (cancelled: CancellationException) {
                     throw cancelled
@@ -257,6 +260,8 @@ public class MediaRepository(
             }
             blob.data_?.let { bytes -> return MediaSource.Bytes(bytes, attachment.mime) }
         }
+        // Pending media from another device has neither local bytes nor a Storage object yet.
+        if (attachment.storagePath.isBlank() && attachment.url == null) return null
         // Images are rendered through Coil, which can fetch and disk-cache a Storage URL. Prefer
         // that over materialising the bytes here so revisiting an evicted photo does not download
         // it again into memory on every open. Only read the bytes when no URL is available yet
@@ -299,6 +304,9 @@ public class MediaRepository(
             }
             blob.data_?.let { bytes -> return MediaSource.Bytes(bytes, attachment.mime) }
         }
+        if (attachment.storagePath.isBlank() && attachment.thumbnailUrl == null && attachment.url == null) {
+            return null
+        }
         attachment.thumbnailUrl?.let { return MediaSource.Remote(it) }
         attachment.url?.let { return MediaSource.Remote(it) }
         val bytes = bytesFor(attachment) ?: return null
@@ -329,6 +337,7 @@ public class MediaRepository(
 
         // A poster is tiny and Coil disk-caches it, so this is the cheap path for a video whose
         // bytes were evicted or that was captured on another device.
+        if (attachment.posterUrl == null && attachment.posterPath == null) return null
         attachment.posterUrl?.let { return MediaSource.Remote(it) }
         val posterPath = attachment.posterPath ?: return null
         val session = firebase.sessionForSync() ?: return null
@@ -398,13 +407,14 @@ public class MediaRepository(
         ownerId: String,
         entry: com.joetr.mira.domain.Entry,
         attachment: Attachment,
-        localBytes: ByteArray,
+        localBytes: ByteArray?,
     ): StorageUpload? {
         if (attachment.kind != AttachmentKind.IMAGE) return null
         if (attachment.thumbnailPath != null && attachment.thumbnailUrl != null) return null
+        val source = localBytes ?: return null
 
         val thumbnail = runCatching {
-            resizeImage(localBytes, PHOTO_THUMBNAIL_MAX_LONG_EDGE, PHOTO_THUMBNAIL_JPEG_QUALITY)
+            resizeImage(source, PHOTO_THUMBNAIL_MAX_LONG_EDGE, PHOTO_THUMBNAIL_JPEG_QUALITY)
         }.getOrNull() ?: return null
         val objectName = firebase.storage.mediaPath(
             ownerId = ownerId,
@@ -743,6 +753,57 @@ public class MediaRepository(
         io { queries.putSetting(NON_PORTABLE_VIDEO_REPAIR_KEY, "1") }
     }
 
+    /**
+     * Chooses how to hand one attachment's bytes to Storage.
+     *
+     * Video that the platform cannot transcode is streamed straight from its preserved file where
+     * possible. Reading a long recording into a `ByteArray` first is what exhausted the Android
+     * heap and killed the app mid-upload.
+     *
+     * Images are normalised in memory: phones hand back HEIC from the camera roll, and HEIC is not
+     * viewable in the browser or on every desktop decoder. [resizeImage] uses each platform's own
+     * image stack (and heic2any on web) to bake orientation and produce a JPEG every client can
+     * show. Video is re-encoded only where [normalizeVideo] has an encoder; the local copy keeps
+     * its original bytes either way.
+     */
+    private suspend fun uploadPayloadFor(
+        attachment: Attachment,
+        blob: Media_blobs,
+        localPath: String?,
+    ): UploadPayload? {
+        if (attachment.kind == AttachmentKind.VIDEO) {
+            if (supportsStreamingFileUpload && !supportsVideoNormalization && localPath != null) {
+                return UploadPayload(
+                    body = UploadBody.LocalFile(localPath),
+                    mime = attachment.mime,
+                    bytes = null,
+                )
+            }
+            val bytes = readBytes(blob.id) ?: return null
+            val portable = runCatching { normalizeVideo(bytes, attachment.mime) }.getOrNull()
+            val uploaded = portable ?: bytes
+            return UploadPayload(UploadBody.Bytes(uploaded), attachment.mime, uploaded)
+        }
+
+        val bytes = readBytes(blob.id) ?: return null
+        if (attachment.kind != AttachmentKind.IMAGE) {
+            return UploadPayload(UploadBody.Bytes(bytes), attachment.mime, bytes)
+        }
+        val actualMime = detectImageMimeType(bytes) ?: attachment.mime
+        if (actualMime in JPEG_SAFE_IMAGE_MIMES) {
+            return UploadPayload(UploadBody.Bytes(bytes), actualMime, bytes)
+        }
+
+        val jpeg = runCatching {
+            resizeImage(bytes, PHOTO_MAX_LONG_EDGE, PHOTO_JPEG_QUALITY)
+        }.getOrNull() ?: return UploadPayload(UploadBody.Bytes(bytes), actualMime, bytes)
+        return if (isJpegImage(jpeg)) {
+            UploadPayload(UploadBody.Bytes(jpeg), "image/jpeg", jpeg)
+        } else {
+            UploadPayload(UploadBody.Bytes(bytes), actualMime, bytes)
+        }
+    }
+
     private suspend fun readBytes(attachmentId: String): ByteArray? {
         val blob = io { queries.selectBlob(attachmentId).awaitAsOneOrNull() } ?: return null
         blob.data_?.let { return it }
@@ -754,34 +815,12 @@ public class MediaRepository(
         withContext(Dispatchers.Default) { block() }
 }
 
-private data class UploadPayload(val bytes: ByteArray, val mime: String)
-
-/**
- * Normalises media to a format every client can read before it reaches Storage.
- *
- * Phones hand back HEIC from the camera roll, and HEIC is not viewable in the browser or on every
- * desktop decoder. [resizeImage] uses each platform's own image stack (and heic2any on web) to bake
- * orientation and produce a JPEG every client can show.
- *
- * Video is re-encoded when it is HEVC. The archive's contract is that anything recorded anywhere
- * plays everywhere, and Android plus the browser cannot be relied on to decode HEVC; desktop's
- * bundled FFmpeg is the only transcoder in the app, so other platforms pass their bytes through.
- * The local copy keeps its original bytes.
- */
-private suspend fun uploadPayloadFor(attachment: Attachment, bytes: ByteArray): UploadPayload {
-    if (attachment.kind == AttachmentKind.VIDEO) {
-        val portable = runCatching { normalizeVideo(bytes, attachment.mime) }.getOrNull()
-        return UploadPayload(portable ?: bytes, attachment.mime)
-    }
-    if (attachment.kind != AttachmentKind.IMAGE) return UploadPayload(bytes, attachment.mime)
-    val actualMime = detectImageMimeType(bytes) ?: attachment.mime
-    if (actualMime in JPEG_SAFE_IMAGE_MIMES) return UploadPayload(bytes, actualMime)
-
-    val jpeg = runCatching {
-        resizeImage(bytes, PHOTO_MAX_LONG_EDGE, PHOTO_JPEG_QUALITY)
-    }.getOrNull() ?: return UploadPayload(bytes, actualMime)
-    return if (isJpegImage(jpeg)) UploadPayload(jpeg, "image/jpeg") else UploadPayload(bytes, actualMime)
-}
+private data class UploadPayload(
+    val body: UploadBody,
+    val mime: String,
+    /** Present when the payload is already in memory, so poster/thumbnail work can reuse it. */
+    val bytes: ByteArray?,
+)
 
 internal fun extensionFor(mime: String): String = when {
     mime.startsWith("video/") -> "mp4"

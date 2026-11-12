@@ -34,6 +34,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.joetr.mira.domain.Attachment
 import com.joetr.mira.domain.AttachmentKind
+import com.joetr.mira.domain.AttachmentState
 import com.joetr.mira.domain.Entry
 import com.joetr.mira.domain.LocalDateKey
 import com.joetr.mira.media.AttachmentImage
@@ -198,10 +199,12 @@ private fun MediaPreviewTile(
     onClick: () -> Unit,
 ) {
     val colors = MiraTheme.colors
-    val description = when (attachment.kind) {
-        AttachmentKind.IMAGE -> "Open photo"
-        AttachmentKind.VIDEO -> "Open video"
-        AttachmentKind.AUDIO -> "Open voice note"
+    val awaitingUpload = attachment.state == AttachmentState.UPLOADING
+    val description = when {
+        awaitingUpload -> "Media still uploading"
+        attachment.kind == AttachmentKind.IMAGE -> "Open photo"
+        attachment.kind == AttachmentKind.VIDEO -> "Open video"
+        else -> "Open voice note"
     }
     Box(
         modifier = Modifier
@@ -212,56 +215,62 @@ private fun MediaPreviewTile(
             .semantics { contentDescription = description },
         contentAlignment = Alignment.Center,
     ) {
-        when (attachment.kind) {
-            AttachmentKind.IMAGE -> {
-                var hasImage by remember(attachment.id) { mutableStateOf(false) }
-                AttachmentImage(
-                    attachment = attachment,
-                    sourceFor = thumbnailFor,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    cacheKey = "day-preview",
-                    modifier = Modifier.matchParentSize(),
-                    onState = { hasImage = it == AttachmentImageState.Success },
-                )
-                if (!hasImage) {
-                    MiraIcon(MiraIcons.Photo, tint = colors.inkFaint, size = 20.dp)
-                }
-            }
-            AttachmentKind.VIDEO -> {
-                var hasPoster by remember(attachment.id) { mutableStateOf(false) }
-                AttachmentImage(
-                    attachment = attachment,
-                    sourceFor = thumbnailFor,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    cacheKey = "day-video-poster",
-                    modifier = Modifier.matchParentSize(),
-                    onState = { hasPoster = it == AttachmentImageState.Success },
-                )
-                if (hasPoster) {
-                    Box(
-                        Modifier
-                            .matchParentSize()
-                            .background(Color.Black.copy(alpha = 0.22f)),
+        if (awaitingUpload) {
+            // The bytes live on the device that recorded this entry. A spinner would look like a
+            // failed load, so say plainly that the media is still on its way.
+            MiraIcon(MiraIcons.CloudPending, tint = colors.accent, size = 20.dp)
+        } else {
+            when (attachment.kind) {
+                AttachmentKind.IMAGE -> {
+                    var hasImage by remember(attachment.id) { mutableStateOf(false) }
+                    AttachmentImage(
+                        attachment = attachment,
+                        sourceFor = thumbnailFor,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        cacheKey = "day-preview",
+                        modifier = Modifier.matchParentSize(),
+                        onState = { hasImage = it == AttachmentImageState.Success },
                     )
-                }
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(28.dp)
-                            .background(colors.accent, CircleShape),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        MiraIcon(MiraIcons.Play, tint = colors.onAccent, size = 14.dp)
+                    if (!hasImage) {
+                        MiraIcon(MiraIcons.Photo, tint = colors.inkFaint, size = 20.dp)
                     }
                 }
-            }
-            AttachmentKind.AUDIO -> {
-                MiraIcon(MiraIcons.Microphone, tint = colors.accent, size = 20.dp)
+                AttachmentKind.VIDEO -> {
+                    var hasPoster by remember(attachment.id) { mutableStateOf(false) }
+                    AttachmentImage(
+                        attachment = attachment,
+                        sourceFor = thumbnailFor,
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        cacheKey = "day-video-poster",
+                        modifier = Modifier.matchParentSize(),
+                        onState = { hasPoster = it == AttachmentImageState.Success },
+                    )
+                    if (hasPoster) {
+                        Box(
+                            Modifier
+                                .matchParentSize()
+                                .background(Color.Black.copy(alpha = 0.22f)),
+                        )
+                    }
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(28.dp)
+                                .background(colors.accent, CircleShape),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            MiraIcon(MiraIcons.Play, tint = colors.onAccent, size = 14.dp)
+                        }
+                    }
+                }
+                AttachmentKind.AUDIO -> {
+                    MiraIcon(MiraIcons.Microphone, tint = colors.accent, size = 20.dp)
+                }
             }
         }
 

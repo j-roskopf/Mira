@@ -160,6 +160,22 @@ public fun EntryCard(
                     Spacer(Modifier.height(MiraSpacing.sm))
                     EntryTagLine(entry.tags)
                 }
+                if (entry.hasPendingUpload) {
+                    Spacer(Modifier.height(MiraSpacing.sm))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        MiraIcon(
+                            painter = MiraIcons.CloudPending,
+                            tint = colors.accent,
+                            size = 12.dp,
+                        )
+                        Spacer(Modifier.width(MiraSpacing.xs))
+                        Text(
+                            text = "Media not synced yet",
+                            style = MiraTheme.type.meta,
+                            color = colors.accent,
+                        )
+                    }
+                }
             }
             media?.invoke()
         }

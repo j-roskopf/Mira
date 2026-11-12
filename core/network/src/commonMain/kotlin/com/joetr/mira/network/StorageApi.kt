@@ -9,6 +9,8 @@ import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsBytes
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
+import io.ktor.http.content.ByteArrayContent
+import io.ktor.http.content.OutgoingContent
 import io.ktor.http.contentType
 import com.joetr.mira.platform.MiraConfig
 import kotlinx.serialization.json.Json
@@ -20,6 +22,26 @@ public data class StorageUpload(
     val storagePath: String,
     val downloadUrl: String,
 )
+
+/**
+ * The bytes to upload, either already in memory or still on disk.
+ *
+ * [LocalFile] exists so a large recording can be streamed straight from the file instead of being
+ * materialised as a `ByteArray`. Loading a 200 MB video into an Android heap that is capped well
+ * below that is an `OutOfMemoryError`, not a failed upload.
+ */
+public sealed interface UploadBody {
+    public data class Bytes(val bytes: ByteArray) : UploadBody
+
+    public data class LocalFile(val path: String) : UploadBody
+}
+
+/**
+ * A request body that reads from disk as the HTTP engine consumes it.
+ *
+ * Only used by platforms that advertise streaming uploads; the others keep using [UploadBody.Bytes].
+ */
+internal expect fun localFileUploadContent(path: String, contentType: ContentType): OutgoingContent
 
 public class StorageApi(
     private val httpClient: HttpClient,
@@ -41,14 +63,27 @@ public class StorageApi(
         objectName: String,
         bytes: ByteArray,
         mime: String,
+    ): StorageUpload = upload(idToken, objectName, UploadBody.Bytes(bytes), mime)
+
+    public suspend fun upload(
+        idToken: String,
+        objectName: String,
+        body: UploadBody,
+        mime: String,
     ): StorageUpload {
         val encoded = objectName.encodeURLPathComponent()
+        val contentType = ContentType.parse(mime)
         val responseText = httpClient.post(
             "https://firebasestorage.googleapis.com/v0/b/$bucket/o?uploadType=media&name=$encoded",
         ) {
-            contentType(ContentType.parse(mime))
+            contentType(contentType)
             header("Authorization", "Bearer $idToken")
-            setBody(bytes)
+            setBody(
+                when (body) {
+                    is UploadBody.Bytes -> ByteArrayContent(body.bytes)
+                    is UploadBody.LocalFile -> localFileUploadContent(body.path, contentType)
+                },
+            )
         }.bodyAsText()
         val metadata = json.parseToJsonElement(responseText).jsonObject
         val token = metadata["downloadTokens"]?.jsonPrimitive?.content

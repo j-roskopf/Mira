@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.joetr.mira.domain.Attachment
 import com.joetr.mira.domain.AttachmentKind
+import com.joetr.mira.domain.AttachmentState
 import com.joetr.mira.domain.Entry
 import com.joetr.mira.domain.LocalDateKey
 import com.joetr.mira.domain.MonthKey
@@ -328,6 +329,7 @@ private fun VisualPiece(
     val colors = MiraTheme.colors
     val attachment = piece.attachment
     val isVideo = attachment.kind == AttachmentKind.VIDEO
+    val awaitingUpload = attachment.state == AttachmentState.UPLOADING
     var hasImage by remember(attachment.id) { mutableStateOf(false) }
     val foreground = if (hasImage) Color.White else colors.ink
     val foregroundMuted = if (hasImage) Color.White.copy(alpha = 0.82f) else colors.inkMuted
@@ -338,7 +340,7 @@ private fun VisualPiece(
             .background(colors.surfaceRaised)
             .clickable { onEntryClick(piece.entry) },
     ) {
-        if (attachment.kind != AttachmentKind.AUDIO) {
+        if (!awaitingUpload && attachment.kind != AttachmentKind.AUDIO) {
             AttachmentImage(
                 attachment = attachment,
                 sourceFor = thumbnailFor,
@@ -349,7 +351,14 @@ private fun VisualPiece(
                 onState = { hasImage = it == AttachmentImageState.Success },
             )
         }
-        if (hasImage) {
+        if (awaitingUpload) {
+            MiraIcon(
+                painter = MiraIcons.CloudPending,
+                tint = colors.accent,
+                size = 28.dp,
+                modifier = Modifier.align(Alignment.Center),
+            )
+        } else if (hasImage) {
             Box(
                 Modifier
                     .matchParentSize()
@@ -410,7 +419,11 @@ private fun VisualPiece(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = formatTimestamp(piece.entry.createdAt),
+                text = if (awaitingUpload) {
+                    "Not synced yet"
+                } else {
+                    formatTimestamp(piece.entry.createdAt)
+                },
                 style = MiraTheme.type.timestamp,
                 color = foregroundMuted,
             )
@@ -478,7 +491,11 @@ private fun AudioPiece(
             )
             Spacer(Modifier.height(MiraSpacing.xxs))
             Text(
-                text = formatTimestamp(piece.entry.createdAt),
+                text = if (attachment.state == AttachmentState.UPLOADING) {
+                    "Not synced yet"
+                } else {
+                    formatTimestamp(piece.entry.createdAt)
+                },
                 style = MiraTheme.type.meta,
                 color = colors.inkMuted,
             )

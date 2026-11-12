@@ -45,12 +45,11 @@ internal fun Entries.toRemoteRow(): RemoteEntryRow = RemoteEntryRow(
     createdTz = created_tz,
     updatedAt = updated_at,
     body = body,
-    // Only publish attachments whose bytes are already in Storage. If an upload failed we still
-    // push the text now and republish the entry once the attachment lands, so another device
-    // never receives a reference it cannot open.
-    attachments = decodeAttachments(attachments)
-        .filter { it.isUploaded && it.storagePath.isNotBlank() }
-        .map { it.toRemote() },
+    // Pending attachments are published too, deliberately. Another device must be able to show
+    // that media exists and is still catching up; hiding it made the entry look text-only, as if
+    // the recording had been lost. Their [AttachmentState] tells the other device not to try to
+    // play bytes that are not in Storage yet.
+    attachments = decodeAttachments(attachments).map { it.toRemote() },
     tags = decodeTags(tags),
     deleted = deleted == 1L,
 )
@@ -68,27 +67,39 @@ internal fun Attachment.toRemote(): RemoteAttachment = RemoteAttachment(
     thumbnailPath = thumbnailPath,
     thumbnailUrl = thumbnailUrl,
     caption = caption,
+    // A still-local attachment is "uploading" from every other device's point of view: this
+    // device has the bytes, they have neither the bytes nor a local path.
+    state = if (state == AttachmentState.UPLOADED) "uploaded" else "uploading",
 )
 
 /**
- * Remote attachments are always [AttachmentState.UPLOADED]: an attachment only reaches Firestore
- * after its bytes are in Storage, so anything arriving from the cloud is by definition complete.
+ * Remote attachments keep the state the originating device published.
+ *
+ * A non-blank [storagePath] always means the bytes are in Storage, so a legacy document or a stale
+ * `state` field can never make an available recording look pending.
  */
-internal fun RemoteAttachment.toAttachment(): Attachment = Attachment(
-    id = id,
-    kind = attachmentKindFromWire(kind),
-    storagePath = storagePath,
-    url = url,
-    mime = mime,
-    bytes = bytes,
-    durationMs = durationMs,
-    posterPath = posterPath,
-    posterUrl = posterUrl,
-    thumbnailPath = thumbnailPath,
-    thumbnailUrl = thumbnailUrl,
-    caption = caption,
-    state = AttachmentState.UPLOADED,
-)
+internal fun RemoteAttachment.toAttachment(): Attachment {
+    val uploaded = storagePath.isNotBlank() || state == "uploaded"
+    return Attachment(
+        id = id,
+        kind = attachmentKindFromWire(kind),
+        storagePath = storagePath,
+        url = url,
+        mime = mime,
+        bytes = bytes,
+        durationMs = durationMs,
+        posterPath = posterPath,
+        posterUrl = posterUrl,
+        thumbnailPath = thumbnailPath,
+        thumbnailUrl = thumbnailUrl,
+        caption = caption,
+        state = when {
+            uploaded -> AttachmentState.UPLOADED
+            state == "local" -> AttachmentState.LOCAL
+            else -> AttachmentState.UPLOADING
+        },
+    )
+}
 
 internal val AttachmentKind.wire: String
     get() = when (this) {
