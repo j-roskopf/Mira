@@ -122,16 +122,13 @@ private fun GalleryContent(modifier: Modifier = Modifier) {
         }
 
         GallerySection("Accents") {
-            Row(horizontalArrangement = Arrangement.spacedBy(MiraSpacing.sm)) {
-                MiraAccent.entries.take(5).forEach { accent ->
-                    AccentSwatch(accent)
+            MiraAccent.entries.chunked(6).forEach { row ->
+                Row(horizontalArrangement = Arrangement.spacedBy(MiraSpacing.sm)) {
+                    row.forEach { accent ->
+                        AccentSwatch(accent)
+                    }
                 }
-            }
-            Spacer(Modifier.height(MiraSpacing.sm))
-            Row(horizontalArrangement = Arrangement.spacedBy(MiraSpacing.sm)) {
-                MiraAccent.entries.drop(5).forEach { accent ->
-                    AccentSwatch(accent)
-                }
+                Spacer(Modifier.height(MiraSpacing.sm))
             }
         }
 
