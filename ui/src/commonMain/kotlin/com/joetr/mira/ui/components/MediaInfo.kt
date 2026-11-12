@@ -109,6 +109,7 @@ private fun MediaInfoContent(
         value = when {
             resolving -> "Checking…"
             location != null -> location
+            attachment.state == AttachmentState.UPLOADING -> "On another device"
             attachment.isUploaded -> "Unknown"
             else -> "Only on this device"
         },
@@ -118,7 +119,7 @@ private fun MediaInfoContent(
         label = "Upload",
         value = when (attachment.state) {
             AttachmentState.LOCAL -> "Not uploaded yet"
-            AttachmentState.UPLOADING -> "Uploading"
+            AttachmentState.UPLOADING -> "Waiting for the recording device"
             AttachmentState.UPLOADED -> "Uploaded"
         },
         muted = muted,

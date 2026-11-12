@@ -9,6 +9,8 @@ import com.joetr.mira.data.entries.toAttachment
 import com.joetr.mira.data.entries.toRemoteRow
 import com.joetr.mira.db.Entries
 import com.joetr.mira.db.MiraDatabase
+import com.joetr.mira.domain.Attachment
+import com.joetr.mira.domain.AttachmentState
 import com.joetr.mira.domain.PendingSyncEntry
 import com.joetr.mira.network.FirebaseSession
 import com.joetr.mira.network.FirestoreEntryDocument
@@ -273,19 +275,15 @@ internal class FirebaseEntrySyncBackend(
             }
             val remote = doc.entry
             val remoteAttachments = remote.attachments.map { it.toAttachment() }
-            // Attachments that were left out of the push because their bytes were not uploaded
-            // yet are not in the remote row. Keep them locally so they are not lost (and can
-            // still upload) when a newer edit arrives from another device.
-            val localPendingAttachments = if (remote.deleted) {
+            // A remote row can carry a pending attachment published by the device that recorded
+            // it. Merge by id so this device's locally staged copy is kept, and so an uploaded
+            // copy on either side always wins over a pending placeholder.
+            val localAttachments = if (remote.deleted) {
                 emptyList()
             } else {
-                local?.let { decodeAttachments(it.attachments) }
-                    ?.filterNot { it.isUploaded }
-                    .orEmpty()
+                local?.let { decodeAttachments(it.attachments) }.orEmpty()
             }
-            val remoteIds = remoteAttachments.mapTo(mutableSetOf()) { it.id }
-            val mergedAttachments = remoteAttachments +
-                localPendingAttachments.filterNot { it.id in remoteIds }
+            val mergedAttachments = mergeAttachments(remoteAttachments, localAttachments)
             queries.upsertEntry(
                 id = doc.id,
                 owner_id = ownerId,
@@ -317,3 +315,30 @@ private data class PushResult(
     val rejected: Int = 0,
     val errorMessage: String? = null,
 )
+
+/**
+ * Combines the attachment list this device pulled with the one it already has.
+ *
+ * Order of preference per id: a completed upload, then a locally staged copy (so this device can
+ * still upload it), then the remote placeholder. Locally staged attachments that the remote row
+ * does not mention are kept; completed ones that are absent were deleted on another device.
+ */
+internal fun mergeAttachments(
+    remote: List<Attachment>,
+    local: List<Attachment>,
+): List<Attachment> {
+    val localById = local.associateBy { it.id }
+    val merged = remote.map { remoteAttachment ->
+        val localAttachment = localById[remoteAttachment.id]
+        when {
+            remoteAttachment.isUploaded -> remoteAttachment
+            localAttachment?.isUploaded == true -> localAttachment
+            localAttachment?.state == AttachmentState.LOCAL -> localAttachment
+            else -> remoteAttachment
+        }
+    }
+    val remoteIds = remote.mapTo(mutableSetOf()) { it.id }
+    // A completed attachment missing from a newer remote row was deleted there; only keep local
+    // copies that still need uploading.
+    return merged + local.filterNot { it.id in remoteIds || it.isUploaded }
+}

@@ -41,6 +41,7 @@ internal fun RemoteEntryRow.toFirestoreFields(): JsonObject = buildJsonObject {
                                     put("thumbnailPath", nullableString(attachment.thumbnailPath))
                                     put("thumbnailUrl", nullableString(attachment.thumbnailUrl))
                                     put("caption", stringValue(attachment.caption))
+                                    put("state", nullableString(attachment.state))
                                 },
                             )
                         },
@@ -86,6 +87,9 @@ private fun JsonObject.attachmentsField(name: String): List<RemoteAttachment> {
             thumbnailPath = fields.stringField("thumbnailPath"),
             thumbnailUrl = fields.stringField("thumbnailUrl"),
             caption = fields.stringField("caption").orEmpty(),
+            // Documents written before this field existed only ever carried completed uploads.
+            state = fields.stringField("state")
+                ?: if (storagePath.isNotBlank()) "uploaded" else "local",
         )
     }
 }

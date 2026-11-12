@@ -47,6 +47,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.joetr.mira.domain.Attachment
 import com.joetr.mira.domain.AttachmentKind
+import com.joetr.mira.domain.AttachmentState
 import com.joetr.mira.media.AttachmentImage
 import com.joetr.mira.media.AttachmentImageState
 import com.joetr.mira.media.CaptureKind
@@ -288,6 +289,11 @@ private fun AttachmentEntry(
     surface: @Composable (Modifier) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    if (attachment.state == AttachmentState.UPLOADING) {
+        PendingAttachmentRow(attachment = attachment, label = label, modifier = modifier)
+        return
+    }
+
     val infoAction: @Composable () -> Unit = {
         MediaInfoButton(
             attachment = attachment,
@@ -350,6 +356,50 @@ private fun AttachmentEntry(
                 modifier = Modifier.fillMaxWidth(),
             )
         }
+    }
+}
+
+/**
+ * Placeholder for media that exists on another device but has not reached Storage yet.
+ *
+ * The entry row syncs before its bytes, so this is a normal transient state, not an error. It is
+ * deliberately not playable: there is nothing on this device to play.
+ */
+@Composable
+private fun PendingAttachmentRow(
+    attachment: Attachment,
+    label: String,
+    modifier: Modifier = Modifier,
+) {
+    val colors = MiraTheme.colors
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(MiraRadii.card))
+            .background(colors.surface)
+            .padding(horizontal = MiraSpacing.lg, vertical = MiraSpacing.md),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(MiraSpacing.md),
+    ) {
+        MiraIcon(MiraIcons.CloudPending, tint = colors.accent, size = 20.dp)
+        Column(Modifier.weight(1f)) {
+            Text(label, style = MiraTheme.type.uiBody, color = colors.ink)
+            Spacer(Modifier.height(MiraSpacing.xxs))
+            Text(
+                text = "Still uploading from the device that recorded it.",
+                style = MiraTheme.type.meta,
+                color = colors.inkMuted,
+            )
+        }
+        Text(
+            text = when (attachment.kind) {
+                AttachmentKind.VIDEO -> "Video"
+                AttachmentKind.IMAGE -> "Photo"
+                AttachmentKind.AUDIO -> "Voice note"
+            },
+            style = MiraTheme.type.meta,
+            color = colors.inkFaint,
+        )
     }
 }
 
