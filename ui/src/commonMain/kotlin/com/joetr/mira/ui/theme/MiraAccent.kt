@@ -3,7 +3,7 @@ package com.joetr.mira.ui.theme
 import androidx.compose.ui.graphics.Color
 
 /**
- * The ten themes. The accent owns selected days, the today ring, the record button, the active tab,
+ * The twelve themes. The accent owns selected days, the today ring, the record button, the active tab,
  * attachment dots, links, the heatmap ramp and focus rings — and nothing else is coloured, ever.
  *
  * OKLCH values are authoritative; the hex in [swatch] is the same colour and exists so the picker
@@ -19,8 +19,10 @@ public enum class MiraAccent(
     SAFFRON("Saffron", Oklch(0.794f, 0.143f, 83f), Color(0xFFE8B23A)),
     MOSS("Moss", Oklch(0.643f, 0.085f, 152f), Color(0xFF5FA87A)),
     TEAL("Teal", Oklch(0.643f, 0.082f, 185f), Color(0xFF3FA8A0)),
+    LAGOON("Lagoon", Oklch(0.660f, 0.095f, 218f), Color(0xFF41A0B9)),
     COBALT("Cobalt", Oklch(0.591f, 0.177f, 266f), Color(0xFF4A7DF0)),
     IRIS("Iris", Oklch(0.588f, 0.185f, 288f), Color(0xFF7C6CF0)),
+    PLUM("Plum", Oklch(0.615f, 0.150f, 322f), Color(0xFFAE62B9)),
     MAGENTA("Magenta", Oklch(0.631f, 0.177f, 349f), Color(0xFFD95AA8)),
     SLATE("Slate", Oklch(0.627f, 0.033f, 262f), Color(0xFF8A93A8)),
     BONE("Bone", Oklch(0.907f, 0.019f, 85f), Color(0xFFE8E2D6)),
@@ -88,7 +90,7 @@ public fun busyThreshold(counts: Collection<Int>, floor: Int = 3): Int {
 }
 
 /**
- * The stable colour identity of a tag. Every tag name owns one of the ten accents, so `#walk`
+ * The stable colour identity of a tag. Every tag name owns one of the twelve accents, so `#walk`
  * reads the same colour on every screen and across launches without storing a colour anywhere.
  */
 public fun tagAccent(tag: String): MiraAccent {

@@ -53,7 +53,7 @@ canvas. `#F2F2F5` on `#0A0A0B` is ~18.5:1, far past AA, and reads calmer than `#
 
 ### Accents
 
-Ten curated themes. The accent owns: selected day fill, today ring, the record button, active tab,
+Twelve curated themes. The accent owns: selected day fill, today ring, the record button, active tab,
 attachment dots, links, the heatmap ramp, and focus rings, plus the full month and year calendar backgrounds.
 
 | Name | Hex | OKLCH (L C H) |
@@ -63,8 +63,10 @@ attachment dots, links, the heatmap ramp, and focus rings, plus the full month a
 | Saffron | `#E8B23A` | `0.794 0.143 83` |
 | Moss | `#5FA87A` | `0.643 0.085 152` |
 | Teal | `#3FA8A0` | `0.643 0.082 185` |
+| Lagoon | `#41A0B9` | `0.660 0.095 218` |
 | Cobalt | `#4A7DF0` | `0.591 0.177 266` |
 | Iris | `#7C6CF0` | `0.588 0.185 288` |
+| Plum | `#AE62B9` | `0.615 0.150 322` |
 | Magenta | `#D95AA8` | `0.631 0.177 349` |
 | Slate | `#8A93A8` | `0.627 0.033 262` |
 | Bone | `#E8E2D6` | `0.907 0.019 85` |

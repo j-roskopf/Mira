@@ -183,7 +183,7 @@ public fun SettingsScreen(
             Spacer(Modifier.height(MiraSpacing.xl))
             SectionLabel("Accent")
             Spacer(Modifier.height(MiraSpacing.md))
-            MiraAccent.entries.chunked(5).forEach { row ->
+            MiraAccent.entries.chunked(6).forEach { row ->
                 Row(
                     modifier = Modifier.padding(bottom = MiraSpacing.md),
                     horizontalArrangement = Arrangement.spacedBy(MiraSpacing.md),
