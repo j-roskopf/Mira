@@ -22,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import com.joetr.mira.domain.Attachment
 import com.joetr.mira.domain.AttachmentKind
 import com.joetr.mira.domain.AttachmentState
+import com.joetr.mira.domain.GITHUB_ARCHIVE_MAX_MEDIA_BYTES
 import com.joetr.mira.ui.formatBytes
 import com.joetr.mira.ui.formatDuration
 import com.joetr.mira.ui.icons.MiraIcons
@@ -124,6 +125,13 @@ private fun MediaInfoContent(
         },
         muted = muted,
     )
+    if (attachment.bytes > GITHUB_ARCHIVE_MAX_MEDIA_BYTES) {
+        MediaInfoRow(
+            label = "GitHub backup",
+            value = "Too large (over ${formatBytes(GITHUB_ARCHIVE_MAX_MEDIA_BYTES)})",
+            muted = muted,
+        )
+    }
     capturedLabel?.let { MediaInfoRow("Captured", it, muted) }
 }
 

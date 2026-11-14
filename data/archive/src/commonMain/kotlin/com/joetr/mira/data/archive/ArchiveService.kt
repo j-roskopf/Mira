@@ -2,9 +2,11 @@ package com.joetr.mira.data.archive
 
 import app.cash.sqldelight.async.coroutines.awaitAsOneOrNull
 import com.joetr.mira.data.entries.EntryRepository
+import com.joetr.mira.data.entries.media.ArchiveMediaSource
 import com.joetr.mira.data.entries.media.MediaRepository
 import com.joetr.mira.db.MiraDatabase
 import com.joetr.mira.domain.Entry
+import com.joetr.mira.domain.GITHUB_ARCHIVE_MAX_MEDIA_BYTES
 import com.joetr.mira.network.MiraFirebase
 import com.joetr.mira.network.RemoteArchiveConfig
 import com.joetr.mira.platform.currentTimeMillis
@@ -247,6 +249,7 @@ public class ArchiveService(
             val mediaKeys = mutableListOf<String>()
             val noteVersions = mutableMapOf<String, String>()
             val unavailableMedia = mutableListOf<String>()
+            val oversizedMedia = mutableListOf<String>()
             var changed = emptyList<Entry>()
             val result = try {
                 val all = mutableListOf<Entry>()
@@ -256,7 +259,7 @@ public class ArchiveService(
                     all.addAll(page)
                     offset += page.size
                 } while (page.size == MAX_PER_PUSH)
-                val mediaFiles = mutableMapOf<String, ByteArray>()
+                val mediaFiles = mutableMapOf<String, ArchiveMedia>()
                 val archivedMediaPaths = mutableSetOf<String>()
                 val notesToPush = mutableListOf<Entry>()
                 for (entry in all) {
@@ -268,12 +271,29 @@ public class ArchiveService(
                             continue
                         }
                         if (!includeMedia) continue
-                        val bytes = media.bytesFor(attachment)
-                        if (bytes == null || bytes.isEmpty()) {
-                            unavailableMedia.add("${entry.localDate.value} (${attachment.id})")
-                            continue
+                        val source = media.archiveMediaSourceFor(attachment, GITHUB_ARCHIVE_MAX_MEDIA_BYTES)
+                        when (source) {
+                            null -> {
+                                unavailableMedia.add("${entry.localDate.value} (${attachment.id})")
+                                continue
+                            }
+                            is ArchiveMediaSource.TooLarge -> {
+                                oversizedMedia.add(
+                                    "${entry.localDate.value} (${source.bytes / (1024 * 1024)} MB)",
+                                )
+                                continue
+                            }
+                            is ArchiveMediaSource.Bytes -> {
+                                if (source.bytes.isEmpty()) {
+                                    unavailableMedia.add("${entry.localDate.value} (${attachment.id})")
+                                    continue
+                                }
+                                mediaFiles[path] = ArchiveMedia.Bytes(source.bytes)
+                            }
+                            is ArchiveMediaSource.LocalFile -> {
+                                mediaFiles[path] = ArchiveMedia.LocalFile(source.path)
+                            }
                         }
-                        mediaFiles[path] = bytes
                         archivedMediaPaths.add(path)
                         mediaKeys.add(key)
                     }
@@ -323,10 +343,25 @@ public class ArchiveService(
                 ArchiveResult.NothingToDo ->
                     _status.value = _status.value.copy(pushing = false)
             }
-            if (unavailableMedia.isNotEmpty() && result !is ArchiveResult.Failed) {
-                val message = "Backup incomplete. Could not read ${unavailableMedia.size} recording(s), " +
-                    "including ${unavailableMedia.first()}. The local file may be missing and no cloud copy " +
-                    "could be loaded. Available files were backed up; missing recordings will be retried."
+            val problems = buildList {
+                if (unavailableMedia.isNotEmpty()) {
+                    add(
+                        "Could not read ${unavailableMedia.size} recording(s), including " +
+                            "${unavailableMedia.first()}. The local file may be missing and no cloud " +
+                            "copy could be loaded.",
+                    )
+                }
+                if (oversizedMedia.isNotEmpty()) {
+                    add(
+                        "${oversizedMedia.size} recording(s) exceed GitHub's 100 MB file limit and " +
+                            "were not archived, including ${oversizedMedia.first()}. They remain " +
+                            "available in cloud storage.",
+                    )
+                }
+            }
+            if (problems.isNotEmpty() && result !is ArchiveResult.Failed) {
+                val message = "Backup incomplete. ${problems.joinToString(" ")} " +
+                    "Available files were backed up; skipped recordings will be retried."
                 _status.value = _status.value.copy(errorMessage = message)
                 ArchiveResult.Failed(message)
             } else {

@@ -36,6 +36,18 @@ public sealed interface ArchiveResult {
 }
 
 /**
+ * A media file to commit.
+ *
+ * [LocalFile] is streamed through base64 as the request body is written, so archiving a long
+ * recording never allocates the whole file. [Bytes] covers platforms and payloads that already
+ * hold the media in memory.
+ */
+public sealed interface ArchiveMedia {
+    public data class LocalFile(val path: String) : ArchiveMedia
+    public data class Bytes(val bytes: ByteArray) : ArchiveMedia
+}
+
+/**
  * One-way push of entries to a private GitHub repository.
  *
  * **Nothing is ever read back.** Firestore is the source of truth; git is a durable, human-readable
@@ -139,7 +151,7 @@ public class GitHubArchive(
     public suspend fun push(
         target: ArchiveTarget,
         entries: List<Entry>,
-        mediaFiles: Map<String, ByteArray> = emptyMap(),
+        mediaFiles: Map<String, ArchiveMedia> = emptyMap(),
         message: String? = null,
         archivedMediaPaths: Set<String> = mediaFiles.keys,
     ): ArchiveResult {
@@ -156,8 +168,8 @@ public class GitHubArchive(
                         ?: return ArchiveResult.Failed("Could not write ${entry.id}")
                     add(treeEntry(entry.archivePath(), blobSha))
                 }
-                for ((path, bytes) in mediaFiles) {
-                    val blobSha = createBinaryBlob(target, bytes)
+                for ((path, media) in mediaFiles) {
+                    val blobSha = createBinaryBlob(target, media)
                         ?: return ArchiveResult.Failed("Could not write $path")
                     add(treeEntry(path, blobSha))
                 }
@@ -212,8 +224,24 @@ public class GitHubArchive(
     private suspend fun createBlob(target: ArchiveTarget, content: String): String? =
         postBlob(target, content, encoding = "utf-8")
 
-    private suspend fun createBinaryBlob(target: ArchiveTarget, bytes: ByteArray): String? =
-        postBlob(target, bytes.encodeBase64(), encoding = "base64")
+    private suspend fun createBinaryBlob(target: ArchiveTarget, media: ArchiveMedia): String? =
+        when (media) {
+            is ArchiveMedia.Bytes -> postBlob(target, media.bytes.encodeBase64(), encoding = "base64")
+            is ArchiveMedia.LocalFile -> postFileBlob(target, media.path)
+        }
+
+    private suspend fun postFileBlob(target: ArchiveTarget, path: String): String? {
+        val content = base64JsonFileContent(path) ?: return null
+        val body = runCatching {
+            httpClient.post("$api/repos/${target.slug}/git/blobs") {
+                githubHeaders()
+                setBody(content)
+            }.bodyAsText()
+        }.getOrNull() ?: return null
+        return runCatching {
+            json.parseToJsonElement(body).jsonObject["sha"]?.jsonPrimitive?.content
+        }.getOrNull()
+    }
 
     private suspend fun postBlob(
         target: ArchiveTarget,
