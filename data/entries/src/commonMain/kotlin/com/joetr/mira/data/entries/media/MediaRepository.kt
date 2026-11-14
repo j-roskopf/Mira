@@ -29,6 +29,19 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
+/**
+ * Where the archive should read an attachment from.
+ *
+ * [LocalFile] lets a large recording stream from disk instead of being materialised as a
+ * `ByteArray`, which is what exhausted the heap when a long video was archived. [TooLarge] is
+ * returned before any read so a file the repository cannot accept never reaches the heap.
+ */
+public sealed interface ArchiveMediaSource {
+    public data class LocalFile(val path: String, val bytes: Long) : ArchiveMediaSource
+    public data class Bytes(val bytes: ByteArray) : ArchiveMediaSource
+    public data class TooLarge(val bytes: Long) : ArchiveMediaSource
+}
+
 /** How much local media a platform keeps once it is safely in Storage. */
 public sealed interface RetentionPolicy {
     /** Desktop: a complete offline archive. Disk is cheap and nothing evicts it. */
@@ -574,6 +587,34 @@ public class MediaRepository(
         return runCatching {
             firebase.storage.download(session.idToken, attachment.storagePath)
         }.getOrNull()
+    }
+
+    /**
+     * Resolves the cheapest way to hand [attachment] to the archive.
+     *
+     * A local file is returned as a path on platforms that can stream it, so archiving a long
+     * recording never allocates its full size. Media above [maxBytes] is rejected before reading;
+     * the GitHub blob API cannot accept a file that large anyway.
+     */
+    public suspend fun archiveMediaSourceFor(
+        attachment: Attachment,
+        maxBytes: Long,
+    ): ArchiveMediaSource? {
+        val blob = io { queries.selectBlob(attachment.id).awaitAsOneOrNull() }
+        val size = blob?.bytes?.takeIf { it > 0 } ?: attachment.bytes
+        if (size > maxBytes) return ArchiveMediaSource.TooLarge(size)
+        if (blob != null) {
+            val path = blob.path
+            if (path != null && localFileExists(path)) {
+                return if (supportsStreamingFileUpload) {
+                    ArchiveMediaSource.LocalFile(path, size)
+                } else {
+                    readLocalFile(path)?.let { ArchiveMediaSource.Bytes(it) }
+                }
+            }
+            blob.data_?.let { return ArchiveMediaSource.Bytes(it) }
+        }
+        return bytesFor(attachment)?.let { ArchiveMediaSource.Bytes(it) }
     }
 
     /** Keeps a year permanently local, exempt from eviction. */

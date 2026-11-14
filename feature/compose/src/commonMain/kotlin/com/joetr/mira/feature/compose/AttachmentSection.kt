@@ -48,6 +48,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.joetr.mira.domain.Attachment
 import com.joetr.mira.domain.AttachmentKind
 import com.joetr.mira.domain.AttachmentState
+import com.joetr.mira.domain.GITHUB_ARCHIVE_MAX_MEDIA_BYTES
 import com.joetr.mira.media.AttachmentImage
 import com.joetr.mira.media.AttachmentImageState
 import com.joetr.mira.media.CaptureKind
@@ -62,6 +63,7 @@ import com.joetr.mira.ui.components.MediaInfoButton
 import com.joetr.mira.ui.components.SectionLabel
 import com.joetr.mira.ui.components.VideoAttachmentTile
 import com.joetr.mira.ui.components.VideoTransportControls
+import com.joetr.mira.ui.formatBytes
 import com.joetr.mira.ui.formatDuration
 import com.joetr.mira.ui.icons.MiraIcon
 import com.joetr.mira.ui.icons.MiraIcons
@@ -459,6 +461,21 @@ private fun MediaAttachment(
         }
         Spacer(Modifier.height(MiraSpacing.sm))
         content()
+        if (attachment.bytes > GITHUB_ARCHIVE_MAX_MEDIA_BYTES) {
+            Spacer(Modifier.height(MiraSpacing.sm))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(MiraSpacing.xs),
+            ) {
+                MiraIcon(MiraIcons.GitHub, tint = colors.error, size = 14.dp)
+                Text(
+                    text = "Too large for GitHub backup (over " +
+                        "${formatBytes(GITHUB_ARCHIVE_MAX_MEDIA_BYTES)}). It stays in cloud storage.",
+                    style = MiraTheme.type.meta,
+                    color = colors.error,
+                )
+            }
+        }
     }
 }
 

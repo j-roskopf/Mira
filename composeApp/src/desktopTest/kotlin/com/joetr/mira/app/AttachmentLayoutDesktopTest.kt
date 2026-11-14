@@ -13,6 +13,7 @@ import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.runDesktopComposeUiTest
 import com.joetr.mira.domain.Attachment
 import com.joetr.mira.domain.AttachmentKind
+import com.joetr.mira.domain.GITHUB_ARCHIVE_MAX_MEDIA_BYTES
 import com.joetr.mira.domain.LocalDateKey
 import com.joetr.mira.feature.compose.ComposeEntryScreen
 import com.joetr.mira.media.CaptureKind
@@ -27,6 +28,37 @@ import org.junit.Test
 class AttachmentLayoutDesktopTest {
     @Test fun mixedAttachmentsWide() = verifyAttachments(1000, 800, true)
     @Test fun mixedAttachmentsCompact() = verifyAttachments(390, 780, false)
+
+    @Test fun oversizedVideoExplainsWhyGitHubBackupSkipsIt() =
+        runDesktopComposeUiTest(width = 1000, height = 800) {
+            val attachments = listOf(
+                Attachment(
+                    "video",
+                    AttachmentKind.VIDEO,
+                    "",
+                    mime = "video/mp4",
+                    bytes = GITHUB_ARCHIVE_MAX_MEDIA_BYTES + 1,
+                    durationMs = 6000,
+                ),
+            )
+            setContent {
+                MiraTheme(darkTheme = false, motionEnabled = false) {
+                    val recorder = remember { createMediaRecorderController() }
+                    ComposeEntryScreen(
+                        date = LocalDateKey("2026-10-31"),
+                        initialBody = "A long recording.",
+                        recorder = recorder,
+                        attachments = attachments,
+                        sourceFor = { null },
+                        onRemoveAttachment = {},
+                        onBodyChange = {}, onDateClick = {}, onCaptureFinished = {}, onMediaPicked = {},
+                        onSave = {}, onCancel = {},
+                        initialAttachmentsOpen = true,
+                    )
+                }
+            }
+            onNodeWithText("Too large for GitHub backup", substring = true).assertIsDisplayed()
+        }
 
     @Test fun sheetOpensOnArrivalFromMedia() = runDesktopComposeUiTest(width = 1000, height = 800) {
         val attachments = listOf(

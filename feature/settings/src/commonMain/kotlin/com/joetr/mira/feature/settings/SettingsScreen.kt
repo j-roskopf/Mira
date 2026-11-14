@@ -28,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.joetr.mira.domain.CaptureQuality
 import com.joetr.mira.domain.DayActivity
+import com.joetr.mira.domain.GITHUB_ARCHIVE_MAX_MEDIA_BYTES
 import com.joetr.mira.domain.LocalDateKey
 import com.joetr.mira.domain.SessionState
 import com.joetr.mira.domain.SyncState
@@ -323,7 +324,13 @@ public fun SettingsScreen(
                 Spacer(Modifier.height(MiraSpacing.md))
                 ToggleRow(
                     label = "Include media in backup",
-                    detail = "Backs up audio and video files as well as entry text.",
+                    detail = if (state.includeMediaInArchive) {
+                        "Commits audio and video up to " +
+                            "${formatBytes(GITHUB_ARCHIVE_MAX_MEDIA_BYTES)}. Larger files stay in " +
+                            "cloud storage and are not added to GitHub."
+                    } else {
+                        "Backs up audio and video files as well as entry text."
+                    },
                     checked = state.includeMediaInArchive,
                     onCheckedChange = actions.onToggleArchiveMedia,
                 )

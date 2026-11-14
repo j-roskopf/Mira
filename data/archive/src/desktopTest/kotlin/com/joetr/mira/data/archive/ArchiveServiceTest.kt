@@ -12,7 +12,9 @@ import com.joetr.mira.network.*
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
-import io.ktor.http.content.TextContent
+import io.ktor.client.engine.mock.toByteArray
+import java.io.File
+import java.util.Base64
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.datetime.TimeZone
@@ -36,6 +38,45 @@ class ArchiveServiceTest {
             assertTrue(fixture.notes.last().contains("[Watch video 1](../../../media/"))
             assertEquals(ArchiveResult.NothingToDo, fixture.service.pushNow("owner", true))
             assertEquals(1, fixture.binaryUploads)
+        } finally { fixture.close() }
+    }
+
+    @Test
+    fun localFileIsStreamedWithoutBeingReadIntoMemory() = runTest {
+        val fixture = Fixture()
+        try {
+            fixture.initialize()
+            val bytes = ByteArray(70_000) { (it % 251).toByte() }
+            fixture.recordFromFile(bytes)
+            assertIs<ArchiveResult.Pushed>(fixture.service.pushNow("owner", true))
+            assertEquals(1, fixture.binaryUploads)
+            assertContentEquals(bytes, fixture.lastBinary)
+        } finally {
+            fixture.db.entriesQueries.selectBlob("video").awaitAsOneOrNull()
+                ?.path?.let { File(it).delete() }
+            fixture.close()
+        }
+    }
+
+    @Test
+    fun oversizedRecordingIsSkippedBeforeItIsRead() = runTest {
+        val fixture = Fixture()
+        try {
+            fixture.initialize()
+            fixture.entries.create("owner", attachments = listOf(
+                Attachment(
+                    "huge",
+                    AttachmentKind.VIDEO,
+                    "",
+                    mime = "video/mp4",
+                    bytes = GITHUB_ARCHIVE_MAX_MEDIA_BYTES + 1,
+                ),
+            ))
+            val result = fixture.service.pushNow("owner", true)
+            assertIs<ArchiveResult.Failed>(result)
+            assertTrue(result.message.contains("100 MB"))
+            assertEquals(0, fixture.binaryUploads)
+            assertNull(fixture.lastBinary)
         } finally { fixture.close() }
     }
 
@@ -191,6 +232,7 @@ class ArchiveServiceTest {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         val db = MiraDatabase(driver)
         var binaryUploads = 0
+        var lastBinary: ByteArray? = null
         val notes = mutableListOf<String>()
         val client = HttpClient(MockEngine { request ->
             val path = request.url.encodedPath
@@ -199,9 +241,13 @@ class ArchiveServiceTest {
                 path.endsWith("/git/commits/head") -> respond("""{"tree":{"sha":"tree"}}""")
                 else -> {
                     if (path.endsWith("/git/blobs")) {
-                        val blob = Json.parseToJsonElement((request.body as TextContent).text).jsonObject
-                        if (blob["encoding"]!!.jsonPrimitive.content == "base64") binaryUploads++
-                        else notes.add(blob["content"]!!.jsonPrimitive.content)
+                        val blob = Json.parseToJsonElement(request.body.toByteArray().decodeToString()).jsonObject
+                        if (blob["encoding"]!!.jsonPrimitive.content == "base64") {
+                            binaryUploads++
+                            lastBinary = Base64.getDecoder().decode(blob["content"]!!.jsonPrimitive.content)
+                        } else {
+                            notes.add(blob["content"]!!.jsonPrimitive.content)
+                        }
                     }
                     respond("""{"sha":"new"}""")
                 }
@@ -228,6 +274,20 @@ class ArchiveServiceTest {
                 Attachment("video", AttachmentKind.VIDEO, "", mime = "video/mp4", bytes = 3),
             ))
         }
+
+        suspend fun recordFromFile(bytes: ByteArray): Entry {
+            val source = File.createTempFile("mira-archive-", ".mp4")
+            source.writeBytes(bytes)
+            try {
+                media.stage("draft", "video", source.absolutePath, null, bytes.size.toLong())
+            } finally {
+                source.delete()
+            }
+            return entries.create("owner", attachments = listOf(
+                Attachment("video", AttachmentKind.VIDEO, "", mime = "video/mp4", bytes = bytes.size.toLong()),
+            ))
+        }
+
         fun close() { client.close(); driver.close() }
     }
 }
