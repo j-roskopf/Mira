@@ -236,10 +236,15 @@ public class AppGraph(
  */
 internal expect fun defaultRetentionPolicy(): RetentionPolicy
 
+/**
+ * Builds the object graph without waiting for the startup job.
+ *
+ * Only the local database is opened here. Session restore, sync, archive and update checks keep
+ * running in the graph's own coroutine while the first composition renders, and the UI reloads as
+ * their flows emit. Awaiting them first would block the first frame on the network.
+ */
 public suspend fun createMiraAppGraph(): AppGraph {
     configureImageLoader()
     val dataLayer = com.joetr.mira.database.createMiraDataLayer()
-    val graph = AppGraph(dataLayer)
-    graph.awaitStartup()
-    return graph
+    return AppGraph(dataLayer)
 }
