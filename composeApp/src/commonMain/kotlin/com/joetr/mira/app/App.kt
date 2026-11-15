@@ -1,14 +1,26 @@
 package com.joetr.mira.app
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionLayout
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import com.joetr.mira.feature.day.DayEntriesSheet
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -20,6 +32,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Modifier
@@ -33,6 +49,7 @@ import com.joetr.mira.domain.Entry
 import com.joetr.mira.domain.LocalDateKey
 import com.joetr.mira.domain.MonthKey
 import com.joetr.mira.domain.SessionState
+import com.joetr.mira.domain.SyncStatus
 import com.joetr.mira.domain.SystemClockZone
 import com.joetr.mira.domain.ThemeMode
 import com.joetr.mira.domain.ownerId
@@ -69,7 +86,11 @@ import com.joetr.mira.ui.motion.miraEditorTransition
 import com.joetr.mira.ui.motion.miraHierarchyTransition
 import com.joetr.mira.ui.motion.miraPageTransition
 import com.joetr.mira.ui.theme.MiraAccent
+import com.joetr.mira.ui.theme.MiraMotion
+import com.joetr.mira.ui.theme.MiraRadii
+import com.joetr.mira.ui.theme.MiraSpacing
 import com.joetr.mira.ui.theme.MiraTheme
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalSharedTransitionApi::class)
@@ -86,6 +107,7 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
         .collectAsState(SessionState.LocalPending(""))
     val pendingUpdateInstallConfirmation by graph.updates.pendingInstallConfirmation.collectAsState()
     val syncRevision by graph.sync.revision.collectAsState()
+    val syncState by graph.sync.state.collectAsState()
 
     val systemDark = isSystemInDarkTheme()
     val dark = when (themeMode) {
@@ -172,6 +194,12 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
     }
 
     MiraTheme(darkTheme = dark, accent = MiraAccent.fromName(accentName), motionEnabled = motionEnabled) {
+        // The local owner id is resolved almost immediately, but until it is there is nothing safe
+        // to write against. Render the canvas rather than letting an entry be saved ownerless.
+        if (ownerId.isBlank()) {
+            Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background))
+            return@MiraTheme
+        }
         BoxWithConstraints(
             Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
         ) {
@@ -205,6 +233,9 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
                     val pageTransition = miraPageTransition(navDirection)
                     val editorTransition = miraEditorTransition(navDirection != NavDirection.Backward)
                     val bottomBarHeight = LocalBottomBarHeight.current
+                    val showSyncIndicator = syncState.status == SyncStatus.SYNCING &&
+                        screenKey !is ComposeKey && screenKey !is AuthKey && screenKey !is SettingsKey
+                    Box(Modifier.fillMaxSize()) {
                     AnimatedContent(
                         targetState = screenKey,
                         contentKey = { if (it is CalendarKey) CalendarKey::class else it },
@@ -275,6 +306,16 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
                             )
                             }
                         }
+                    }
+                    SyncIndicator(
+                        visible = showSyncIndicator,
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(
+                                end = MiraSpacing.lg,
+                                bottom = bottomBarHeight + MiraSpacing.lg,
+                            ),
+                    )
                     }
                 }
             }
@@ -683,6 +724,61 @@ private fun Screen(
         else -> Unit
     }
 }
+
+/**
+ * A small floating pill shown only while a sync is actually running.
+ *
+ * The delay keeps a fast round-trip from flashing a spinner. It sits above the bottom bar so it
+ * never covers the navigation or the compose action.
+ */
+@Composable
+private fun SyncIndicator(visible: Boolean, modifier: Modifier = Modifier) {
+    val colors = MiraTheme.colors
+    var shown by remember { mutableStateOf(false) }
+    LaunchedEffect(visible) {
+        if (visible) {
+            delay(SYNC_INDICATOR_DELAY_MS)
+            shown = true
+        } else {
+            shown = false
+        }
+    }
+    val motion = MiraTheme.motionEnabled
+    AnimatedVisibility(
+        visible = shown && visible,
+        modifier = modifier,
+        enter = if (motion) {
+            fadeIn(tween(MiraMotion.STANDARD_MS)) +
+                slideInVertically(tween(MiraMotion.STANDARD_MS)) { it / 2 }
+        } else {
+            fadeIn(tween(0))
+        },
+        exit = fadeOut(tween(if (motion) MiraMotion.QUICK_MS else 0)),
+    ) {
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(MiraRadii.pill))
+                .background(colors.surfaceRaised)
+                .padding(horizontal = MiraSpacing.md, vertical = MiraSpacing.sm)
+                .semantics { contentDescription = "Syncing" },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(MiraSpacing.sm),
+        ) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(13.dp),
+                strokeWidth = 2.dp,
+                color = colors.inkMuted,
+            )
+            Text(
+                text = "Syncing",
+                style = MiraTheme.type.sectionLabel,
+                color = colors.inkMuted,
+            )
+        }
+    }
+}
+
+private const val SYNC_INDICATOR_DELAY_MS = 350L
 
 private fun Any.topLevel(): TopLevelDestination = when (this) {
     is TimelineKey -> TopLevelDestination.Timeline

@@ -107,35 +107,32 @@ public class AppGraph(
 
     public val authViewModel: AuthViewModel = AuthViewModel(sessionRepository)
 
-    private val startupJob = scope.launch {
-        settings.load()
-        archive.load()
-        firebase.preloadPersistedSession()
-        // No editor is open yet, so anything staged but unreferenced is a leftover from an
-        // abandoned edit and would otherwise be reported as waiting to upload forever.
-        media.pruneAllUnreferencedStaged()
-        val signedInViaOAuth = sessionRepository.resumePendingWebOAuth()
-        sessionRepository.ensureSession()
-        if (signedInViaOAuth) {
-            syncCoordinator.syncAfterSignIn()
-        } else {
-            syncService.syncNow()
-        }
-        archive.refreshSharedConfig()
-        updates.checkForUpdates()
-    }
-
     init {
+        // Startup runs behind the first frame. The UI observes the flows these steps populate and
+        // reloads as they emit, so awaiting them here would only delay the first composition.
+        scope.launch {
+            settings.load()
+            archive.load()
+            firebase.preloadPersistedSession()
+            // No editor is open yet, so anything staged but unreferenced is a leftover from an
+            // abandoned edit and would otherwise be reported as waiting to upload forever.
+            media.pruneAllUnreferencedStaged()
+            val signedInViaOAuth = sessionRepository.resumePendingWebOAuth()
+            sessionRepository.ensureSession()
+            if (signedInViaOAuth) {
+                syncCoordinator.syncAfterSignIn()
+            } else {
+                syncService.syncNow()
+            }
+            archive.refreshSharedConfig()
+            updates.checkForUpdates()
+        }
         AppLifecycleObserver.onForeground = {
             scope.launch {
                 syncService.syncIfStale()
                 archive.refreshSharedConfigIfStale()
             }
         }
-    }
-
-    internal suspend fun awaitStartup() {
-        startupJob.join()
     }
 
     /** The archive's HTTP client, shared with the rest of the app. */
@@ -236,10 +233,15 @@ public class AppGraph(
  */
 internal expect fun defaultRetentionPolicy(): RetentionPolicy
 
+/**
+ * Builds the object graph without waiting for the startup job.
+ *
+ * Only the local database is opened here. Session restore, sync, archive and update checks keep
+ * running in the graph's own coroutine while the first composition renders, and the UI reloads as
+ * their flows emit. Awaiting them first would block the first frame on the network.
+ */
 public suspend fun createMiraAppGraph(): AppGraph {
     configureImageLoader()
     val dataLayer = com.joetr.mira.database.createMiraDataLayer()
-    val graph = AppGraph(dataLayer)
-    graph.awaitStartup()
-    return graph
+    return AppGraph(dataLayer)
 }

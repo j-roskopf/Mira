@@ -38,6 +38,8 @@ public class MainActivity : ComponentActivity() {
         AndroidContextHolder.activity = this
         registerActivityResultLaunchers()
         handleShareIntent(intent)
+        // Only the local database is opened here. Firebase sign-in, sync, archive and update checks
+        // run in the graph's own coroutine so the first frame is not blocked on the network.
         val graph = runBlocking { createMiraAppGraph() }
         registerLifecycleObserver()
         setContent { App(graph) }
