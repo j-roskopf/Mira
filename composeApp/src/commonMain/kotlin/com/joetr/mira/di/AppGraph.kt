@@ -107,35 +107,32 @@ public class AppGraph(
 
     public val authViewModel: AuthViewModel = AuthViewModel(sessionRepository)
 
-    private val startupJob = scope.launch {
-        settings.load()
-        archive.load()
-        firebase.preloadPersistedSession()
-        // No editor is open yet, so anything staged but unreferenced is a leftover from an
-        // abandoned edit and would otherwise be reported as waiting to upload forever.
-        media.pruneAllUnreferencedStaged()
-        val signedInViaOAuth = sessionRepository.resumePendingWebOAuth()
-        sessionRepository.ensureSession()
-        if (signedInViaOAuth) {
-            syncCoordinator.syncAfterSignIn()
-        } else {
-            syncService.syncNow()
-        }
-        archive.refreshSharedConfig()
-        updates.checkForUpdates()
-    }
-
     init {
+        // Startup runs behind the first frame. The UI observes the flows these steps populate and
+        // reloads as they emit, so awaiting them here would only delay the first composition.
+        scope.launch {
+            settings.load()
+            archive.load()
+            firebase.preloadPersistedSession()
+            // No editor is open yet, so anything staged but unreferenced is a leftover from an
+            // abandoned edit and would otherwise be reported as waiting to upload forever.
+            media.pruneAllUnreferencedStaged()
+            val signedInViaOAuth = sessionRepository.resumePendingWebOAuth()
+            sessionRepository.ensureSession()
+            if (signedInViaOAuth) {
+                syncCoordinator.syncAfterSignIn()
+            } else {
+                syncService.syncNow()
+            }
+            archive.refreshSharedConfig()
+            updates.checkForUpdates()
+        }
         AppLifecycleObserver.onForeground = {
             scope.launch {
                 syncService.syncIfStale()
                 archive.refreshSharedConfigIfStale()
             }
         }
-    }
-
-    internal suspend fun awaitStartup() {
-        startupJob.join()
     }
 
     /** The archive's HTTP client, shared with the rest of the app. */
