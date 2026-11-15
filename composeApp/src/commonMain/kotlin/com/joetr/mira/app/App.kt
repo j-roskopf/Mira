@@ -9,6 +9,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -108,6 +109,7 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
     val pendingUpdateInstallConfirmation by graph.updates.pendingInstallConfirmation.collectAsState()
     val syncRevision by graph.sync.revision.collectAsState()
     val syncState by graph.sync.state.collectAsState()
+    val archiveState by graph.archive.status.collectAsState()
 
     val systemDark = isSystemInDarkTheme()
     val dark = when (themeMode) {
@@ -233,7 +235,11 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
                     val pageTransition = miraPageTransition(navDirection)
                     val editorTransition = miraEditorTransition(navDirection != NavDirection.Backward)
                     val bottomBarHeight = LocalBottomBarHeight.current
+                    val archiveError = archiveState.errorMessage
+                    val showArchiveError = archiveState.connected && archiveError != null &&
+                        screenKey !is ComposeKey && screenKey !is AuthKey && screenKey !is SettingsKey
                     val showSyncIndicator = syncState.status == SyncStatus.SYNCING &&
+                        !showArchiveError &&
                         screenKey !is ComposeKey && screenKey !is AuthKey && screenKey !is SettingsKey
                     Box(Modifier.fillMaxSize()) {
                     AnimatedContent(
@@ -309,6 +315,20 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
                     }
                     SyncIndicator(
                         visible = showSyncIndicator,
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(
+                                end = MiraSpacing.lg,
+                                bottom = bottomBarHeight + MiraSpacing.lg,
+                            ),
+                    )
+                    BackupErrorIndicator(
+                        visible = showArchiveError,
+                        message = archiveError.orEmpty(),
+                        onClick = {
+                            navDirection = NavDirection.Forward
+                            backStack.add(SettingsKey)
+                        },
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
                             .padding(
@@ -773,6 +793,57 @@ private fun SyncIndicator(visible: Boolean, modifier: Modifier = Modifier) {
                 text = "Syncing",
                 style = MiraTheme.type.sectionLabel,
                 color = colors.inkMuted,
+            )
+        }
+    }
+}
+
+/**
+ * A persistent pill shown while the last GitHub backup failed.
+ *
+ * Archive pushes happen in the background, so a failure would otherwise stay invisible until the
+ * user opened Settings. Tapping it opens the archive controls that explain and fix the problem.
+ */
+@Composable
+private fun BackupErrorIndicator(
+    visible: Boolean,
+    message: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = MiraTheme.colors
+    val motion = MiraTheme.motionEnabled
+    AnimatedVisibility(
+        visible = visible,
+        modifier = modifier,
+        enter = if (motion) {
+            fadeIn(tween(MiraMotion.STANDARD_MS)) +
+                slideInVertically(tween(MiraMotion.STANDARD_MS)) { it / 2 }
+        } else {
+            fadeIn(tween(0))
+        },
+        exit = fadeOut(tween(if (motion) MiraMotion.QUICK_MS else 0)),
+    ) {
+        Row(
+            modifier = Modifier
+                .clip(RoundedCornerShape(MiraRadii.pill))
+                .background(colors.surfaceRaised)
+                .clickable(onClick = onClick)
+                .padding(horizontal = MiraSpacing.md, vertical = MiraSpacing.sm)
+                .semantics { contentDescription = "GitHub backup failed: $message" },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(MiraSpacing.sm),
+        ) {
+            Box(
+                Modifier
+                    .size(8.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(colors.error),
+            )
+            Text(
+                text = "Backup failed",
+                style = MiraTheme.type.sectionLabel,
+                color = colors.error,
             )
         }
     }

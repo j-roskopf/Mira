@@ -60,6 +60,47 @@ class GitHubRepositoryTest {
         } finally { client.close() }
     }
 
+    @Test
+    fun rejectedTokenIsNotReportedAsAMissingBranch() = runTest {
+        val client = HttpClient(MockEngine { request ->
+            if (request.url.encodedPath.contains("/git/ref/")) {
+                respond("""{"message":"Bad credentials"}""", HttpStatusCode.Unauthorized)
+            } else {
+                respond(repository())
+            }
+        })
+        try {
+            val error = assertFailsWith<IllegalArgumentException> {
+                GitHubArchive(client, "token").existingRepository("me/journal")
+            }
+            assertEquals(
+                "GitHub rejected the saved access token. Reconnect the archive in Settings.",
+                error.message,
+            )
+        } finally { client.close() }
+    }
+
+    @Test
+    fun missingBranchNamesTheRepositoryAndBranch() = runTest {
+        val client = HttpClient(MockEngine { request ->
+            if (request.url.encodedPath.contains("/git/ref/")) {
+                respond("""{"message":"Not Found"}""", HttpStatusCode.NotFound)
+            } else {
+                respond(repository())
+            }
+        })
+        try {
+            val error = assertFailsWith<IllegalArgumentException> {
+                GitHubArchive(client, "token").existingRepository("me/journal")
+            }
+            assertEquals(
+                "Could not find Me/journal or branch 'archive'. Check that the repository " +
+                    "and branch still exist.",
+                error.message,
+            )
+        } finally { client.close() }
+    }
+
     private fun repository(private: Boolean = true, push: Boolean = true, archived: Boolean = false) =
         """{"owner":{"login":"Me"},"name":"journal","default_branch":"archive","private":$private,"permissions":{"push":$push},"archived":$archived}"""
 }
