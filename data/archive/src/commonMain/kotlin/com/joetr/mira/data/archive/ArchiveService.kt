@@ -53,6 +53,7 @@ public class ArchiveService(
     public val status: StateFlow<ArchiveStatus> = _status.asStateFlow()
 
     private var debounceJob: Job? = null
+    private var retryJob: Job? = null
     private var lastSharedConfigRefreshAt: Long = 0L
 
     public suspend fun load() {
@@ -62,14 +63,22 @@ public class ArchiveService(
             connected = token != null && slug != null,
             repoSlug = slug,
             lastPushedAt = read(KEY_LAST_PUSH)?.toLongOrNull(),
+            errorMessage = read(KEY_LAST_ERROR),
         )
     }
 
     public suspend fun connect(token: String, target: ArchiveTarget) {
+        retryJob?.cancel()
+        retryJob = null
         write(KEY_TOKEN, token)
         write(KEY_REPO, target.slug)
         write(KEY_BRANCH, target.branch)
-        _status.value = _status.value.copy(connected = true, repoSlug = target.slug)
+        write(KEY_LAST_ERROR, "")
+        _status.value = _status.value.copy(
+            connected = true,
+            repoSlug = target.slug,
+            errorMessage = null,
+        )
         publishTarget(target)
     }
 
@@ -82,7 +91,10 @@ public class ArchiveService(
     public suspend fun authorize(token: String): Boolean {
         val slug = read(KEY_REPO) ?: return false
         val branch = read(KEY_BRANCH) ?: "main"
+        retryJob?.cancel()
+        retryJob = null
         write(KEY_TOKEN, token)
+        write(KEY_LAST_ERROR, "")
         _status.value = _status.value.copy(
             connected = true,
             repoSlug = slug,
@@ -141,11 +153,14 @@ public class ArchiveService(
             return
         }
         if (!remote.enabled) {
+            retryJob?.cancel()
+            retryJob = null
             mutex.withLock {
                 write(KEY_TOKEN, "")
                 write(KEY_REPO, "")
                 write(KEY_BRANCH, "")
                 write(KEY_LAST_PUSH, "")
+                write(KEY_LAST_ERROR, "")
                 _status.value = ArchiveStatus()
             }
             return
@@ -155,10 +170,11 @@ public class ArchiveService(
             write(KEY_OWNER, session.localId)
             write(KEY_REPO, slug)
             write(KEY_BRANCH, remote.branch)
+            // Do not clear an existing failure here: a config refresh says nothing about whether
+            // the last backup reached GitHub.
             _status.value = _status.value.copy(
                 connected = read(KEY_TOKEN) != null,
                 repoSlug = slug,
-                errorMessage = null,
             )
         }
     }
@@ -167,9 +183,12 @@ public class ArchiveService(
     public suspend fun disconnect() {
         debounceJob?.cancel()
         debounceJob = null
+        retryJob?.cancel()
+        retryJob = null
         mutex.withLock {
             write(KEY_TOKEN, "")
             write(KEY_LAST_PUSH, "")
+            write(KEY_LAST_ERROR, "")
             _status.value = _status.value.copy(
                 connected = false,
                 pushing = false,
@@ -187,6 +206,8 @@ public class ArchiveService(
     public suspend fun removeArchiveTarget() {
         debounceJob?.cancel()
         debounceJob = null
+        retryJob?.cancel()
+        retryJob = null
         val firebase = firebase
         val session = if (firebase != null) {
             try {
@@ -220,6 +241,7 @@ public class ArchiveService(
             write(KEY_REPO, "")
             write(KEY_BRANCH, "")
             write(KEY_LAST_PUSH, "")
+            write(KEY_LAST_ERROR, "")
             _status.value = ArchiveStatus()
         }
     }
@@ -231,7 +253,33 @@ public class ArchiveService(
         debounceJob?.cancel()
         debounceJob = debounceScope.launch {
             delay(PUSH_DEBOUNCE_MS)
-            pushNow(ownerIdOrNull() ?: return@launch, includeMedia = read("archive_include_media") == "true")
+            pushNow(ownerIdOrNull() ?: return@launch, includeMedia = read(KEY_INCLUDE_MEDIA) == "true")
+        }
+    }
+
+    /**
+     * Retries a failed push without waiting for the next local write.
+     *
+     * Called on app foreground and by the scheduled retry after a failure. A successful push
+     * clears the error, which also dismisses the persistent backup-failure indicator.
+     */
+    public suspend fun retryIfNeeded() {
+        if (!_status.value.connected) return
+        if (_status.value.errorMessage == null) return
+        if (!isNetworkAvailable()) return
+        val ownerId = ownerIdOrNull() ?: return
+        pushNow(ownerId, includeMedia = read(KEY_INCLUDE_MEDIA) == "true")
+    }
+
+    private fun scheduleRetry() {
+        val retryScope = scope ?: return
+        if (!_status.value.connected) return
+        retryJob?.cancel()
+        retryJob = retryScope.launch {
+            delay(RETRY_DELAY_MS)
+            // Clear first so a success inside the retry does not cancel this coroutine itself.
+            retryJob = null
+            retryIfNeeded()
         }
     }
 
@@ -329,17 +377,23 @@ public class ArchiveService(
                     mediaKeys.forEach { write(it, "true") }
                     noteVersions.forEach { (key, version) -> write(key, version) }
                     write(KEY_LAST_PUSH, now.toString())
+                    write(KEY_LAST_ERROR, "")
+                    retryJob?.cancel()
+                    retryJob = null
                     _status.value = _status.value.copy(
                         pushing = false,
                         lastPushedAt = now,
                         errorMessage = null,
                     )
                 }
-                is ArchiveResult.Failed ->
+                is ArchiveResult.Failed -> {
+                    write(KEY_LAST_ERROR, result.message)
                     _status.value = _status.value.copy(
                         pushing = false,
                         errorMessage = result.message,
                     )
+                    scheduleRetry()
+                }
                 ArchiveResult.NothingToDo ->
                     _status.value = _status.value.copy(pushing = false)
             }
@@ -362,7 +416,9 @@ public class ArchiveService(
             if (problems.isNotEmpty() && result !is ArchiveResult.Failed) {
                 val message = "Backup incomplete. ${problems.joinToString(" ")} " +
                     "Available files were backed up; skipped recordings will be retried."
+                write(KEY_LAST_ERROR, message)
                 _status.value = _status.value.copy(errorMessage = message)
+                scheduleRetry()
                 ArchiveResult.Failed(message)
             } else {
                 result
@@ -417,9 +473,12 @@ public class ArchiveService(
         const val KEY_REPO = "github_archive_repo"
         const val KEY_BRANCH = "github_archive_branch"
         const val KEY_LAST_PUSH = "github_archive_last_push"
+        const val KEY_LAST_ERROR = "github_archive_last_error"
         const val KEY_OWNER = "github_archive_owner_id"
+        const val KEY_INCLUDE_MEDIA = "archive_include_media"
 
         const val PUSH_DEBOUNCE_MS: Long = 5 * 60 * 1000
+        const val RETRY_DELAY_MS: Long = 15 * 60 * 1000
         const val MAX_PER_PUSH = 500
 
         /**

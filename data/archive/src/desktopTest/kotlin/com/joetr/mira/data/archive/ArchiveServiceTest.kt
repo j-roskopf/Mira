@@ -13,6 +13,7 @@ import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
 import io.ktor.client.engine.mock.toByteArray
+import io.ktor.http.HttpStatusCode
 import java.io.File
 import java.util.Base64
 import kotlinx.coroutines.test.runTest
@@ -182,6 +183,68 @@ class ArchiveServiceTest {
             assertTrue(
                 db.entriesQueries.getSetting("github_archive_token").awaitAsOneOrNull().isNullOrBlank(),
             )
+        }
+    }
+
+    @Test
+    fun failedBackupIsPersistedAndRetried() = runTest {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        val db = MiraDatabase(driver)
+        MiraDatabase.Schema.create(driver).await()
+        var authorized = false
+        val client = HttpClient(MockEngine { request ->
+            val path = request.url.encodedPath
+            when {
+                path.contains("/git/ref/heads/") ->
+                    if (authorized) {
+                        respond("""{"object":{"sha":"head"}}""")
+                    } else {
+                        respond("""{"message":"Bad credentials"}""", HttpStatusCode.Unauthorized)
+                    }
+                path.endsWith("/git/commits/head") -> respond("""{"tree":{"sha":"tree"}}""")
+                else -> respond("""{"sha":"new"}""")
+            }
+        })
+        try {
+            val clock = object : ClockZone {
+                override fun nowMillis() = 1_800_000_000_000L
+                override fun zone() = TimeZone.UTC
+            }
+            val entries = EntryRepository(db, clock)
+            val firebase = MiraFirebase(client, object : FirebaseSessionStore {
+                override suspend fun load(): FirebaseSession? = null
+                override suspend fun save(session: FirebaseSession?) {}
+            })
+            val media = MediaRepository(db, firebase, entries, RetentionPolicy.KeepAll)
+            val service = ArchiveService(db, entries, media, client)
+            service.connect("token", ArchiveTarget("me", "journal", "main"))
+            entries.create("owner")
+
+            assertIs<ArchiveResult.Failed>(service.pushNow("owner", false))
+            val message = service.status.value.errorMessage
+            assertNotNull(message)
+            assertTrue(message.contains("access token"))
+            assertEquals(
+                message,
+                db.entriesQueries.getSetting("github_archive_last_error").awaitAsOneOrNull(),
+            )
+
+            // A fresh launch restores the failure so the indicator survives a restart.
+            val restored = ArchiveService(db, entries, media, client)
+            restored.load()
+            assertEquals(message, restored.status.value.errorMessage)
+            restored.rememberOwner("owner")
+
+            authorized = true
+            restored.retryIfNeeded()
+            assertNull(restored.status.value.errorMessage)
+            assertTrue(
+                db.entriesQueries.getSetting("github_archive_last_error").awaitAsOneOrNull()
+                    .isNullOrBlank(),
+            )
+        } finally {
+            client.close()
+            driver.close()
         }
     }
 

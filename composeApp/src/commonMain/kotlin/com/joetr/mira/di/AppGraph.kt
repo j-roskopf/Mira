@@ -125,12 +125,14 @@ public class AppGraph(
                 syncService.syncNow()
             }
             archive.refreshSharedConfig()
+            archive.retryIfNeeded()
             updates.checkForUpdates()
         }
         AppLifecycleObserver.onForeground = {
             scope.launch {
                 syncService.syncIfStale()
                 archive.refreshSharedConfigIfStale()
+                archive.retryIfNeeded()
             }
         }
     }

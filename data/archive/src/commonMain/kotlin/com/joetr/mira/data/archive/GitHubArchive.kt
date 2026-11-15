@@ -10,7 +10,9 @@ import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
+import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
+import io.ktor.http.isSuccess
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.coroutines.CancellationException
@@ -102,9 +104,8 @@ public class GitHubArchive(
             fields.getValue("name").jsonPrimitive.content,
             fields.getValue("default_branch").jsonPrimitive.content,
         )
-        require(refSha(target) != null) {
-            "The repository needs an initial commit. Add a README on GitHub, then try again."
-        }
+        val ref = refSha(target)
+        if (ref is RefLookup.Failed) throw IllegalArgumentException(ref.message)
         return target
     }
 
@@ -158,7 +159,9 @@ public class GitHubArchive(
         if (entries.isEmpty() && mediaFiles.isEmpty()) return ArchiveResult.NothingToDo
 
         return runCatching {
-            val headSha = refSha(target) ?: return ArchiveResult.Failed("Branch not found")
+            val head = refSha(target)
+            if (head is RefLookup.Failed) return ArchiveResult.Failed(head.message)
+            val headSha = (head as RefLookup.Found).sha
             val baseTree = commitTreeSha(target, headSha)
                 ?: return ArchiveResult.Failed("Could not read the current tree")
 
@@ -201,14 +204,59 @@ public class GitHubArchive(
         return "Sync $count $noun$range"
     }
 
-    private suspend fun refSha(target: ArchiveTarget): String? {
-        val body = runCatching {
-            githubGet("$api/repos/${target.slug}/git/ref/heads/${target.branch}")
-        }.getOrNull() ?: return null
-        return runCatching {
+    private suspend fun refSha(target: ArchiveTarget): RefLookup {
+        val response = try {
+            httpClient.get("$api/repos/${target.slug}/git/ref/heads/${target.branch}") {
+                githubHeaders()
+                // Read the status ourselves so a revoked token or a renamed repository is not
+                // reported as a missing branch.
+                expectSuccess = false
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            return RefLookup.Failed(
+                "Could not reach GitHub to check ${target.slug}. Check your connection and try again.",
+            )
+        }
+        val body = response.bodyAsText()
+        if (!response.status.isSuccess()) {
+            return RefLookup.Failed(refErrorMessage(response.status, target, body))
+        }
+        val sha = runCatching {
             json.parseToJsonElement(body).jsonObject["object"]
                 ?.jsonObject?.get("sha")?.jsonPrimitive?.content
         }.getOrNull()
+        return if (sha != null) {
+            RefLookup.Found(sha)
+        } else {
+            RefLookup.Failed("GitHub returned an unexpected response for ${target.slug}.")
+        }
+    }
+
+    private fun refErrorMessage(
+        status: HttpStatusCode,
+        target: ArchiveTarget,
+        body: String,
+    ): String = when (status) {
+        HttpStatusCode.Unauthorized ->
+            "GitHub rejected the saved access token. Reconnect the archive in Settings."
+        HttpStatusCode.Forbidden ->
+            if (body.contains("rate limit", ignoreCase = true)) {
+                "GitHub's rate limit was reached. Try again later."
+            } else {
+                "GitHub denied access to ${target.slug}. Reconnect the archive or check your permissions."
+            }
+        HttpStatusCode.NotFound ->
+            "Could not find ${target.slug} or branch '${target.branch}'. Check that the repository " +
+                "and branch still exist."
+        else ->
+            "GitHub returned HTTP ${status.value} while checking ${target.slug}."
+    }
+
+    private sealed interface RefLookup {
+        data class Found(val sha: String) : RefLookup
+        data class Failed(val message: String) : RefLookup
     }
 
     private suspend fun commitTreeSha(target: ArchiveTarget, commitSha: String): String? {
@@ -316,13 +364,27 @@ public class GitHubArchive(
     }
 
     private suspend fun updateRef(target: ArchiveTarget, commitSha: String) {
-        httpClient.patch("$api/repos/${target.slug}/git/refs/heads/${target.branch}") {
+        val response = httpClient.patch("$api/repos/${target.slug}/git/refs/heads/${target.branch}") {
             githubHeaders()
+            expectSuccess = false
             setBody(
                 buildJsonObject {
                     put("sha", JsonPrimitive(commitSha))
                     put("force", JsonPrimitive(false))
                 }.toString(),
+            )
+        }
+        if (!response.status.isSuccess()) {
+            throw IllegalStateException(
+                when (response.status) {
+                    HttpStatusCode.Unauthorized ->
+                        "GitHub rejected the saved access token. Reconnect the archive in Settings."
+                    HttpStatusCode.NotFound ->
+                        "Branch '${target.branch}' no longer exists in ${target.slug}."
+                    HttpStatusCode.Conflict, HttpStatusCode.UnprocessableEntity ->
+                        "${target.slug} changed on GitHub while backing up. Try again."
+                    else -> "GitHub returned HTTP ${response.status.value} while updating ${target.slug}."
+                },
             )
         }
     }
