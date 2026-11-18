@@ -467,12 +467,12 @@ private fun MediaAttachment(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(MiraSpacing.xs),
             ) {
-                MiraIcon(MiraIcons.GitHub, tint = colors.error, size = 14.dp)
+                MiraIcon(MiraIcons.GitHub, tint = colors.inkMuted, size = 14.dp)
                 Text(
-                    text = "Too large for GitHub backup (over " +
-                        "${formatBytes(GITHUB_ARCHIVE_MAX_MEDIA_BYTES)}). It stays in cloud storage.",
+                    text = "Large recording (over ${formatBytes(GITHUB_ARCHIVE_MAX_MEDIA_BYTES)}). " +
+                        "It will be compressed or split into parts for GitHub backup.",
                     style = MiraTheme.type.meta,
-                    color = colors.error,
+                    color = colors.inkMuted,
                 )
             }
         }

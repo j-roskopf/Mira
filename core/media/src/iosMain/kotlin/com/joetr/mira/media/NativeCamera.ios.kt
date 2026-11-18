@@ -28,6 +28,7 @@ import platform.UIKit.UIGraphicsEndImageContext
 import platform.UIKit.UIGraphicsGetImageFromCurrentImageContext
 import platform.UIKit.UIImage
 import platform.UIKit.UIImageJPEGRepresentation
+import platform.UIKit.UIImageOrientation
 import platform.UIKit.UIImagePickerController
 import platform.UIKit.UIImagePickerControllerDelegateProtocol
 import platform.UIKit.UIImagePickerControllerMediaURL
@@ -191,8 +192,12 @@ private fun UIImage.jpegBytes(quality: CaptureQuality): ByteArray? {
     if (width <= 0.0 || height <= 0.0) return null
 
     val longEdge = maxOf(width, height)
-    val data = if (longEdge > maxLongEdge) {
-        val scale = maxLongEdge / longEdge
+    val downscale = longEdge > maxLongEdge
+    // `UIImageJPEGRepresentation` writes the raw pixel buffer and can drop the orientation flag, so
+    // an un-rotated photo saved elsewhere may come out sideways. Redraw whenever the image is not
+    // already upright, baking the orientation into the pixels.
+    val data = if (downscale || imageOrientation != UIImageOrientation.UIImageOrientationUp) {
+        val scale = if (downscale) maxLongEdge / longEdge else 1.0
         val targetWidth = width * scale
         val targetHeight = height * scale
         UIGraphicsBeginImageContextWithOptions(CGSizeMake(targetWidth, targetHeight), false, 1.0)

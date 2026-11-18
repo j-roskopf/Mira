@@ -60,7 +60,7 @@ class ArchiveServiceTest {
     }
 
     @Test
-    fun oversizedRecordingIsSkippedBeforeItIsRead() = runTest {
+    fun recordingAboveTheLfsCeilingIsSkippedBeforeItIsRead() = runTest {
         val fixture = Fixture()
         try {
             fixture.initialize()
@@ -70,12 +70,12 @@ class ArchiveServiceTest {
                     AttachmentKind.VIDEO,
                     "",
                     mime = "video/mp4",
-                    bytes = GITHUB_ARCHIVE_MAX_MEDIA_BYTES + 1,
+                    bytes = GITHUB_ARCHIVE_MAX_SOURCE_BYTES + 1,
                 ),
             ))
             val result = fixture.service.pushNow("owner", true)
             assertIs<ArchiveResult.Failed>(result)
-            assertTrue(result.message.contains("100 MB"))
+            assertTrue(result.message.contains("too large"))
             assertEquals(0, fixture.binaryUploads)
             assertNull(fixture.lastBinary)
         } finally { fixture.close() }
@@ -291,11 +291,70 @@ class ArchiveServiceTest {
         }
     }
 
-    private class Fixture {
+    @Test
+    fun oversizedRecordingIsSplitIntoLosslessParts() = runTest {
+        val fixture = Fixture(targetBytes = 9, hardLimit = 9, partLimit = 5)
+        try {
+            fixture.initialize()
+            val bytes = ByteArray(23) { it.toByte() }
+            fixture.recordFromFile(bytes)
+            assertIs<ArchiveResult.Pushed>(fixture.service.pushNow("owner", true))
+            assertEquals(5, fixture.binaryUploads)
+            val note = fixture.notes.last()
+            assertTrue(note.contains("split into 5 parts"))
+            assertTrue(note.contains("part 5"))
+            assertEquals(ArchiveResult.NothingToDo, fixture.service.pushNow("owner", true))
+            assertEquals(5, fixture.binaryUploads)
+        } finally { fixture.close() }
+    }
+
+    @Test
+    fun progressIsVisibleWhileMediaIsUploading() = runTest {
+        val fixture = Fixture()
+        try {
+            fixture.initialize()
+            fixture.record()
+            var observed: ArchiveProgress? = null
+            fixture.onBeforeBlob = { observed = fixture.service.status.value.progress }
+            assertIs<ArchiveResult.Pushed>(fixture.service.pushNow("owner", true))
+            val progress = assertNotNull(observed)
+            assertEquals(1, progress.total)
+            assertEquals(1, progress.completed)
+            assertNull(fixture.service.status.value.progress)
+            assertFalse(fixture.service.status.value.pushing)
+        } finally { fixture.close() }
+    }
+
+    @Test
+    fun anInterruptedPushIsRetriedWhenTheAppReturns() = runTest {
+        val fixture = Fixture()
+        try {
+            fixture.initialize()
+            fixture.record()
+            fixture.service.rememberOwner("owner")
+            fixture.db.entriesQueries.putSetting("archive_include_media", "true")
+            fixture.db.entriesQueries.putSetting("github_archive_pending", "true")
+            // No error was recorded: the process simply died mid-push.
+            fixture.service.retryIfNeeded()
+            assertEquals(1, fixture.binaryUploads)
+            assertNull(
+                fixture.db.entriesQueries.getSetting("github_archive_pending")
+                    .awaitAsOneOrNull()?.takeIf { it.isNotBlank() },
+            )
+        } finally { fixture.close() }
+    }
+
+    private class Fixture(
+        private val targetBytes: Long = GITHUB_ARCHIVE_TARGET_MEDIA_BYTES,
+        private val hardLimit: Long = GITHUB_ARCHIVE_MAX_MEDIA_BYTES,
+        private val partLimit: Long = GITHUB_ARCHIVE_PART_MAX_BYTES,
+        private val maxSource: Long = GITHUB_ARCHIVE_MAX_SOURCE_BYTES,
+    ) {
         val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
         val db = MiraDatabase(driver)
         var binaryUploads = 0
         var lastBinary: ByteArray? = null
+        var onBeforeBlob: (suspend () -> Unit)? = null
         val notes = mutableListOf<String>()
         val client = HttpClient(MockEngine { request ->
             val path = request.url.encodedPath
@@ -304,6 +363,7 @@ class ArchiveServiceTest {
                 path.endsWith("/git/commits/head") -> respond("""{"tree":{"sha":"tree"}}""")
                 else -> {
                     if (path.endsWith("/git/blobs")) {
+                        onBeforeBlob?.invoke()
                         val blob = Json.parseToJsonElement(request.body.toByteArray().decodeToString()).jsonObject
                         if (blob["encoding"]!!.jsonPrimitive.content == "base64") {
                             binaryUploads++
@@ -326,7 +386,13 @@ class ArchiveServiceTest {
             override suspend fun save(session: FirebaseSession?) {}
         })
         val media = MediaRepository(db, firebase, entries, RetentionPolicy.KeepAll)
-        val service = ArchiveService(db, entries, media, client)
+        val service = ArchiveService(
+            db, entries, media, client,
+            targetMediaBytes = targetBytes,
+            hardLimitBytes = hardLimit,
+            partLimitBytes = partLimit,
+            maxSourceBytes = maxSource,
+        )
         suspend fun initialize() {
             MiraDatabase.Schema.create(driver).await()
             service.connect("token", ArchiveTarget("me", "journal", "main"))

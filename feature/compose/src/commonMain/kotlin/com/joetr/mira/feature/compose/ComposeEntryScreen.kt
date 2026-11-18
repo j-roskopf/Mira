@@ -91,6 +91,7 @@ import com.joetr.mira.media.MediaRecorderController
 import com.joetr.mira.media.MediaSource
 import com.joetr.mira.media.RecordingState
 import com.joetr.mira.media.pickMedia
+import com.joetr.mira.media.saveToPhotoRoll
 import com.joetr.mira.media.VideoAspectRatio
 import com.joetr.mira.media.VideoCaptureSettings
 import com.joetr.mira.media.VideoQuality
@@ -194,6 +195,16 @@ public fun ComposeEntryScreen(
 
     val state by recorder.state.collectAsState()
 
+    // Every captured photo/video lands in the journal attachment list and, where the platform has
+    // one, the device's own photo roll too. Audio has no place in a photo roll.
+    fun deliverCapture(result: CaptureResult) {
+        showAttachments = true
+        onCaptureFinished(result)
+        if (result.kind != CaptureKind.AUDIO) {
+            scope.launch { saveToPhotoRoll(result) }
+        }
+    }
+
     // Removing the last attachment closes the sheet rather than leaving an empty panel behind.
     LaunchedEffect(attachments.isEmpty()) {
         if (attachments.isEmpty()) showAttachments = false
@@ -217,8 +228,7 @@ public fun ComposeEntryScreen(
                 )
                 activeCapture = null
                 if (result != null) {
-                    showAttachments = true
-                    onCaptureFinished(result)
+                    deliverCapture(result)
                 }
             }
         }
@@ -230,8 +240,7 @@ public fun ComposeEntryScreen(
 
     LaunchedEffect(state) {
         val finished = state as? RecordingState.Finished ?: return@LaunchedEffect
-        showAttachments = true
-        onCaptureFinished(finished.result)
+        deliverCapture(finished.result)
         activeCapture = null
         cameraOpen = false
     }
@@ -262,8 +271,7 @@ public fun ComposeEntryScreen(
                     )
                     activeCapture = null
                     if (result != null) {
-                        showAttachments = true
-                        onCaptureFinished(result)
+                        deliverCapture(result)
                     }
                 }
             } else {

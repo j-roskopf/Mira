@@ -21,4 +21,24 @@ class EntryMarkdownTest {
         assertFalse(markdown.contains("missing.mp4"))
         assertFalse(entry.toMarkdown().contains("## Recordings"))
     }
+
+    @Test
+    fun splitRecordingListsOrderedPartsAndReassembly() {
+        val video = Attachment("video", AttachmentKind.VIDEO, "", mime = "video/mp4")
+        val entry = Entry(
+            id = "entry", ownerId = "owner", localDate = LocalDateKey("2026-10-31"),
+            createdAt = 1L, createdTz = "UTC", updatedAt = 1L,
+            attachments = listOf(video),
+        )
+        val parts = listOf(
+            video.archivePartPath(entry, 1, 2),
+            video.archivePartPath(entry, 2, 2),
+        )
+        val markdown = entry.toMarkdown(mapOf(video.id to ArchivedMedia(parts)))
+        assertTrue(markdown.contains("split into 2 parts"))
+        assertTrue(markdown.contains("[part 1](../../../${parts[0]})"))
+        assertTrue(markdown.contains("[part 2](../../../${parts[1]})"))
+        assertTrue(markdown.contains("cat part*.mp4"))
+    }
+
 }

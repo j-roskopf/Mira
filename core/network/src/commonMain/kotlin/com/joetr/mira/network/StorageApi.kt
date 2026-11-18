@@ -1,17 +1,21 @@
 package com.joetr.mira.network
 
 import io.ktor.client.HttpClient
+import io.ktor.client.plugins.expectSuccess
 import io.ktor.client.request.delete
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
+import io.ktor.client.request.prepareGet
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsBytes
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.content.ByteArrayContent
 import io.ktor.http.content.OutgoingContent
 import io.ktor.http.contentType
+import io.ktor.http.isSuccess
 import com.joetr.mira.platform.MiraConfig
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -100,6 +104,32 @@ public class StorageApi(
         }.bodyAsBytes()
     }
 
+    /**
+     * Downloads an object straight to [path], one chunk at a time.
+     *
+     * The archive needs the bytes of a recording whose local copy was evicted or never existed on
+     * this device. `download` returns a `ByteArray`, which for a 75 MB video is already enough to
+     * exhaust a mobile heap before anything is uploaded. Writing to disk keeps the peak tiny and
+     * lets the archive stream the file into GitHub afterwards.
+     */
+    public suspend fun downloadToFile(
+        idToken: String,
+        objectName: String,
+        path: String,
+    ): Boolean {
+        val encoded = objectName.encodeURLPathComponent()
+        return runCatching {
+            httpClient.prepareGet(
+                "https://firebasestorage.googleapis.com/v0/b/$bucket/o/$encoded?alt=media",
+            ) {
+                header("Authorization", "Bearer $idToken")
+                expectSuccess = false
+            }.execute { response ->
+                response.status.isSuccess() && writeResponseBodyToFile(response, path)
+            }
+        }.getOrDefault(false)
+    }
+
     public suspend fun deleteObject(idToken: String, objectName: String) {
         val encoded = objectName.encodeURLPathComponent()
         httpClient.delete("https://firebasestorage.googleapis.com/v0/b/$bucket/o/$encoded") {
@@ -134,6 +164,9 @@ public class StorageApi(
         return "https://firebasestorage.googleapis.com/v0/b/$bucket/o/$encoded?alt=media&token=$token"
     }
 }
+
+/** Platform file writer for [downloadToFile]; false when the platform has no filesystem. */
+internal expect suspend fun writeResponseBodyToFile(response: HttpResponse, path: String): Boolean
 
 internal fun String.encodeURLPathComponent(): String = buildString {
     for (ch in this@encodeURLPathComponent) {

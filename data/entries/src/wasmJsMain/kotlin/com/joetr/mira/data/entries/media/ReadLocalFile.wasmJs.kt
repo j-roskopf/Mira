@@ -11,3 +11,7 @@ internal actual suspend fun preserveLocalFile(path: String): String = path
 internal actual suspend fun localFileExists(path: String): Boolean = false
 
 internal actual suspend fun deletePreservedFile(path: String) = Unit
+
+internal actual suspend fun archiveTempFilePath(attachmentId: String): String? = null
+
+internal actual suspend fun deleteArchiveTempFile(path: String) = Unit

@@ -37,3 +37,15 @@ internal actual suspend fun deletePreservedFile(path: String) {
         if (file.parentFile?.canonicalFile == directory.canonicalFile) file.delete()
     }
 }
+
+internal actual suspend fun archiveTempFilePath(attachmentId: String): String? =
+    withContext(Dispatchers.IO) {
+        runCatching {
+            val directory = File(AndroidContextHolder.application.cacheDir, "archive").apply { mkdirs() }
+            File(directory, "$attachmentId.mp4").absolutePath
+        }.getOrNull()
+    }
+
+internal actual suspend fun deleteArchiveTempFile(path: String) {
+    withContext(Dispatchers.IO) { File(path).delete() }
+}

@@ -168,6 +168,7 @@ internal fun SettingsRoute(
             archiveRepo = archiveStatus.repoSlug,
             archiveConnected = archiveStatus.connected,
             archivePushing = archiveStatus.pushing,
+            archiveProgress = archiveStatus.progress,
             archiveError = archiveStatus.errorMessage,
             includeMediaInArchive = includeMedia,
             videoUploadUnmeteredOnly = videoUnmetered,

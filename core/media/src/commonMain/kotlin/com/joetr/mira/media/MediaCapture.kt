@@ -162,6 +162,16 @@ public expect suspend fun captureWithNativeCamera(
     quality: CaptureQuality = CaptureQuality.MEDIUM,
 ): CaptureResult?
 
+/**
+ * Also publishes a captured [CaptureResult] to the device's own photo roll, so a photo or video
+ * taken for a journal entry is visible from the system Gallery / Photos app too.
+ *
+ * Audio results are ignored. It is deliberately best-effort: the journal already keeps its own
+ * durable copy, so a device that refuses the insert (permission denied, platform without a shared
+ * library such as desktop or web) must not fail the capture.
+ */
+public expect suspend fun saveToPhotoRoll(result: CaptureResult)
+
 public expect fun createMediaRecorderController(): MediaRecorderController
 
 /**

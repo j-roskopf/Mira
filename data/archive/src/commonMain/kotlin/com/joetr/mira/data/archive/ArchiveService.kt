@@ -5,8 +5,12 @@ import com.joetr.mira.data.entries.EntryRepository
 import com.joetr.mira.data.entries.media.ArchiveMediaSource
 import com.joetr.mira.data.entries.media.MediaRepository
 import com.joetr.mira.db.MiraDatabase
+import com.joetr.mira.domain.Attachment
 import com.joetr.mira.domain.Entry
 import com.joetr.mira.domain.GITHUB_ARCHIVE_MAX_MEDIA_BYTES
+import com.joetr.mira.domain.GITHUB_ARCHIVE_MAX_SOURCE_BYTES
+import com.joetr.mira.domain.GITHUB_ARCHIVE_PART_MAX_BYTES
+import com.joetr.mira.domain.GITHUB_ARCHIVE_TARGET_MEDIA_BYTES
 import com.joetr.mira.network.MiraFirebase
 import com.joetr.mira.network.RemoteArchiveConfig
 import com.joetr.mira.platform.currentTimeMillis
@@ -25,12 +29,35 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
+/** What the archive is doing right now, so a long push is not an opaque spinner. */
+public enum class ArchivePhase {
+    PREPARING,
+    COMPRESSING,
+    UPLOADING,
+    COMMITTING,
+}
+
+/**
+ * Live progress for one push.
+ *
+ * [completed] counts attachments reached so far; [label] names the current one. The timestamp lets
+ * the UI show elapsed time while a large recording is being re-encoded.
+ */
+public data class ArchiveProgress(
+    val phase: ArchivePhase,
+    val completed: Int,
+    val total: Int,
+    val label: String? = null,
+    val startedAt: Long,
+)
+
 public data class ArchiveStatus(
     val connected: Boolean = false,
     val repoSlug: String? = null,
     val lastPushedAt: Long? = null,
     val pushing: Boolean = false,
     val errorMessage: String? = null,
+    val progress: ArchiveProgress? = null,
 )
 
 /**
@@ -46,6 +73,10 @@ public class ArchiveService(
     private val httpClient: HttpClient,
     private val scope: CoroutineScope? = null,
     private val firebase: MiraFirebase? = null,
+    private val targetMediaBytes: Long = GITHUB_ARCHIVE_TARGET_MEDIA_BYTES,
+    private val hardLimitBytes: Long = GITHUB_ARCHIVE_MAX_MEDIA_BYTES,
+    private val partLimitBytes: Long = GITHUB_ARCHIVE_PART_MAX_BYTES,
+    private val maxSourceBytes: Long = GITHUB_ARCHIVE_MAX_SOURCE_BYTES,
 ) {
     private val queries get() = database.entriesQueries
     private val mutex = Mutex()
@@ -74,10 +105,12 @@ public class ArchiveService(
         write(KEY_REPO, target.slug)
         write(KEY_BRANCH, target.branch)
         write(KEY_LAST_ERROR, "")
+        write(KEY_PENDING, "")
         _status.value = _status.value.copy(
             connected = true,
             repoSlug = target.slug,
             errorMessage = null,
+            progress = null,
         )
         publishTarget(target)
     }
@@ -95,10 +128,12 @@ public class ArchiveService(
         retryJob = null
         write(KEY_TOKEN, token)
         write(KEY_LAST_ERROR, "")
+        write(KEY_PENDING, "")
         _status.value = _status.value.copy(
             connected = true,
             repoSlug = slug,
             errorMessage = null,
+            progress = null,
         )
         publishTarget(ArchiveTarget(slug.substringBefore('/'), slug.substringAfter('/'), branch))
         return true
@@ -161,6 +196,7 @@ public class ArchiveService(
                 write(KEY_BRANCH, "")
                 write(KEY_LAST_PUSH, "")
                 write(KEY_LAST_ERROR, "")
+                write(KEY_PENDING, "")
                 _status.value = ArchiveStatus()
             }
             return
@@ -189,10 +225,12 @@ public class ArchiveService(
             write(KEY_TOKEN, "")
             write(KEY_LAST_PUSH, "")
             write(KEY_LAST_ERROR, "")
+            write(KEY_PENDING, "")
             _status.value = _status.value.copy(
                 connected = false,
                 pushing = false,
                 errorMessage = null,
+                progress = null,
             )
         }
     }
@@ -242,6 +280,7 @@ public class ArchiveService(
             write(KEY_BRANCH, "")
             write(KEY_LAST_PUSH, "")
             write(KEY_LAST_ERROR, "")
+            write(KEY_PENDING, "")
             _status.value = ArchiveStatus()
         }
     }
@@ -265,7 +304,11 @@ public class ArchiveService(
      */
     public suspend fun retryIfNeeded() {
         if (!_status.value.connected) return
-        if (_status.value.errorMessage == null) return
+        if (_status.value.pushing) return
+        // A push interrupted by process death leaves this flag behind; without it, returning to
+        // the app would silently stop short of the last successful commit.
+        val pending = read(KEY_PENDING) == "true"
+        if (_status.value.errorMessage == null && !pending) return
         if (!isNetworkAvailable()) return
         val ownerId = ownerIdOrNull() ?: return
         pushNow(ownerId, includeMedia = read(KEY_INCLUDE_MEDIA) == "true")
@@ -291,13 +334,21 @@ public class ArchiveService(
             val owner = slug.substringBefore('/')
             val repo = slug.substringAfter('/')
             val since = read(KEY_LAST_PUSH)?.toLongOrNull() ?: 0L
+            write(KEY_PENDING, "true")
+            val startedAt = currentTimeMillis()
 
-            _status.value = _status.value.copy(pushing = true, errorMessage = null)
+            _status.value = _status.value.copy(
+                pushing = true,
+                errorMessage = null,
+                progress = ArchiveProgress(ArchivePhase.PREPARING, 0, 0, null, startedAt),
+            )
 
-            val mediaKeys = mutableListOf<String>()
+            val mediaKeys = mutableMapOf<String, String>()
             val noteVersions = mutableMapOf<String, String>()
             val unavailableMedia = mutableListOf<String>()
-            val oversizedMedia = mutableListOf<String>()
+            val skippedMedia = mutableListOf<String>()
+            val fitCleanups = mutableListOf<() -> Unit>()
+            val temporaryFiles = mutableListOf<String>()
             var changed = emptyList<Entry>()
             val result = try {
                 val all = mutableListOf<Entry>()
@@ -309,24 +360,163 @@ public class ArchiveService(
                 } while (page.size == MAX_PER_PUSH)
                 val mediaFiles = mutableMapOf<String, ArchiveMedia>()
                 val archivedMediaPaths = mutableSetOf<String>()
+                val archivedMedia = mutableMapOf<String, ArchivedMedia>()
                 val notesToPush = mutableListOf<Entry>()
+                val archiveTarget = ArchiveTarget(owner, repo, branch)
+                val total = all.sumOf { it.attachments.size }
+                var completed = 0
+
+                fun report(phase: ArchivePhase, label: String? = null) {
+                    _status.value = _status.value.copy(
+                        progress = ArchiveProgress(phase, completed, total, label, startedAt),
+                    )
+                }
+
+                fun describe(entry: Entry, attachment: Attachment): String {
+                    val megabytes = attachment.bytes / (1024 * 1024)
+                    return if (megabytes > 0) {
+                        "${entry.localDate.value} · $megabytes MB"
+                    } else {
+                        entry.localDate.value
+                    }
+                }
+
+                fun cacheKey(path: String, attachment: Attachment): String =
+                    "github_media:v3:$ownerId:$slug:$branch:$path:${attachment.bytes}"
+
+                fun addSingle(
+                    attachment: Attachment,
+                    path: String,
+                    key: String,
+                    media: ArchiveMedia,
+                ) {
+                    mediaFiles[path] = media
+                    archivedMedia[attachment.id] = ArchivedMedia(path)
+                    archivedMediaPaths.add(path)
+                    mediaKeys[key] = "v2:single"
+                }
+
+                fun addSplit(
+                    entry: Entry,
+                    attachment: Attachment,
+                    key: String,
+                    parts: List<com.joetr.mira.media.ArchiveFitPart>,
+                ) {
+                    val total = parts.size
+                    val paths = parts.mapIndexed { index, part ->
+                        val partPath = attachment.archivePartPath(entry, index + 1, total)
+                        mediaFiles[partPath] = part.path?.let { ArchiveMedia.LocalFile(it) }
+                            ?: ArchiveMedia.Bytes(part.bytes ?: ByteArray(0))
+                        partPath
+                    }
+                    archivedMedia[attachment.id] = ArchivedMedia(paths)
+                    archivedMediaPaths.addAll(paths)
+                    mediaKeys[key] = "v2:parts:$total"
+                }
+
+                suspend fun archiveOne(
+                    entry: Entry,
+                    attachment: Attachment,
+                    source: ArchiveMediaSource,
+                ) {
+                    if (source is ArchiveMediaSource.LocalFile && source.temporary) {
+                        temporaryFiles += source.path
+                    }
+                    val path = attachment.archiveMediaPath(entry)
+                    val key = cacheKey(path, attachment)
+                    val size = when (source) {
+                        is ArchiveMediaSource.LocalFile -> source.bytes
+                        is ArchiveMediaSource.Bytes -> source.bytes.size.toLong()
+                        is ArchiveMediaSource.TooLarge -> return
+                    }
+                    if (size <= targetMediaBytes) {
+                        val media = when (source) {
+                            is ArchiveMediaSource.LocalFile -> ArchiveMedia.LocalFile(source.path)
+                            is ArchiveMediaSource.Bytes -> ArchiveMedia.Bytes(source.bytes)
+                            is ArchiveMediaSource.TooLarge -> return
+                        }
+                        addSingle(attachment, path, key, media)
+                        return
+                    }
+                    val fit = com.joetr.mira.media.fitArchiveMedia(
+                        com.joetr.mira.media.ArchiveFitRequest(
+                            path = (source as? ArchiveMediaSource.LocalFile)?.path,
+                            bytes = (source as? ArchiveMediaSource.Bytes)?.bytes,
+                            mime = attachment.mime,
+                            durationMs = attachment.durationMs,
+                            targetBytes = targetMediaBytes,
+                            hardLimitBytes = hardLimitBytes,
+                            partLimitBytes = partLimitBytes,
+                        ),
+                    )
+                    when (fit) {
+                        is com.joetr.mira.media.ArchiveFitResult.Whole -> {
+                            fitCleanups += { fit.cleanup() }
+                            val media = fit.path?.let { ArchiveMedia.LocalFile(it) }
+                                ?: ArchiveMedia.Bytes(fit.bytes ?: ByteArray(0))
+                            addSingle(attachment, path, key, media)
+                        }
+                        is com.joetr.mira.media.ArchiveFitResult.Split -> {
+                            fitCleanups += { fit.cleanup() }
+                            addSplit(entry, attachment, key, fit.parts)
+                        }
+                        com.joetr.mira.media.ArchiveFitResult.Unsupported,
+                        com.joetr.mira.media.ArchiveFitResult.Failed,
+                        -> {
+                            if (size <= hardLimitBytes) {
+                                val media = when (source) {
+                                    is ArchiveMediaSource.LocalFile ->
+                                        ArchiveMedia.LocalFile(source.path)
+                                    is ArchiveMediaSource.Bytes ->
+                                        ArchiveMedia.Bytes(source.bytes)
+                                    is ArchiveMediaSource.TooLarge -> return
+                                }
+                                addSingle(attachment, path, key, media)
+                            } else {
+                                skippedMedia.add(
+                                    "${entry.localDate.value} (${size / (1024 * 1024)} MB)",
+                                )
+                            }
+                        }
+                    }
+                }
+
+                report(ArchivePhase.PREPARING)
                 for (entry in all) {
                     for (attachment in entry.attachments) {
+                        completed += 1
                         val path = attachment.archiveMediaPath(entry)
-                        val key = "github_media:$ownerId:$slug:$branch:$path:${attachment.bytes}"
-                        if (read(key) == "true") {
-                            archivedMediaPaths.add(path)
+                        val key = cacheKey(path, attachment)
+                        // Older archives cached a bare "true"; accept it so upgrading does not
+                        // re-upload every recording that was already backed up.
+                        val cached = read(key) ?: run {
+                            val legacy = "github_media:$ownerId:$slug:$branch:$path:${attachment.bytes}"
+                            if (read(legacy) == "true") "v2:single" else null
+                        }
+                        if (cached != null) {
+                            cachedArchivedMedia(cached, entry, attachment)?.let { archived ->
+                                archivedMedia[attachment.id] = archived
+                                archivedMediaPaths.addAll(archived.paths)
+                            }
                             continue
                         }
                         if (!includeMedia) continue
-                        val source = media.archiveMediaSourceFor(attachment, GITHUB_ARCHIVE_MAX_MEDIA_BYTES)
+                        report(
+                            if (attachment.bytes > targetMediaBytes) {
+                                ArchivePhase.COMPRESSING
+                            } else {
+                                ArchivePhase.UPLOADING
+                            },
+                            describe(entry, attachment),
+                        )
+                        val source = media.archiveMediaSourceFor(attachment, maxSourceBytes)
                         when (source) {
                             null -> {
                                 unavailableMedia.add("${entry.localDate.value} (${attachment.id})")
                                 continue
                             }
                             is ArchiveMediaSource.TooLarge -> {
-                                oversizedMedia.add(
+                                skippedMedia.add(
                                     "${entry.localDate.value} (${source.bytes / (1024 * 1024)} MB)",
                                 )
                                 continue
@@ -336,19 +526,17 @@ public class ArchiveService(
                                     unavailableMedia.add("${entry.localDate.value} (${attachment.id})")
                                     continue
                                 }
-                                mediaFiles[path] = ArchiveMedia.Bytes(source.bytes)
+                                archiveOne(entry, attachment, source)
                             }
-                            is ArchiveMediaSource.LocalFile -> {
-                                mediaFiles[path] = ArchiveMedia.LocalFile(source.path)
-                            }
+                            is ArchiveMediaSource.LocalFile -> archiveOne(entry, attachment, source)
                         }
-                        archivedMediaPaths.add(path)
-                        mediaKeys.add(key)
                     }
                     // Upgrade existing notes once, and rewrite them when media becomes available.
                     val noteKey = "github_note_links:$ownerId:$slug:$branch:${entry.archivePath()}"
-                    val version = "1:" + entry.attachments.map { it.archiveMediaPath(entry) }
-                        .filter { it in archivedMediaPaths }.sorted().joinToString(",")
+                    val version = "2:" + entry.attachments
+                        .flatMap { archivedMedia[it.id]?.paths ?: emptyList() }
+                        .sorted()
+                        .joinToString(",")
                     if (entry.updatedAt > since ||
                         (entry.attachments.isNotEmpty() && read(noteKey) != version)
                     ) {
@@ -357,33 +545,41 @@ public class ArchiveService(
                     }
                 }
                 changed = notesToPush
+                completed = total
+                report(ArchivePhase.COMMITTING)
                 GitHubArchive(httpClient, token).push(
-                    target = ArchiveTarget(owner, repo, branch),
+                    target = archiveTarget,
                     entries = changed,
                     mediaFiles = mediaFiles,
-                    archivedMediaPaths = archivedMediaPaths,
+                    archivedMedia = archivedMedia,
                 )
             } catch (cancelled: CancellationException) {
-                _status.value = _status.value.copy(pushing = false)
+                fitCleanups.forEach { cleanup -> runCatching { cleanup() } }
+                temporaryFiles.forEach { path -> media.deleteArchiveTemp(path) }
+                _status.value = _status.value.copy(pushing = false, progress = null)
                 throw cancelled
             } catch (error: Exception) {
                 ArchiveResult.Failed(error.message ?: "Backup failed")
             }
+            fitCleanups.forEach { cleanup -> runCatching { cleanup() } }
+            temporaryFiles.forEach { path -> media.deleteArchiveTemp(path) }
 
             when (result) {
                 is ArchiveResult.Pushed -> {
                     // A note edited during the request must remain eligible for the next push.
                     val now = changed.maxOfOrNull { it.updatedAt } ?: since
-                    mediaKeys.forEach { write(it, "true") }
+                    mediaKeys.forEach { (key, value) -> write(key, value) }
                     noteVersions.forEach { (key, version) -> write(key, version) }
                     write(KEY_LAST_PUSH, now.toString())
                     write(KEY_LAST_ERROR, "")
+                    write(KEY_PENDING, "")
                     retryJob?.cancel()
                     retryJob = null
                     _status.value = _status.value.copy(
                         pushing = false,
                         lastPushedAt = now,
                         errorMessage = null,
+                        progress = null,
                     )
                 }
                 is ArchiveResult.Failed -> {
@@ -391,11 +587,14 @@ public class ArchiveService(
                     _status.value = _status.value.copy(
                         pushing = false,
                         errorMessage = result.message,
+                        progress = null,
                     )
                     scheduleRetry()
                 }
-                ArchiveResult.NothingToDo ->
-                    _status.value = _status.value.copy(pushing = false)
+                ArchiveResult.NothingToDo -> {
+                    write(KEY_PENDING, "")
+                    _status.value = _status.value.copy(pushing = false, progress = null)
+                }
             }
             val problems = buildList {
                 if (unavailableMedia.isNotEmpty()) {
@@ -405,11 +604,12 @@ public class ArchiveService(
                             "copy could be loaded.",
                     )
                 }
-                if (oversizedMedia.isNotEmpty()) {
+                if (skippedMedia.isNotEmpty()) {
                     add(
-                        "${oversizedMedia.size} recording(s) exceed GitHub's 100 MB file limit and " +
-                            "were not archived, including ${oversizedMedia.first()}. They remain " +
-                            "available in cloud storage.",
+                        "${skippedMedia.size} recording(s) are too large for the archive " +
+                            "(GitHub's per-blob payload limit cannot be reduced, or the source is " +
+                            "above the archive's size ceiling) and were not backed up, including " +
+                            "${skippedMedia.first()}. They remain available in cloud storage.",
                     )
                 }
             }
@@ -424,6 +624,20 @@ public class ArchiveService(
                 result
             }
         }
+    }
+
+    private fun cachedArchivedMedia(
+        value: String,
+        entry: Entry,
+        attachment: Attachment,
+    ): ArchivedMedia? = when {
+        value == "true" || value == "v2:single" ->
+            ArchivedMedia(attachment.archiveMediaPath(entry))
+        value.startsWith("v2:parts:") ->
+            value.removePrefix("v2:parts:").toIntOrNull()?.let { count ->
+                ArchivedMedia((1..count).map { attachment.archivePartPath(entry, it, count) })
+            }
+        else -> null
     }
 
     private suspend fun ownerIdOrNull(): String? = read(KEY_OWNER)
@@ -476,6 +690,7 @@ public class ArchiveService(
         const val KEY_LAST_ERROR = "github_archive_last_error"
         const val KEY_OWNER = "github_archive_owner_id"
         const val KEY_INCLUDE_MEDIA = "archive_include_media"
+        const val KEY_PENDING = "github_archive_pending"
 
         const val PUSH_DEBOUNCE_MS: Long = 5 * 60 * 1000
         const val RETRY_DELAY_MS: Long = 15 * 60 * 1000

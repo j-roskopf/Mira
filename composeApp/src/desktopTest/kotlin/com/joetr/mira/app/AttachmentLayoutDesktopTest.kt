@@ -29,7 +29,7 @@ class AttachmentLayoutDesktopTest {
     @Test fun mixedAttachmentsWide() = verifyAttachments(1000, 800, true)
     @Test fun mixedAttachmentsCompact() = verifyAttachments(390, 780, false)
 
-    @Test fun oversizedVideoExplainsWhyGitHubBackupSkipsIt() =
+    @Test fun largeVideoExplainsThatBackupCompressesOrSplitsIt() =
         runDesktopComposeUiTest(width = 1000, height = 800) {
             val attachments = listOf(
                 Attachment(
@@ -57,7 +57,7 @@ class AttachmentLayoutDesktopTest {
                     )
                 }
             }
-            onNodeWithText("Too large for GitHub backup", substring = true).assertIsDisplayed()
+            onNodeWithText("compressed or split into parts", substring = true).assertIsDisplayed()
         }
 
     @Test fun sheetOpensOnArrivalFromMedia() = runDesktopComposeUiTest(width = 1000, height = 800) {

@@ -62,7 +62,7 @@ class ArchiveSettingsDesktopTest {
                 )
             }
         }
-        onNodeWithText("Larger files stay in cloud storage", substring = true)
+        onNodeWithText("Recordings above", substring = true)
             .performScrollTo()
             .assertIsDisplayed()
     }

@@ -5,10 +5,12 @@ import io.ktor.client.plugins.expectSuccess
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
@@ -57,20 +59,30 @@ public class GitHubDeviceFlow(
     private val json = Json { ignoreUnknownKeys = true }
 
     public suspend fun requestCode(): DeviceCodeRequest? {
-        val response = httpClient.post("https://github.com/login/device/code") {
-            // OAuth errors have useful JSON bodies even when the HTTP status is 400.
-            expectSuccess = false
-            contentType(ContentType.Application.Json)
-            header("Accept", "application/json")
-            setBody(
-                buildJsonObject {
-                    put("client_id", JsonPrimitive(clientId))
-                    // `repo` so private repositories work — journal archives should not be public.
-                    put("scope", JsonPrimitive("repo"))
-                }.toString(),
+        val response: HttpResponse
+        val body: String
+        try {
+            response = httpClient.post("https://github.com/login/device/code") {
+                // OAuth errors have useful JSON bodies even when the HTTP status is 400.
+                expectSuccess = false
+                contentType(ContentType.Application.Json)
+                header("Accept", "application/json")
+                setBody(
+                    buildJsonObject {
+                        put("client_id", JsonPrimitive(clientId))
+                        // `repo` so private repositories work — journal archives should not be public.
+                        put("scope", JsonPrimitive("repo"))
+                    }.toString(),
+                )
+            }
+            body = response.bodyAsText()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            throw GitHubAuthorizationException(
+                "Could not reach GitHub to start authorization. Check your connection and try again.",
             )
         }
-        val body = response.bodyAsText()
         val fields = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull()
         fields?.get("error")?.jsonPrimitive?.content?.let {
             throw GitHubAuthorizationException(authorizationErrorMessage(it))
@@ -101,49 +113,88 @@ public class GitHubDeviceFlow(
         var intervalMs = request.intervalSeconds * 1000L
         val deadline = request.expiresInSeconds * 1000L
         var waited = 0L
+        var lastPollReachedGitHub = true
 
         while (waited < deadline) {
             delay(intervalMs)
             waited += intervalMs
 
-            val response = httpClient.post("https://github.com/login/oauth/access_token") {
-                expectSuccess = false
-                contentType(ContentType.Application.Json)
-                header("Accept", "application/json")
-                setBody(
-                    buildJsonObject {
-                        put("client_id", JsonPrimitive(clientId))
-                        put("device_code", JsonPrimitive(request.deviceCode))
-                        put(
-                            "grant_type",
-                            JsonPrimitive("urn:ietf:params:oauth:grant-type:device_code"),
-                        )
-                    }.toString(),
-                )
-            }
-            val body = response.bodyAsText()
-
-            val fields = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull()
-                ?: return DeviceFlowResult.Failed("GitHub returned an invalid authorization response.")
-
-            if (!response.status.isSuccess() && fields["error"] == null) {
-                return DeviceFlowResult.Failed("GitHub authorization request failed (HTTP ${response.status.value}). Please try again.")
-            }
-            fields["access_token"]?.jsonPrimitive?.content?.let {
-                return DeviceFlowResult.Success(it)
+            val outcome = try {
+                lastPollReachedGitHub = true
+                pollForToken(request)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // Polling can fail transiently — most notably on mobile, where the app is
+                // backgrounded while the user enters the code in a browser. The device code stays
+                // valid until the deadline, so keep polling instead of ending the whole flow.
+                lastPollReachedGitHub = false
+                continue
             }
 
-            when (fields["error"]?.jsonPrimitive?.content) {
-                "authorization_pending" -> Unit
-                "slow_down" -> intervalMs += 5_000L
-                "expired_token" -> return DeviceFlowResult.Expired
-                "access_denied" -> return DeviceFlowResult.Denied
-                null -> Unit
-                else -> return DeviceFlowResult.Failed(
-                    authorizationErrorMessage(fields["error"]!!.jsonPrimitive.content),
-                )
+            when (outcome) {
+                is PollOutcome.Token -> return DeviceFlowResult.Success(outcome.accessToken)
+                is PollOutcome.Terminal -> return outcome.result
+                PollOutcome.SlowDown -> intervalMs += 5_000L
+                PollOutcome.Pending -> Unit
             }
         }
-        return DeviceFlowResult.Expired
+        return if (lastPollReachedGitHub) {
+            DeviceFlowResult.Expired
+        } else {
+            DeviceFlowResult.Failed(
+                "Could not reach GitHub to finish authorization. Check your connection and try again.",
+            )
+        }
+    }
+
+    /** One poll of the token endpoint, parsed into an outcome the polling loop understands. */
+    private suspend fun pollForToken(request: DeviceCodeRequest): PollOutcome {
+        val response = httpClient.post("https://github.com/login/oauth/access_token") {
+            expectSuccess = false
+            contentType(ContentType.Application.Json)
+            header("Accept", "application/json")
+            setBody(
+                buildJsonObject {
+                    put("client_id", JsonPrimitive(clientId))
+                    put("device_code", JsonPrimitive(request.deviceCode))
+                    put(
+                        "grant_type",
+                        JsonPrimitive("urn:ietf:params:oauth:grant-type:device_code"),
+                    )
+                }.toString(),
+            )
+        }
+        val body = response.bodyAsText()
+        val fields = runCatching { json.parseToJsonElement(body).jsonObject }.getOrNull()
+            ?: return PollOutcome.Terminal(
+                DeviceFlowResult.Failed("GitHub returned an invalid authorization response."),
+            )
+        if (!response.status.isSuccess() && fields["error"] == null) {
+            return PollOutcome.Terminal(
+                DeviceFlowResult.Failed(
+                    "GitHub authorization request failed (HTTP ${response.status.value}). Please try again.",
+                ),
+            )
+        }
+        fields["access_token"]?.jsonPrimitive?.content?.let { return PollOutcome.Token(it) }
+        return when (fields["error"]?.jsonPrimitive?.content) {
+            "authorization_pending", null -> PollOutcome.Pending
+            "slow_down" -> PollOutcome.SlowDown
+            "expired_token" -> PollOutcome.Terminal(DeviceFlowResult.Expired)
+            "access_denied" -> PollOutcome.Terminal(DeviceFlowResult.Denied)
+            else -> PollOutcome.Terminal(
+                DeviceFlowResult.Failed(
+                    authorizationErrorMessage(fields["error"]!!.jsonPrimitive.content),
+                ),
+            )
+        }
+    }
+
+    private sealed interface PollOutcome {
+        data object Pending : PollOutcome
+        data object SlowDown : PollOutcome
+        data class Token(val accessToken: String) : PollOutcome
+        data class Terminal(val result: DeviceFlowResult) : PollOutcome
     }
 }

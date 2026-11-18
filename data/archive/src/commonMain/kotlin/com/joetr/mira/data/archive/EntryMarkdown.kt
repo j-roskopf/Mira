@@ -10,6 +10,24 @@ import kotlinx.datetime.offsetAt
 import kotlinx.datetime.toLocalDateTime
 
 /**
+ * Where an attachment ended up, which may be several files.
+ *
+ * Large recordings are split into ordered parts when they cannot be reduced below the blob limit.
+ * The parts are byte ranges of one file, so concatenation restores it exactly.
+ */
+public data class ArchivedMedia(val paths: List<String>) {
+    public constructor(path: String) : this(listOf(path))
+}
+
+/** Convenience for callers that only know which single paths were archived. */
+public fun Entry.toMarkdown(archivedMediaPaths: Set<String>): String = toMarkdown(
+    attachments.mapNotNull { attachment ->
+        val path = attachment.archiveMediaPath(this)
+        if (path in archivedMediaPaths) attachment.id to ArchivedMedia(path) else null
+    }.toMap(),
+)
+
+/**
  * Serializes an entry as Markdown with YAML frontmatter.
  *
  * The format is chosen to still be readable in twenty years without Mira: frontmatter parses in
@@ -17,7 +35,9 @@ import kotlinx.datetime.toLocalDateTime
  * disappears, the journal is a folder of Markdown.
  */
 @OptIn(ExperimentalTime::class)
-public fun Entry.toMarkdown(archivedMediaPaths: Set<String> = emptySet()): String = buildString {
+public fun Entry.toMarkdown(
+    archivedMedia: Map<String, ArchivedMedia> = emptyMap(),
+): String = buildString {
     appendLine("---")
     appendLine("id: $id")
     appendLine("date: ${localDate.value}")
@@ -47,23 +67,40 @@ public fun Entry.toMarkdown(archivedMediaPaths: Set<String> = emptySet()): Strin
     appendLine("---")
     appendLine()
     appendLine(body.trim())
-    val linked = attachments.filter { it.archiveMediaPath(this@toMarkdown) in archivedMediaPaths }
+    val linked = attachments.mapNotNull { attachment ->
+        archivedMedia[attachment.id]?.takeIf { it.paths.isNotEmpty() }?.let { attachment to it }
+    }
     if (linked.isNotEmpty()) {
         appendLine()
         appendLine("## Recordings")
         appendLine()
-        linked.forEachIndexed { index, attachment ->
+        linked.forEachIndexed { index, (attachment, media) ->
             val label = when (attachment.kind) {
                 AttachmentKind.VIDEO -> "Watch video"
                 AttachmentKind.IMAGE -> "View photo"
                 AttachmentKind.AUDIO -> "Listen to audio"
             }
-            // Notes live in entries/YYYY/MM; walk back to the repository root.
-            val path = "../../../${attachment.archiveMediaPath(this@toMarkdown)}"
-            appendLine("- [$label ${index + 1}]($path)")
+            if (media.paths.size == 1) {
+                appendLine("- [$label ${index + 1}](${rootLink(media.paths.single())})")
+            } else {
+                appendLine("- [$label ${index + 1}] (split into ${media.paths.size} parts)")
+                media.paths.forEachIndexed { partIndex, path ->
+                    appendLine("  - [part ${partIndex + 1}](${rootLink(path)})")
+                }
+            }
+        }
+        if (linked.any { (_, media) -> media.paths.size > 1 }) {
+            appendLine()
+            appendLine(
+                "_Split recordings are byte ranges of one file. Concatenate the parts in order " +
+                    "(for example `cat part*.mp4 > video.mp4`) to restore the original._",
+            )
         }
     }
 }
+
+/** Notes live in entries/YYYY/MM; walk back to the repository root. */
+private fun rootLink(path: String): String = "../../../$path"
 
 /**
  * Path for an entry inside the archive repository.
@@ -89,15 +126,29 @@ public fun Entry.archivePath(): String {
 }
 
 /** Where an attachment's bytes live when media is included in the archive. */
-public fun Attachment.archiveMediaPath(entry: Entry): String {
-    val year = entry.localDate.value.substring(0, 4)
-    val month = entry.localDate.value.substring(5, 7)
-    val extension = when (kind) {
-        AttachmentKind.VIDEO -> "mp4"
-        AttachmentKind.AUDIO -> "m4a"
-        AttachmentKind.IMAGE -> "jpg"
-    }
-    return "media/$year/$month/${entry.id}/$id.$extension"
+public fun Attachment.archiveMediaPath(entry: Entry): String =
+    "media/${entry.yearMonthSegment()}/${entry.id}/$id.${archiveExtension()}"
+
+/**
+ * Part [index] (one-based) of a recording split for the blob limit.
+ *
+ * Padding follows the part count so a lexical listing stays in order.
+ */
+public fun Attachment.archivePartPath(entry: Entry, index: Int, total: Int): String {
+    val base = archiveMediaPath(entry)
+    val extension = archiveExtension()
+    val stem = base.removeSuffix(".$extension")
+    val padding = total.toString().length.coerceAtLeast(3)
+    return "$stem.part${index.toString().padStart(padding, '0')}.$extension"
+}
+
+private fun Entry.yearMonthSegment(): String =
+    localDate.value.substring(0, 4) + "/" + localDate.value.substring(5, 7)
+
+private fun Attachment.archiveExtension(): String = when (kind) {
+    AttachmentKind.VIDEO -> "mp4"
+    AttachmentKind.AUDIO -> "m4a"
+    AttachmentKind.IMAGE -> "jpg"
 }
 
 @OptIn(ExperimentalTime::class)

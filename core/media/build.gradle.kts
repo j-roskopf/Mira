@@ -31,6 +31,9 @@ kotlin {
                 implementation(libs.androidx.camera.camera2)
                 implementation(libs.androidx.camera.lifecycle)
                 implementation(libs.androidx.camera.view)
+                implementation(libs.androidx.media3.common)
+                implementation(libs.androidx.media3.effect)
+                implementation(libs.androidx.media3.transformer)
                 implementation(libs.androidx.activity.compose)
             }
         }

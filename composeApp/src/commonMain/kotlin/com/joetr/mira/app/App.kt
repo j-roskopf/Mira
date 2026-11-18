@@ -44,6 +44,7 @@ import androidx.navigationevent.NavigationEventInfo
 import androidx.navigationevent.compose.NavigationBackHandler
 import androidx.navigationevent.compose.rememberNavigationEventState
 import com.joetr.mira.di.AppGraph
+import com.joetr.mira.data.archive.ArchivePhase
 import com.joetr.mira.domain.AttachmentKind
 import com.joetr.mira.domain.CaptureQuality
 import com.joetr.mira.domain.Entry
@@ -238,8 +239,12 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
                     val archiveError = archiveState.errorMessage
                     val showArchiveError = archiveState.connected && archiveError != null &&
                         screenKey !is ComposeKey && screenKey !is AuthKey && screenKey !is SettingsKey
-                    val showSyncIndicator = syncState.status == SyncStatus.SYNCING &&
+                    val archiveProgress = archiveState.progress
+                    val showArchiveProgress = archiveState.pushing && archiveProgress != null &&
                         !showArchiveError &&
+                        screenKey !is ComposeKey && screenKey !is AuthKey && screenKey !is SettingsKey
+                    val showSyncIndicator = syncState.status == SyncStatus.SYNCING &&
+                        !showArchiveError && !showArchiveProgress &&
                         screenKey !is ComposeKey && screenKey !is AuthKey && screenKey !is SettingsKey
                     Box(Modifier.fillMaxSize()) {
                     AnimatedContent(
@@ -314,7 +319,12 @@ public fun App(graph: AppGraph, initialWebPath: String? = null, motionEnabled: B
                         }
                     }
                     SyncIndicator(
-                        visible = showSyncIndicator,
+                        visible = showSyncIndicator || showArchiveProgress,
+                        label = if (showArchiveProgress) {
+                            archiveProgress.shortLabel()
+                        } else {
+                            "Syncing"
+                        },
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
                             .padding(
@@ -745,6 +755,13 @@ private fun Screen(
     }
 }
 
+private fun com.joetr.mira.data.archive.ArchiveProgress.shortLabel(): String = when {
+    phase == ArchivePhase.PREPARING -> "Backing up"
+    phase == ArchivePhase.COMMITTING -> "Committing"
+    total > 0 -> "Backing up $completed/$total"
+    else -> "Backing up"
+}
+
 /**
  * A small floating pill shown only while a sync is actually running.
  *
@@ -752,7 +769,11 @@ private fun Screen(
  * never covers the navigation or the compose action.
  */
 @Composable
-private fun SyncIndicator(visible: Boolean, modifier: Modifier = Modifier) {
+private fun SyncIndicator(
+    visible: Boolean,
+    label: String,
+    modifier: Modifier = Modifier,
+) {
     val colors = MiraTheme.colors
     var shown by remember { mutableStateOf(false) }
     LaunchedEffect(visible) {
@@ -780,7 +801,7 @@ private fun SyncIndicator(visible: Boolean, modifier: Modifier = Modifier) {
                 .clip(RoundedCornerShape(MiraRadii.pill))
                 .background(colors.surfaceRaised)
                 .padding(horizontal = MiraSpacing.md, vertical = MiraSpacing.sm)
-                .semantics { contentDescription = "Syncing" },
+                .semantics { contentDescription = label },
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(MiraSpacing.sm),
         ) {
@@ -790,7 +811,7 @@ private fun SyncIndicator(visible: Boolean, modifier: Modifier = Modifier) {
                 color = colors.inkMuted,
             )
             Text(
-                text = "Syncing",
+                text = label,
                 style = MiraTheme.type.sectionLabel,
                 color = colors.inkMuted,
             )
