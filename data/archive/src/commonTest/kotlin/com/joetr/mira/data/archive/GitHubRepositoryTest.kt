@@ -3,12 +3,14 @@ package com.joetr.mira.data.archive
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
+import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class GitHubRepositoryTest {
     @Test
@@ -98,6 +100,68 @@ class GitHubRepositoryTest {
                     "and branch still exist.",
                 error.message,
             )
+        } finally { client.close() }
+    }
+
+    @Test
+    fun aTransientBlobFailureIsRetried() = runTest {
+        var blobAttempts = 0
+        val client = HttpClient(MockEngine { request ->
+            when {
+                request.url.encodedPath.contains("/git/ref/heads/") ->
+                    respond("""{"object":{"sha":"head"}}""")
+                request.url.encodedPath.endsWith("/git/commits/head") ->
+                    respond("""{"tree":{"sha":"tree"}}""")
+                request.url.encodedPath.endsWith("/git/blobs") -> {
+                    blobAttempts++
+                    if (blobAttempts == 1) {
+                        respond("""{"message":"temporary"}""", HttpStatusCode.InternalServerError)
+                    } else {
+                        respond("""{"sha":"blob"}""")
+                    }
+                }
+                request.url.encodedPath.endsWith("/git/trees") -> respond("""{"sha":"newtree"}""")
+                request.url.encodedPath.endsWith("/git/commits") -> respond("""{"sha":"commit"}""")
+                request.method == HttpMethod.Patch -> respond("""{}""")
+                else -> respond("""{}""")
+            }
+        })
+        try {
+            val result = GitHubArchive(client, "token").push(
+                target = ArchiveTarget("me", "journal", "main"),
+                entries = emptyList(),
+                mediaFiles = mapOf("media/video.mp4" to ArchiveMedia.Bytes(byteArrayOf(1, 2, 3))),
+            )
+            assertTrue(result is ArchiveResult.Pushed)
+            assertEquals(2, blobAttempts)
+        } finally { client.close() }
+    }
+
+    @Test
+    fun aRejectedBlobReportsTheGitHubReason() = runTest {
+        val client = HttpClient(MockEngine { request ->
+            when {
+                request.url.encodedPath.contains("/git/ref/heads/") ->
+                    respond("""{"object":{"sha":"head"}}""")
+                request.url.encodedPath.endsWith("/git/commits/head") ->
+                    respond("""{"tree":{"sha":"tree"}}""")
+                request.url.encodedPath.endsWith("/git/blobs") ->
+                    respond("""{"message":"file is too large"}""", HttpStatusCode.UnprocessableEntity)
+                request.url.encodedPath.endsWith("/git/trees") -> respond("""{"sha":"newtree"}""")
+                request.url.encodedPath.endsWith("/git/commits") -> respond("""{"sha":"commit"}""")
+                else -> respond("""{}""")
+            }
+        })
+        try {
+            val result = GitHubArchive(client, "token").push(
+                target = ArchiveTarget("me", "journal", "main"),
+                entries = emptyList(),
+                mediaFiles = mapOf("media/video.mp4" to ArchiveMedia.Bytes(byteArrayOf(1, 2, 3))),
+            )
+            val failure = result as ArchiveResult.Failed
+            assertTrue(failure.message.contains("media/video.mp4"))
+            assertTrue(failure.message.contains("422"))
+            assertTrue(failure.message.contains("file is too large"))
         } finally { client.close() }
     }
 

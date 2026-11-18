@@ -36,3 +36,15 @@ internal actual suspend fun deletePreservedFile(path: String) {
         if (file.parentFile?.canonicalFile == mediaDirectory().canonicalFile) file.delete()
     }
 }
+
+internal actual suspend fun archiveTempFilePath(attachmentId: String): String? =
+    withContext(Dispatchers.IO) {
+        runCatching {
+            val directory = mediaDirectory().apply { mkdirs() }
+            File.createTempFile("mira-archive-$attachmentId-", ".mp4", directory).absolutePath
+        }.getOrNull()
+    }
+
+internal actual suspend fun deleteArchiveTempFile(path: String) {
+    withContext(Dispatchers.IO) { File(path).delete() }
+}

@@ -14,6 +14,22 @@ import kotlin.test.assertNotNull
 
 class ArchiveFileContentTest {
     @Test
+    fun streamsBase64ForInMemoryBytes() = runTest {
+        // 5 MB is past every chunk boundary and large enough that the old one-shot StringBuilder
+        // path would have materialised a second large copy before Ktor encoded it again.
+        for (size in listOf(0, 1, 2, 3, 60 * 1024, 5_000_000)) {
+            val bytes = ByteArray(size) { (it % 251).toByte() }
+            val content = base64JsonBytesContent(bytes)
+            val body = content.toByteArray()
+            assertEquals(body.size.toLong(), content.contentLength)
+            val json = Json.parseToJsonElement(body.decodeToString()).jsonObject
+            assertEquals("base64", json.getValue("encoding").jsonPrimitive.content)
+            val decoded = Base64.getDecoder().decode(json.getValue("content").jsonPrimitive.content)
+            assertContentEquals(bytes, decoded)
+        }
+    }
+
+    @Test
     fun streamsBase64AcrossChunkBoundaries() = runTest {
         val sizes = listOf(0, 1, 2, 3, 4, 60 * 1024 - 1, 60 * 1024, 60 * 1024 + 1, 200_000)
         for (size in sizes) {

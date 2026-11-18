@@ -53,6 +53,44 @@ class GitHubDeviceFlowTest {
     }
 
     @Test
+    fun transientPollFailureKeepsPollingUntilToken() = runTest {
+        var calls = 0
+        val client = HttpClient(MockEngine {
+            calls++
+            if (calls == 1) throw RuntimeException("socket closed")
+            respond("""{"access_token":"test-token"}""")
+        }) { expectSuccess = true }
+        try {
+            val request = DeviceCodeRequest("ABCD", "https://github.com/login/device", "device", 1, 10)
+            assertEquals(
+                DeviceFlowResult.Success("test-token"),
+                GitHubDeviceFlow(client, "test-client").awaitToken(request),
+            )
+            assertEquals(2, calls)
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
+    fun unreachableGitHubAtDeadlineReportsConnectionFailure() = runTest {
+        val client = HttpClient(MockEngine {
+            throw RuntimeException("offline")
+        }) { expectSuccess = true }
+        try {
+            val request = DeviceCodeRequest("ABCD", "https://github.com/login/device", "device", 1, 2)
+            assertEquals(
+                DeviceFlowResult.Failed(
+                    "Could not reach GitHub to finish authorization. Check your connection and try again.",
+                ),
+                GitHubDeviceFlow(client, "test-client").awaitToken(request),
+            )
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
     fun unexpectedHttpErrorDoesNotExposeResponseBody() = runTest {
         val client = HttpClient(MockEngine {
             respond("sensitive upstream diagnostics", HttpStatusCode.ServiceUnavailable)

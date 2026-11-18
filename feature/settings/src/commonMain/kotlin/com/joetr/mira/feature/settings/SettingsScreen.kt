@@ -23,9 +23,16 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.joetr.mira.data.archive.ArchivePhase
+import com.joetr.mira.data.archive.ArchiveProgress
 import com.joetr.mira.domain.CaptureQuality
 import com.joetr.mira.domain.DayActivity
 import com.joetr.mira.domain.GITHUB_ARCHIVE_MAX_MEDIA_BYTES
@@ -37,11 +44,13 @@ import com.joetr.mira.domain.ThemeMode
 import com.joetr.mira.ui.components.Chip
 import com.joetr.mira.ui.components.PillButton
 import com.joetr.mira.ui.components.SectionLabel
+import com.joetr.mira.platform.currentTimeMillis
 import com.joetr.mira.ui.formatBytes
 import com.joetr.mira.ui.theme.MiraAccent
 import com.joetr.mira.ui.theme.MiraSpacing
 import com.joetr.mira.ui.theme.MiraTheme
 import com.joetr.mira.updates.AppUpdateState
+import kotlinx.coroutines.delay
 
 public data class SettingsUiState(
     val session: SessionState,
@@ -60,6 +69,7 @@ public data class SettingsUiState(
     val writingActivity: List<DayActivity>? = null,
     val updateState: AppUpdateState = AppUpdateState.Idle,
     val archivePushing: Boolean = false,
+    val archiveProgress: ArchiveProgress? = null,
     val archiveError: String? = null,
     val exporting: Boolean = false,
     val importing: Boolean = false,
@@ -305,9 +315,23 @@ public fun SettingsScreen(
             Column(verticalArrangement = Arrangement.spacedBy(MiraSpacing.sm)) {
                 when {
                     state.archiveConnected -> {
-                        PillButton(if (state.archivePushing) "Backing up…" else "Back up now", onClick = {
-                            if (!state.archivePushing) actions.onBackUpNow()
-                        }, filled = false)
+                        PillButton(
+                            text = if (state.archivePushing) {
+                                state.archiveProgress
+                                    ?.takeIf { it.total > 0 }
+                                    ?.let { "Backing up ${it.completed}/${it.total}" }
+                                    ?: "Backing up…"
+                            } else {
+                                "Back up now"
+                            },
+                            onClick = { if (!state.archivePushing) actions.onBackUpNow() },
+                            filled = false,
+                        )
+                        if (state.archivePushing) {
+                            state.archiveProgress?.let { progress ->
+                                ArchiveProgressLine(progress)
+                            }
+                        }
                         state.archiveError?.let { Text(it, color = colors.error, style = MiraTheme.type.uiBody) }
                         PillButton("Disconnect this device", onClick = actions.onDisconnectGitHub, filled = false)
                     }
@@ -325,9 +349,9 @@ public fun SettingsScreen(
                 ToggleRow(
                     label = "Include media in backup",
                     detail = if (state.includeMediaInArchive) {
-                        "Commits audio and video up to " +
-                            "${formatBytes(GITHUB_ARCHIVE_MAX_MEDIA_BYTES)}. Larger files stay in " +
-                            "cloud storage and are not added to GitHub."
+                        "Commits audio and video. Recordings above " +
+                            "${formatBytes(GITHUB_ARCHIVE_MAX_MEDIA_BYTES)} are compressed to fit " +
+                            "or split into parts."
                     } else {
                         "Backs up audio and video files as well as entry text."
                     },
@@ -534,5 +558,35 @@ private fun ToggleRow(
                 uncheckedTrackColor = colors.surfaceRaised,
             ),
         )
+    }
+}
+
+@Composable
+private fun ArchiveProgressLine(progress: ArchiveProgress) {
+    val colors = MiraTheme.colors
+    var now by remember(progress.startedAt) { mutableStateOf(currentTimeMillis()) }
+    LaunchedEffect(progress.startedAt) {
+        while (true) {
+            delay(1000)
+            now = currentTimeMillis()
+        }
+    }
+    val seconds = ((now - progress.startedAt) / 1000).coerceAtLeast(0)
+    val elapsed = if (seconds < 60) "${seconds}s" else "${seconds / 60}m ${seconds % 60}s"
+    Text(
+        text = "${progress.describe()} · $elapsed",
+        style = MiraTheme.type.uiBody,
+        color = colors.inkMuted,
+    )
+}
+
+/** Human-readable progress line shown under the archive button. */
+private fun ArchiveProgress.describe(): String {
+    val counter = if (total > 0) " ($completed/$total)" else ""
+    return when (phase) {
+        ArchivePhase.PREPARING -> "Preparing backup…"
+        ArchivePhase.COMPRESSING -> "Compressing ${label ?: "a recording"}$counter"
+        ArchivePhase.UPLOADING -> "Uploading ${label ?: "media"}$counter"
+        ArchivePhase.COMMITTING -> "Writing the commit…"
     }
 }

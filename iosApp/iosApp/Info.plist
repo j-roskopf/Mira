@@ -41,6 +41,8 @@
 	<string>Mira uses the camera to record video entries in your journal.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Mira uses the microphone to record voice entries in your journal.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Mira saves photos and videos you capture for an entry to your photo library.</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 </dict>

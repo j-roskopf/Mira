@@ -1,6 +1,7 @@
 package com.joetr.mira.data.archive
 
 import com.joetr.mira.domain.Entry
+import com.joetr.mira.platform.currentTimeMillis
 import io.ktor.client.plugins.expectSuccess
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
@@ -11,11 +12,14 @@ import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.content.OutgoingContent
+import io.ktor.http.content.TextContent
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
@@ -69,6 +73,7 @@ public class GitHubArchive(
 ) {
     private val json = Json { ignoreUnknownKeys = true }
     private val api = "https://api.github.com"
+    private var lastContentRequestAt = 0L
 
     public suspend fun currentLogin(): String? {
         val body = runCatching { githubGet("$api/user") }.getOrNull() ?: return null
@@ -155,6 +160,7 @@ public class GitHubArchive(
         mediaFiles: Map<String, ArchiveMedia> = emptyMap(),
         message: String? = null,
         archivedMediaPaths: Set<String> = mediaFiles.keys,
+        archivedMedia: Map<String, ArchivedMedia> = emptyMap(),
     ): ArchiveResult {
         if (entries.isEmpty() && mediaFiles.isEmpty()) return ArchiveResult.NothingToDo
 
@@ -167,14 +173,25 @@ public class GitHubArchive(
 
             val treeEntries = buildJsonArray {
                 for (entry in entries) {
-                    val blobSha = createBlob(target, entry.toMarkdown(archivedMediaPaths))
-                        ?: return ArchiveResult.Failed("Could not write ${entry.id}")
-                    add(treeEntry(entry.archivePath(), blobSha))
+                    val markdown = if (archivedMedia.isEmpty()) {
+                        entry.toMarkdown(archivedMediaPaths)
+                    } else {
+                        entry.toMarkdown(archivedMedia)
+                    }
+                    when (val blob = createBlob(target, markdown)) {
+                        is BlobResult.Created -> add(treeEntry(entry.archivePath(), blob.sha))
+                        is BlobResult.Failed -> return ArchiveResult.Failed(
+                            "Could not write ${entry.archivePath()}: ${blob.reason}",
+                        )
+                    }
                 }
                 for ((path, media) in mediaFiles) {
-                    val blobSha = createBinaryBlob(target, media)
-                        ?: return ArchiveResult.Failed("Could not write $path")
-                    add(treeEntry(path, blobSha))
+                    when (val blob = createBinaryBlob(target, media)) {
+                        is BlobResult.Created -> add(treeEntry(path, blob.sha))
+                        is BlobResult.Failed -> return ArchiveResult.Failed(
+                            "Could not write $path: ${blob.reason}",
+                        )
+                    }
                 }
             }
 
@@ -269,47 +286,114 @@ public class GitHubArchive(
         }.getOrNull()
     }
 
-    private suspend fun createBlob(target: ArchiveTarget, content: String): String? =
-        postBlob(target, content, encoding = "utf-8")
-
-    private suspend fun createBinaryBlob(target: ArchiveTarget, media: ArchiveMedia): String? =
-        when (media) {
-            is ArchiveMedia.Bytes -> postBlob(target, media.bytes.encodeBase64(), encoding = "base64")
-            is ArchiveMedia.LocalFile -> postFileBlob(target, media.path)
-        }
-
-    private suspend fun postFileBlob(target: ArchiveTarget, path: String): String? {
-        val content = base64JsonFileContent(path) ?: return null
-        val body = runCatching {
-            httpClient.post("$api/repos/${target.slug}/git/blobs") {
-                githubHeaders()
-                setBody(content)
-            }.bodyAsText()
-        }.getOrNull() ?: return null
-        return runCatching {
-            json.parseToJsonElement(body).jsonObject["sha"]?.jsonPrimitive?.content
-        }.getOrNull()
+    private sealed interface BlobResult {
+        data class Created(val sha: String) : BlobResult
+        data class Failed(val reason: String) : BlobResult
     }
 
-    private suspend fun postBlob(
+    private suspend fun createBlob(target: ArchiveTarget, content: String): BlobResult =
+        postBlobWithRetry(target) {
+            TextContent(
+                text = buildJsonObject {
+                    put("content", JsonPrimitive(content))
+                    put("encoding", JsonPrimitive("utf-8"))
+                }.toString(),
+                contentType = ContentType.Application.Json,
+            )
+        }
+
+    private suspend fun createBinaryBlob(target: ArchiveTarget, media: ArchiveMedia): BlobResult =
+        when (media) {
+            is ArchiveMedia.Bytes -> postBlobWithRetry(target) {
+                base64JsonBytesContent(media.bytes)
+            }
+            is ArchiveMedia.LocalFile -> postBlobWithRetry(target) {
+                base64JsonFileContent(media.path)
+            }
+        }
+
+    /**
+     * Uploads one blob, retrying transient failures and surfacing the real GitHub response.
+     *
+     * Media is uploaded as a burst of blob requests, so a single 5xx, timeout, or secondary rate
+     * limit used to abort the whole push with only the path in the message. The content is rebuilt
+     * per attempt because a streamed file body cannot be replayed.
+     */
+    private suspend fun postBlobWithRetry(
         target: ArchiveTarget,
-        content: String,
-        encoding: String,
-    ): String? {
-        val body = runCatching {
-            httpClient.post("$api/repos/${target.slug}/git/blobs") {
-                githubHeaders()
-                setBody(
-                    buildJsonObject {
-                        put("content", JsonPrimitive(content))
-                        put("encoding", JsonPrimitive(encoding))
-                    }.toString(),
-                )
-            }.bodyAsText()
-        }.getOrNull() ?: return null
-        return runCatching {
-            json.parseToJsonElement(body).jsonObject["sha"]?.jsonPrimitive?.content
-        }.getOrNull()
+        makeContent: () -> OutgoingContent?,
+    ): BlobResult {
+        var lastReason = "GitHub did not accept the upload"
+        repeat(MAX_BLOB_ATTEMPTS) { attempt ->
+            val content = makeContent()
+                ?: return BlobResult.Failed("the local copy is missing or unreadable")
+            paceContentRequests()
+            val response = runCatching {
+                httpClient.post("$api/repos/${target.slug}/git/blobs") {
+                    githubHeaders()
+                    expectSuccess = false
+                    setBody(content)
+                }
+            }.getOrNull()
+            if (response == null) {
+                lastReason = "network error while uploading"
+                if (attempt < MAX_BLOB_ATTEMPTS - 1) {
+                    delay(blobRetryDelay(null, attempt))
+                    return@repeat
+                }
+                return BlobResult.Failed(lastReason)
+            }
+            val body = runCatching { response.bodyAsText() }.getOrDefault("")
+            if (response.status.isSuccess()) {
+                val sha = runCatching {
+                    json.parseToJsonElement(body).jsonObject["sha"]?.jsonPrimitive?.content
+                }.getOrNull()
+                return if (sha != null) {
+                    BlobResult.Created(sha)
+                } else {
+                    BlobResult.Failed("GitHub returned no blob sha")
+                }
+            }
+            lastReason = describeFailure(response.status, body)
+            if (!isRetryable(response.status, body) || attempt == MAX_BLOB_ATTEMPTS - 1) {
+                return BlobResult.Failed(lastReason)
+            }
+            delay(blobRetryDelay(response, attempt))
+        }
+        return BlobResult.Failed(lastReason)
+    }
+
+    private suspend fun paceContentRequests() {
+        val elapsed = currentTimeMillis() - lastContentRequestAt
+        if (elapsed in 0 until CONTENT_REQUEST_INTERVAL_MS) {
+            delay(CONTENT_REQUEST_INTERVAL_MS - elapsed)
+        }
+        lastContentRequestAt = currentTimeMillis()
+    }
+
+    private fun describeFailure(status: HttpStatusCode, body: String): String {
+        val detail = body.replace(Regex("\\s+"), " ").trim().take(240)
+        return if (detail.isEmpty()) {
+            "GitHub returned HTTP ${status.value}"
+        } else {
+            "GitHub returned HTTP ${status.value}: $detail"
+        }
+    }
+
+    private fun isRetryable(status: HttpStatusCode, body: String): Boolean =
+        status == HttpStatusCode.TooManyRequests ||
+            status.value in 500..599 ||
+            (status == HttpStatusCode.Forbidden &&
+                body.contains("rate limit", ignoreCase = true))
+
+    private fun blobRetryDelay(response: io.ktor.client.statement.HttpResponse?, attempt: Int): Long {
+        val retryAfter = response?.headers?.get("Retry-After")?.toLongOrNull()?.times(1000)
+        if (retryAfter != null && retryAfter > 0) return retryAfter.coerceAtMost(120_000)
+        val isRateLimit = response?.status == HttpStatusCode.Forbidden ||
+            response?.status == HttpStatusCode.TooManyRequests
+        // GitHub's secondary content-creation limit is a rolling minute; waiting a full window is
+        // what actually clears it.
+        return if (isRateLimit) 60_000L else (attempt + 1) * 2_000L
     }
 
     private fun treeEntry(path: String, blobSha: String) = buildJsonObject {
@@ -401,37 +485,11 @@ public class GitHubArchive(
     }
 }
 
-private const val BASE64_ALPHABET =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+private const val MAX_BLOB_ATTEMPTS: Int = 4
 
-internal fun ByteArray.encodeBase64(): String {
-    val output = StringBuilder((size + 2) / 3 * 4)
-    var index = 0
-    while (index + 2 < size) {
-        val chunk = ((this[index].toInt() and 0xFF) shl 16) or
-            ((this[index + 1].toInt() and 0xFF) shl 8) or
-            (this[index + 2].toInt() and 0xFF)
-        output.append(BASE64_ALPHABET[(chunk shr 18) and 0x3F])
-        output.append(BASE64_ALPHABET[(chunk shr 12) and 0x3F])
-        output.append(BASE64_ALPHABET[(chunk shr 6) and 0x3F])
-        output.append(BASE64_ALPHABET[chunk and 0x3F])
-        index += 3
-    }
-    when (size - index) {
-        1 -> {
-            val chunk = (this[index].toInt() and 0xFF) shl 16
-            output.append(BASE64_ALPHABET[(chunk shr 18) and 0x3F])
-            output.append(BASE64_ALPHABET[(chunk shr 12) and 0x3F])
-            output.append("==")
-        }
-        2 -> {
-            val chunk = ((this[index].toInt() and 0xFF) shl 16) or
-                ((this[index + 1].toInt() and 0xFF) shl 8)
-            output.append(BASE64_ALPHABET[(chunk shr 18) and 0x3F])
-            output.append(BASE64_ALPHABET[(chunk shr 12) and 0x3F])
-            output.append(BASE64_ALPHABET[(chunk shr 6) and 0x3F])
-            output.append('=')
-        }
-    }
-    return output.toString()
-}
+/**
+ * GitHub's secondary limit allows roughly 80 content-generating requests per minute. A first backup
+ * can create dozens of note and media blobs, so requests are paced below that rather than relying
+ * on the 403 retry, which would otherwise restart the whole push after every burst.
+ */
+private const val CONTENT_REQUEST_INTERVAL_MS: Long = 800

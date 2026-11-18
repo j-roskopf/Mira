@@ -9,6 +9,7 @@ import com.joetr.mira.db.MiraDatabase
 import com.joetr.mira.domain.Attachment
 import com.joetr.mira.domain.AttachmentKind
 import com.joetr.mira.domain.AttachmentState
+import com.joetr.mira.domain.GITHUB_ARCHIVE_MAX_IN_MEMORY_BYTES
 import com.joetr.mira.media.MediaSource
 import com.joetr.mira.media.extractVideoPoster
 import com.joetr.mira.media.isHevcVideo
@@ -37,7 +38,11 @@ import kotlinx.coroutines.withContext
  * returned before any read so a file the repository cannot accept never reaches the heap.
  */
 public sealed interface ArchiveMediaSource {
-    public data class LocalFile(val path: String, val bytes: Long) : ArchiveMediaSource
+    public data class LocalFile(
+        val path: String,
+        val bytes: Long,
+        val temporary: Boolean = false,
+    ) : ArchiveMediaSource
     public data class Bytes(val bytes: ByteArray) : ArchiveMediaSource
     public data class TooLarge(val bytes: Long) : ArchiveMediaSource
 }
@@ -592,9 +597,10 @@ public class MediaRepository(
     /**
      * Resolves the cheapest way to hand [attachment] to the archive.
      *
-     * A local file is returned as a path on platforms that can stream it, so archiving a long
-     * recording never allocates its full size. Media above [maxBytes] is rejected before reading;
-     * the GitHub blob API cannot accept a file that large anyway.
+     * A local file is returned as a path whenever one exists, so the archive can stream it for
+     * chunked base64 without allocating the whole recording. Media above [maxBytes] is rejected
+     * before reading; that ceiling is the archive's transport limit, not the GitHub blob limit,
+     * because oversized files may be compressed or split downstream.
      */
     public suspend fun archiveMediaSourceFor(
         attachment: Attachment,
@@ -606,15 +612,33 @@ public class MediaRepository(
         if (blob != null) {
             val path = blob.path
             if (path != null && localFileExists(path)) {
-                return if (supportsStreamingFileUpload) {
-                    ArchiveMediaSource.LocalFile(path, size)
-                } else {
-                    readLocalFile(path)?.let { ArchiveMediaSource.Bytes(it) }
-                }
+                // The archive reads files itself (chunked base64), so a local path is preferable
+                // even on platforms whose cloud uploader only deals in bytes.
+                return ArchiveMediaSource.LocalFile(path, size)
             }
             blob.data_?.let { return ArchiveMediaSource.Bytes(it) }
         }
+        // No local copy. A large download into a ByteArray is exactly what exhausts a mobile heap,
+        // so write it to a temporary file and let the archive stream it from disk.
+        if (size > ARCHIVE_STREAM_DOWNLOAD_BYTES) {
+            val session = firebase.sessionForSync()
+            val tempPath = archiveTempFilePath(attachment.id)
+            if (session != null && tempPath != null) {
+                if (firebase.storage.downloadToFile(session.idToken, attachment.storagePath, tempPath)) {
+                    return ArchiveMediaSource.LocalFile(tempPath, size, temporary = true)
+                }
+                deleteArchiveTempFile(tempPath)
+            }
+        }
+        // Without a file to stream into, the bytes must be held in memory; refuse above the blob
+        // limit rather than risk the same OOM.
+        if (size > GITHUB_ARCHIVE_MAX_IN_MEMORY_BYTES) return ArchiveMediaSource.TooLarge(size)
         return bytesFor(attachment)?.let { ArchiveMediaSource.Bytes(it) }
+    }
+
+    /** Deletes a temporary archive download after the push finishes. */
+    public suspend fun deleteArchiveTemp(path: String) {
+        deleteArchiveTempFile(path)
     }
 
     /** Keeps a year permanently local, exempt from eviction. */
@@ -877,6 +901,7 @@ internal fun extensionFor(mime: String): String = when {
 private val JPEG_SAFE_IMAGE_MIMES: Set<String> = setOf("image/jpeg", "image/png", "image/webp")
 private const val PHOTO_MAX_LONG_EDGE: Int = 4096
 private const val PHOTO_JPEG_QUALITY: Int = 90
+private const val ARCHIVE_STREAM_DOWNLOAD_BYTES: Long = 8L * 1024 * 1024
 private const val NON_PORTABLE_VIDEO_REPAIR_KEY: String = "non_portable_video_repair_done"
 private const val POSTER_ROTATION_REPAIR_KEY: String = "video_poster_rotation_repair_done"
 private const val POSTER_BACKFILL_KEY: String = "video_poster_backfill_at"
@@ -896,3 +921,8 @@ internal expect suspend fun localFileExists(path: String): Boolean
 
 /** Removes files owned by Android staging when their blob is deleted or evicted. */
 internal expect suspend fun deletePreservedFile(path: String)
+
+/** A cache path the archive can download into when the media is not local. */
+internal expect suspend fun archiveTempFilePath(attachmentId: String): String?
+
+internal expect suspend fun deleteArchiveTempFile(path: String)

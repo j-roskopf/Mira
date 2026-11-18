@@ -30,6 +30,17 @@ internal fun base64JsonFileContent(path: String): OutgoingContent? {
     return Base64JsonFileContent(reader)
 }
 
+/**
+ * Base64 JSON for bytes already in memory.
+ *
+ * Encoding the whole array into one string first created a second copy of roughly 4/3 the
+ * recording, and Ktor then encoded that string to another UTF-8 array. A 56 MB video therefore
+ * needed a ~75 MB allocation on top of its own bytes and ran out of heap on mobile. Encoding in
+ * chunks as the request is written keeps the extra allocation to a few kilobytes.
+ */
+internal fun base64JsonBytesContent(bytes: ByteArray): OutgoingContent =
+    Base64JsonFileContent(ByteArrayArchiveFileReader(bytes))
+
 private const val JSON_PREFIX = "{\"content\":\""
 private const val JSON_SUFFIX = "\",\"encoding\":\"base64\"}"
 
@@ -38,6 +49,24 @@ private const val CHUNK_SIZE = 60 * 1024
 
 private val BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
     .encodeToByteArray()
+
+private class ByteArrayArchiveFileReader(
+    private val bytes: ByteArray,
+) : ArchiveFileReader {
+    private var index = 0
+
+    override val size: Long = bytes.size.toLong()
+
+    override fun read(buffer: ByteArray): Int {
+        if (index >= bytes.size) return -1
+        val count = minOf(buffer.size, bytes.size - index)
+        bytes.copyInto(buffer, 0, index, index + count)
+        index += count
+        return count
+    }
+
+    override fun close() {}
+}
 
 private class Base64JsonFileContent(
     private val reader: ArchiveFileReader,

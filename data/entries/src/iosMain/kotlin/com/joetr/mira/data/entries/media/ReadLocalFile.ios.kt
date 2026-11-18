@@ -4,6 +4,8 @@ import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.usePinned
 import platform.Foundation.NSData
+import platform.Foundation.NSFileManager
+import platform.Foundation.NSTemporaryDirectory
 import platform.Foundation.dataWithContentsOfFile
 import platform.posix.memcpy
 
@@ -25,3 +27,12 @@ internal actual suspend fun localFileExists(path: String): Boolean =
     platform.Foundation.NSFileManager.defaultManager.fileExistsAtPath(path)
 
 internal actual suspend fun deletePreservedFile(path: String) = Unit
+
+@OptIn(ExperimentalForeignApi::class)
+internal actual suspend fun archiveTempFilePath(attachmentId: String): String? =
+    NSTemporaryDirectory() + "mira-archive-$attachmentId.mp4"
+
+@OptIn(ExperimentalForeignApi::class)
+internal actual suspend fun deleteArchiveTempFile(path: String) {
+    NSFileManager.defaultManager.removeItemAtPath(path, null)
+}
